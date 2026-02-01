@@ -1,0 +1,26 @@
+
+:set -Wno-x-partial
+:load Main
+_stateStack = [] :: [ProofState Identity]
+:set -interactive-print GhciUtil.ghciPrintFn
+:set prompt "π> "
+
+:def apply (\(args::String) -> return $ "(_Apply it) $ " ++ args) . GhciUtil.removeNewlines
+:def theorem (\(args::String) -> case parseStringProp (L.dropWhile (\c -> c /= ' ') args) of Right p -> return $ "(_Theorem it) " ++ L.takeWhile (\c -> c /= ' ') args ++ " $ " ++ show p ; Left e -> return $ "s = it\ns { outputs = \"Could not parse" ++ L.dropWhile (\c -> c /= ' ') args ++ "\":outputs s }")  . GhciUtil.removeNewlines
+:def theoremE (\(args::String) -> return $ "(_Theorem it) " ++ L.takeWhile (\c -> c /= ' ') args ++ " $ " ++ L.dropWhile (\c -> c /= ' ') args)  . GhciUtil.removeNewlines
+:def done (\_ -> return "_Done it")
+:def print_theorems (\_ -> return "_PrintTheorems it")
+:def lm (\args -> return $ "(_LoadModule it) " ++ args) . GhciUtil.removeNewlines
+:def internal_load_proof_module (\args -> readFile args >>= (\script -> return $ "_stateStack = (it:_stateStack)\n" ++ script ++ "\nm = it\npopped=head _stateStack\n_stateStack=tail _stateStack\npopped")) . GhciUtil.removeNewlines
+:def load_module (\args -> return $ L.intercalate "\n" [":set -interactive-print GhciUtil.ghciNoPrintFn", ":internal_load_proof_module " ++ args, ":set -interactive-print GhciUtil.ghciPrintFn", ":lm m", ":print_theorems"]) . GhciUtil.removeNewlines
+:def init (\args -> return $ "_Init " ++ args) . GhciUtil.removeNewlines
+:def switch (\args -> return $ "(_Apply it) $ _Switch " ++ args) . GhciUtil.removeNewlines
+:def defer (\_ -> return $ "(_Apply it) $ _Defer")
+:def extract (\args -> return $ "(_Extract it) " ++ args) . GhciUtil.removeNewlines
+:def help_tactics (\_ -> return "_stateStack = (it:_stateStack)\nGhciUtil.getTactics\npopped=head _stateStack\n_stateStack=tail _stateStack\npopped")
+:def help_functional_tactics (\_ -> return "_stateStack = (it:_stateStack)\nGhciUtil.getFTactics\npopped=head _stateStack\n_stateStack=tail _stateStack\npopped")
+:def help_commands (\_ -> return "_stateStack = (it:_stateStack)\nGhciUtil.printCommands\npopped=head _stateStack\n_stateStack=tail _stateStack\npopped")
+:def test (\args -> return ("print \"" ++ (L.dropWhile (\c -> c /= ' ') args) ++ "\""))  . GhciUtil.removeNewlines
+-- :! clear
+
+:init "Scratch"

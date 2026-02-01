@@ -1,0 +1,33 @@
+:init "Semaphore"
+-- :theorem "unary_test" Forall "p" (Var "signal") (Forall "v" (Var "signal") (TyNu "Y" (Forall "p" (Var "signal") (Forall "v" (Var "signal") (TyVar "Y")))))
+:theorem "unary_test" forall p:signal . forall v:signal . nu Y . forall p:signal . forall v:signal . Y
+:apply _Intros
+:apply _Weaken "p"
+:apply _Weaken "v"
+:apply _NuR "S" [] []
+:apply _Intros
+:apply _Weaken "p"
+:apply _Weaken "v"
+:apply _TyVar "S" []
+:done
+
+-- :theorem "unary" (Implication (Lift (Var "resource")) (TyNu "Y" (Tensor (Lift (Var "resource")) (Implication (Lift (Var "resource")) (TyVar "Y")))))
+:theorem "unary" $resource -o nu Y. $resource * ($resource -o Y)
+:apply _ImpliesR
+:apply _NuR "S" ["handle"] ["a"]
+:apply _TensorR
+:apply _ImpliesR
+:switch "?d"
+:apply _IdA
+:apply _TyVar "S" ["c"]
+:done
+-- z(a).(corec S(handle).(ν b)z[b].([handle <-> b]) | (z(c).S(c))) (a)
+
+-- :theorem "unary_2" (TyNu "Y" (Implication (Lift (Var "resource")) (Tensor (Lift (Var "resource")) (TyVar "Y"))))
+:theorem "unary_2" nu Y. $resource -o $resource * Y
+:apply _NuR "S" [] []
+:apply _ImpliesR
+:apply _TensorR `_Then` (_IdA `_Alt` _Skip)
+:apply _TyVar "S" []
+:done
+-- (corec S().z(a).(ν b)z[b].([a <-> b]) | (S())) ()

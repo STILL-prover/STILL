@@ -1,0 +1,57 @@
+:init "auctions"
+-- :theoremE "receiveBids" Forall "curBid" (Var "nat") (TyNu "Y" (Forall "newBid" (Var "nat") (TyVar "Y")))
+:theorem "receiveBids" forall curBid : nat . nu Y . forall newBid : nat . Y
+:apply _ForallR
+:apply (_NuR "AUC" ["bid"] ["curBid"])
+:apply _ForallR
+:apply (_Weaken "curBid")
+:apply (_TyVar "AUC" ["newBid"])
+:done
+-- z(curBid).(corec AUC(bid).z(newBid).AUC(newBid)) (curBid)
+
+:{
+:theorem "english" forall ItemType:stype.
+    forall bid:Type 1.
+    forall zeroBid:bid.
+    forall currency:(Pi n1:bid.Pi n2:bid.Type 1).
+    ItemType -o
+    (forall old:bid. forall new:bid. $currency old new -o 1) -o
+    forall currentBid:bid.
+    $currency zeroBid currentBid -o
+    (ItemType + $currency zeroBid currentBid -o 1) -o
+    nu Y. (forall newBid:bid. $currency currentBid newBid -o
+        (ItemType + $currency currentBid newBid -o 1) -o Y) & 1
+:}
+:apply _Intros
+:{
+:apply _NuR "AUC"
+    ["item", "ownerChan", "curBid", "winnerChan", "oldBid", "lastBid"]
+    ["a", "b", "c", "d", "zeroBid", "currentBid"]
+:}
+:apply _WithR
+:apply _ForallLA
+:apply _FTac (_FExact (Var "zeroBid"))
+:apply _ForallLA
+:apply _FTac (_FExact (Var "currentBid"))
+:apply _ImpliesLA
+:apply _UnitLA
+:apply _ImpliesLA
+:apply _UnitLA
+:apply _UnitR
+:apply _PlusR1
+:apply _IdA
+:apply _IdA
+:apply _ImpliesLA
+:apply _UnitLA
+:apply _Intros
+:defer
+:apply _PlusR2
+:apply _IdA
+:apply _Weaken "zeroBid"
+:apply _TyVar "AUC" ["a", "b", "h", "i", "currentBid", "newBid"]
+:done
+-- z(ItemType).z(bid).z(zeroBid).z(currency).z(a).z(b).z(currentBid).z(c).z(d).
+-- (corec AUC(item, ownerChan, curBid, winnerChan, oldBid, lastBid).z.case(
+--     (ν g)winnerChan[g].(g.inr;[curBid <-> g]) | (z(newBid).z(h).z(i).AUC(item, ownerChan, h, i, lastBid, newBid)),
+--     ownerChan[oldBid].ownerChan[lastBid].(ν e)ownerChan[e].([curBid <-> e]) | ((ν f)winnerChan[f].(f.inl;[item <-> f]) | (0)) ))
+-- (a, b, c, d, zeroBid, currentBid)
