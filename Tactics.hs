@@ -31,12 +31,12 @@ data Subgoal m = Subgoal {
     nextGoals :: [String],
     reservedVars :: S.Set String,
     subgoalJustification :: ProverStateT m Proof,
-    used :: Maybe BranchType,
+    expanded :: Maybe BranchType,
     inProgressFunctionalProof :: Maybe (FT.ProofState m, FunctionalProof -> Tactic m)
 } deriving ()
 
 isUsed :: Subgoal m -> Bool
-isUsed = isJust . used
+isUsed = isJust . expanded
 
 getVarsReservedInSubgoalBranches :: ProofState m -> String -> S.Set String
 getVarsReservedInSubgoalBranches s sgName = case Data.Map.lookup sgName (subgoals s) of
@@ -48,7 +48,7 @@ getUnavailableVarsForSubgoal sgName s = case Data.Map.lookup sgName (subgoals s)
     Just curSg -> (if prevGoal curSg == ""
         then S.empty
         else (case Data.Map.lookup (prevGoal curSg) (subgoals s) of
-            Just prevSg -> case used prevSg of--DBG.trace (show $ used prevSg) (used prevSg) of
+            Just prevSg -> case expanded prevSg of--DBG.trace (show $ used prevSg) (used prevSg) of
                 Just Multiplicative -> let
                         unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
                         unavailableForPrev = getUnavailableVarsForSubgoal (prevGoal curSg) s
@@ -157,7 +157,7 @@ initializeSequent :: Proposition -> Sequent
 initializeSequent p = Sequent { tyVarContext = S.empty, fnContext = Data.Map.empty, unrestrictedContext = Data.Map.empty, linearContext = Data.Map.empty, recursiveBindings = Data.Map.empty, channel = "z", goalProposition = p }
 
 initializeProof :: Monad m => Sequent -> Subgoal m
-initializeProof seq = Subgoal { sequent = seq, prevGoal = "", nextGoals = [], used = Nothing, subgoalJustification = tacError "No justification.", inProgressFunctionalProof = Nothing, reservedVars = S.empty }
+initializeProof seq = Subgoal { sequent = seq, prevGoal = "", nextGoals = [], expanded = Nothing, subgoalJustification = tacError "No justification.", inProgressFunctionalProof = Nothing, reservedVars = S.empty }
 
 tacError :: Monad m => String -> ST.StateT (ProofState m) (E.ExceptT String m) a2
 tacError = ST.lift . E.throwE
@@ -242,7 +242,7 @@ useCurrentSubgoal bt j = do
         curSubgoalMaybe = Data.Map.lookup (curSubgoal curState) curSubgoals
     curSubgoalObj <- liftMaybeWithError ("Cannot find current subgoal " ++ curSubgoal curState) curSubgoalMaybe
     ST.modify (\s -> s {
-        subgoals = Data.Map.insert (curSubgoal curState) (curSubgoalObj { subgoalJustification = j, used = Just bt }) (subgoals s),
+        subgoals = Data.Map.insert (curSubgoal curState) (curSubgoalObj { subgoalJustification = j, expanded = Just bt }) (subgoals s),
         nextSubgoalStack = L.delete (curSubgoal curState) (nextSubgoalStack curState) })
     newSubgoals <- ST.gets subgoals
     newSgStack <- ST.gets nextSubgoalStack
@@ -266,7 +266,7 @@ createNewSubgoal seq = do
     freshGoal <- getFreshSubgoalName
     curSubgoalName <- ST.gets curSubgoal
     curSubgoalData <- getCurrentSubgoal
-    let newSubgoal = Subgoal { sequent = seq, prevGoal = curSubgoalName, nextGoals = [], subgoalJustification = tacError "No justification", used = Nothing, inProgressFunctionalProof = Nothing, reservedVars = S.empty }
+    let newSubgoal = Subgoal { sequent = seq, prevGoal = curSubgoalName, nextGoals = [], subgoalJustification = tacError "No justification", expanded = Nothing, inProgressFunctionalProof = Nothing, reservedVars = S.empty }
         newCurSubgoalData = curSubgoalData { nextGoals = freshGoal:nextGoals curSubgoalData }
     ST.modify (\s -> s { subgoals = Data.Map.insert curSubgoalName newCurSubgoalData (Data.Map.insert freshGoal newSubgoal (subgoals s)), nextSubgoalStack = freshGoal:nextSubgoalStack s })
     return freshGoal
