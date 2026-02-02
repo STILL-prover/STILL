@@ -83,7 +83,7 @@ propToS = go 0
         parensIf False s = s
         parensIf True  s = "(" ++ s ++ ")"
 
-{-| Get all names occuring in a proposition. 
+{-| Get all names occuring in a proposition.
 
 >>> propNames (With (Lift (Var "A")) (Forall "x" (Var "B") Unit))
 fromList ["A","B","x"]
@@ -259,22 +259,51 @@ data Process = Halt
     deriving (Eq, Show, Read)
 
 pToS :: Process -> String
-pToS Halt = "0"
-pToS (ParallelComposition p q) = "(" ++ pToS p ++ ") | (" ++ pToS q ++ ")"
-pToS (Nu x p) = "(ν " ++ x ++ ")" ++ pToS p
-pToS (Send ch v p) = ch ++ "[" ++ v ++ "]." ++ pToS p
-pToS (SendTerm ch term p) = ch ++ "[" ++ ftToS term ++ "]." ++ pToS p
-pToS (SendType ch ty p) = ch ++ "[" ++ propToS ty ++ "]." ++ pToS p
-pToS (Receive ch x p) = ch ++ "(" ++ x ++ ")." ++ pToS p
-pToS (ReplicateReceive ch x p) = "!" ++ ch ++ "(" ++ x ++ ")." ++ pToS p
-pToS (SendInl ch p) = ch ++ ".inl;" ++ pToS p
-pToS (SendInr ch p) = ch ++ ".inr;" ++ pToS p
-pToS (Case ch p q) = ch ++ ".case(" ++ pToS p ++ ", " ++ pToS q ++ " )"
-pToS (Link x y) = "[" ++ x ++ " <-> " ++ y ++ "]"
-pToS (LiftTerm ch term) = "[ " ++ ch ++ " <- " ++ ftToS term ++ " ]"
-pToS (Corec x ys p zs) = "(corec " ++ x ++ "(" ++ L.dropWhile (\c -> c == ',' || c == ' ') (L.foldl (\acc y -> acc ++ ", " ++ y) "" ys) ++ ")." ++ pToS p ++ ") " ++ "(" ++ L.dropWhile (\c -> c == ',' || c == ' ') (L.foldl (\acc z -> acc ++ ", " ++ z) "" zs) ++ ")"
-pToS (Call x zs) = x ++ "(" ++ L.dropWhile (\c -> c == ',' || c == ' ') (L.foldl (\acc z -> acc ++ ", " ++ z) "" zs) ++ ")"
-pToS HoleTerm = "_"
+pToS = go 0
+  where
+    precPar = 0
+    precNu = 1
+    precPrefix = 2
+    parens :: Bool -> String -> String
+    parens True s = "(" ++ s ++ ")"
+    parens False s = s
+    joinArgs :: [String] -> String
+    joinArgs = L.intercalate ", "
+
+    go :: Int -> Process -> String
+    go _ Halt = "0"
+    go d (ParallelComposition p q) =
+        parens (d > precPar) $ go precPar p ++ " | " ++ go precPar q
+    go d (Nu x p) =
+        parens (d > precNu) $ "(ν " ++ x ++ ") " ++ go precNu p
+    go d (Send ch v p) =
+        parens (d > precPrefix) $ ch ++ "[" ++ v ++ "]." ++ go precPrefix p
+    go d (SendTerm ch term p) =
+        parens (d > precPrefix) $ ch ++ "[" ++ ftToS term ++ "]." ++ go precPrefix p
+    go d (SendType ch ty p) =
+        parens (d > precPrefix) $ ch ++ "[" ++ propToS ty ++ "]." ++ go precPrefix p
+    go d (Receive ch x p) =
+        parens (d > precPrefix) $ ch ++ "(" ++ x ++ ")." ++ go precPrefix p
+    go d (ReplicateReceive ch x p) =
+        parens (d > precPrefix) $ "!" ++ ch ++ "(" ++ x ++ ")." ++ go precPrefix p
+    go d (SendInl ch p) =
+        parens (d > precPrefix) $ ch ++ ".inl;" ++ go precPrefix p
+    go d (SendInr ch p) =
+        parens (d > precPrefix) $ ch ++ ".inr;" ++ go precPrefix p
+    -- Case arguments usually reset precedence because they are enclosed in syntax
+    go d (Case ch p q) =
+        parens (d > precPrefix) $ ch ++ ".case(inl: " ++ go 0 p ++ ", inr: " ++ go 0 q ++ " )"
+    go _ (Link x y) =
+        "[" ++ x ++ " <-> " ++ y ++ "]"
+    go _ (LiftTerm ch term) =
+        "[ " ++ ch ++ " <- " ++ ftToS term ++ " ]"
+    go d (Corec x ys p zs) =
+        parens (d > precPrefix) $
+        "(corec " ++ x ++ "(" ++ joinArgs ys ++ ")." ++ go precPrefix p ++ ") " ++
+        "(" ++ joinArgs zs ++ ")"
+    go _ (Call x zs) =
+        x ++ "(" ++ joinArgs zs ++ ")"
+    go _ HoleTerm = "_"
 
 processNames :: Process -> S.Set String
 processNames Halt = S.empty
@@ -564,7 +593,7 @@ abstTerm (TyNu x p) y n = if x `S.member` functionalFreeVariables n then (TyNu x
     else TyNu x (abstTerm p y n)
 abstTerm (TyVar x) y n = TyVar x
 
-{-| A{y/N} replace N with y in A. 
+{-| A{y/N} replace N with y in A.
 >>> abstProp Unit ("x") Unit
 TyVar "x"
 
@@ -1035,7 +1064,7 @@ verifyProofM (FnWeakening a ft proof) = do
     return . not . Data.Map.member a $ fnContext seq
 verifyProofM (HoleRule tv fc uc lc z p eta) = return False
 
-{-| 
+{-|
 >>> verifyProof (HoleRule Data.Map.empty Data.Map.empty Data.Map.empty "z" Unit)
 False
 -}

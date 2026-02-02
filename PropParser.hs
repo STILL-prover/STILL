@@ -149,7 +149,7 @@ propAtom :: Parser Proposition
 propAtom = parens proposition
        <|> (reserved "Unit" >> return Unit)
        <|> (reserved "1" >> return Unit)
-       <|> parseLift
+       <|> try parseLift
        <|> parseQuantifiers
        <|> (TyVar <$> identifier)
 

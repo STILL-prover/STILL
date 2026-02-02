@@ -52,7 +52,7 @@ axiomOfChoiceProof = let
     in _Done s7
 
 axiomOfChoiceInOnlyFunctionalSystem = let
-    t = _Theorem (_Init "ACF") "axiomOfChoiceInOnlyFunctionalSystem" $ AC.axiomOfChoiceFunctional (Type 1) (Type 1)
+    t = _Theorem (_Init "ACF") "axiomOfChoiceFunctional" $ AC.axiomOfChoiceFunctional (Type 1) (Type 1)
     s1 = _Apply t _FTermR
     s2 = _FApply s1 (FT._FRepeat FT._FLambda)
     f = Lambda "__4" (Var "A") (Proj1 (App (Var "__3") (Var "__4")))
