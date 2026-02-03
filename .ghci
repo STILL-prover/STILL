@@ -15,7 +15,8 @@ _stateStack = [] :: [ProofState Identity]
 :def load_module (\args -> return $ L.intercalate "\n" [":set -interactive-print GhciUtil.ghciNoPrintFn", ":internal_load_proof_module " ++ args, ":set -interactive-print GhciUtil.ghciPrintFn", ":lm m", ":print_theorems"]) . GhciUtil.removeNewlines
 :def init (\args -> return $ "_Init " ++ args) . GhciUtil.removeNewlines
 :def switch (\args -> return $ "(_Apply it) $ _Switch " ++ args) . GhciUtil.removeNewlines
-:def defer (\_ -> return $ "(_Apply it) $ _Defer")
+:def defer (\_ -> return $ "_Defer it")
+:def prefer (\args -> return $ "_Prefer it $ " ++ args)
 :def extract (\args -> return $ "(_Extract it) " ++ args) . GhciUtil.removeNewlines
 :def help_tactics (\_ -> return "_stateStack = (it:_stateStack)\nGhciUtil.getTactics\npopped=head _stateStack\n_stateStack=tail _stateStack\npopped")
 :def help_functional_tactics (\_ -> return "_stateStack = (it:_stateStack)\nGhciUtil.getFTactics\npopped=head _stateStack\n_stateStack=tail _stateStack\npopped")

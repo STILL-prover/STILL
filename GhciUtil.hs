@@ -7,7 +7,7 @@ import qualified FunctionalSystem as FS
 import qualified FunctionalTactics as FT
 import qualified Data.Map
 import qualified Data.Map as M
-import Data.Maybe (isNothing)
+import Data.Maybe (isNothing, isJust, fromJust)
 import LinearLogic (Process (..), Proposition (..), Sequent (fnContext, unrestrictedContext, linearContext, channel, goalProposition), pToS, propToS, seqToS)
 import qualified Data.Set as S
 import qualified Data.String
@@ -62,8 +62,9 @@ mainPrinter (Right s) =
                 Nothing -> (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered curReservedVars sg
                 Just (fs, p) -> L.foldl' (\acc kvp -> acc ++ "\n" ++ (if n == curSubgoal s && fst kvp == FT.curSubgoal fs then "*" else " ") ++ n ++ "." ++ fst kvp ++ sgNameSep ++ fsgToS (snd kvp)) ""  (Data.Map.toList (Data.Map.filter (not . FT.used) (FT.subgoals fs)))
             messagePrinter = if L.null $ outputs s then "" else head $ outputs s
+            orderedSubgoals = L.reverse $ (\(sgn, sg) -> (sgn, fromJust sg)) <$> L.filter (\(sgn, sg) -> isJust sg) ((\sgn -> (sgn, Data.Map.lookup  sgn (subgoals s))) <$> openGoalStack s)
         in
-            putStrLn $ messagePrinter ++ L.foldl' (\acc kvp -> acc ++ "\n" ++ uncurry subgoalPrinter kvp) "" (Data.Map.toList (Data.Map.filter (isNothing . used) (subgoals s)))
+            putStrLn $ messagePrinter ++ L.foldl' (\acc kvp -> acc ++ "\n" ++ uncurry subgoalPrinter kvp) "" orderedSubgoals
 mainPrinter (Left e) = putStrLn $ "Error occured: " ++ e
 
 instance {-# OVERLAPPING #-} GhciPrint (Either String (ProofState m)) where

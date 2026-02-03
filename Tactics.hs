@@ -63,7 +63,6 @@ getUnavailableVarsForSubgoal sgName s = case Data.Map.lookup sgName (subgoals s)
 
 data ProofState m = S {
     subgoals :: Map String (Subgoal m),
-    curSubgoal :: String,
     uniqueNameVars :: Map String String,
     usedSubgoalNames :: S.Set String,
     outputs :: [String],
@@ -71,8 +70,11 @@ data ProofState m = S {
     curTheoremName :: String,
     curModuleName :: String,
     loadedModules :: Map String (Map String Proof),
-    nextSubgoalStack :: [String]
+    openGoalStack :: [String]
 } deriving ()
+
+curSubgoal :: ProofState m -> String
+curSubgoal s = if L.null (openGoalStack s) then "" else head (openGoalStack s)
 
 getStateReservedVars :: Monad m => ProofState m -> S.Set String
 getStateReservedVars s = Data.Map.foldl' (\acc sg -> S.union acc (reservedVars sg)) S.empty (subgoals s)
@@ -235,6 +237,11 @@ buildJustification2 sg1 sg2 p = do
             buildJustification1 sg2 (p jst)
         _ -> tacError $ "Child subgoal lost " ++ sg1
 
+{-| 
+    This should be the last call to in a tactic before returning the message. It
+    pops the current open goal off the stack, and updates the goal with its
+    justification. Call createNewSubgoal before this.
+-}
 useCurrentSubgoal :: Monad m => BranchType -> Justification m -> ProverStateT m ()
 useCurrentSubgoal bt j = do
     curState <- ST.get
@@ -243,13 +250,7 @@ useCurrentSubgoal bt j = do
     curSubgoalObj <- liftMaybeWithError ("Cannot find current subgoal " ++ curSubgoal curState) curSubgoalMaybe
     ST.modify (\s -> s {
         subgoals = Data.Map.insert (curSubgoal curState) (curSubgoalObj { subgoalJustification = j, expanded = Just bt }) (subgoals s),
-        nextSubgoalStack = L.delete (curSubgoal curState) (nextSubgoalStack curState) })
-    newSubgoals <- ST.gets subgoals
-    newSgStack <- ST.gets nextSubgoalStack
-    let availableNextSubgoals = L.dropWhile (\(x, sg) -> isUsed sg) $ Data.Map.toList newSubgoals -- Drop from check if used.
-        availableStackedSubgoals = L.dropWhile (\x -> maybe True isUsed (Data.Map.lookup x newSubgoals)) newSgStack -- Drop off the stack if used.
-        nextSgName = if L.null newSgStack then (if L.null availableNextSubgoals then "" else (fst . head) availableNextSubgoals) else head newSgStack -- New subgoal name is first on the stack. Else first not used. Else Nothing.
-    ST.modify (\s -> s { curSubgoal = nextSgName })
+        openGoalStack = L.drop 1 (openGoalStack curState) }) -- subgoal is expanded and popped off.
 
 getCurrentSubgoal :: Monad m => ProverStateT m (Subgoal m)
 getCurrentSubgoal = do
@@ -260,7 +261,11 @@ getCurrentSubgoal = do
 getCurrentSequent :: Monad m => ProverStateT m Sequent
 getCurrentSequent = sequent <$> getCurrentSubgoal
 
-{-| Create a new subgoal in the state pointing to the current subgoal as its previous. Also point the current subgoal to the new one as a next subgoal. -}
+{-|
+    Create a new subgoal in the state pointing to the current subgoal as its
+    previous. Puts the new goal just below the current open goal. Call
+    useCurrentSubgoal after this.
+-}
 createNewSubgoal :: Monad m => Sequent -> ProverStateT m String
 createNewSubgoal seq = do
     freshGoal <- getFreshSubgoalName
@@ -268,7 +273,7 @@ createNewSubgoal seq = do
     curSubgoalData <- getCurrentSubgoal
     let newSubgoal = Subgoal { sequent = seq, prevGoal = curSubgoalName, nextGoals = [], subgoalJustification = tacError "No justification", expanded = Nothing, inProgressFunctionalProof = Nothing, reservedVars = S.empty }
         newCurSubgoalData = curSubgoalData { nextGoals = freshGoal:nextGoals curSubgoalData }
-    ST.modify (\s -> s { subgoals = Data.Map.insert curSubgoalName newCurSubgoalData (Data.Map.insert freshGoal newSubgoal (subgoals s)), nextSubgoalStack = freshGoal:nextSubgoalStack s })
+    ST.modify (\s -> s { subgoals = Data.Map.insert curSubgoalName newCurSubgoalData (Data.Map.insert freshGoal newSubgoal (subgoals s)), openGoalStack = (head (openGoalStack s)):(freshGoal:tail (openGoalStack s)) })
     return freshGoal
 
 idTac :: Monad m => String -> Tactic m
@@ -848,14 +853,16 @@ holeTac = do
 
 thenTactical :: Monad m => Tactic m -> Tactic m -> Tactic m
 thenTactical t1 t2 = do
-    currentSubgoals <- ST.gets subgoals
+    currentSubgoals <- ST.gets openGoalStack
     res1 <- t1
-    newSubgoals <- ST.gets subgoals
-    let toApplySubgoals = Data.Map.filter (not . isUsed) $ Data.Map.difference newSubgoals currentSubgoals
+    newSubgoals <- ST.gets openGoalStack
+    let toApplySubgoals = L.filter (`notElem` currentSubgoals) newSubgoals
     t2Res <- mapM (\sgn -> (do
-            ST.modify (\s -> s { curSubgoal = sgn })
-            t2)) (Data.Map.keys toApplySubgoals)
-    return (res1 ++ "\n" ++ L.foldl' (\a b -> a ++ "\n" ++ b) "" t2Res)
+            curSgs <- ST.gets openGoalStack
+            let i = L.elemIndex sgn curSgs
+            ST.modify (\s -> _Prefer s (fromMaybe (-1 :: Int) i))
+            t2)) toApplySubgoals
+    return (res1 ++ "\n" ++ L.intercalate "\n" t2Res)
 
 skipTactical :: Monad m => Tactic m
 skipTactical = do
@@ -879,7 +886,7 @@ initCleanState mName =
         fnVars = []
         allVars = []
     in
-        S { subgoals = Data.Map.empty, curSubgoal = "", uniqueNameVars = Data.Map.empty, usedSubgoalNames = S.empty, outputs = ["Ready to begin!"], curTheoremName = "", curModuleName = mName, theorems = Data.Map.empty, loadedModules = Data.Map.empty, nextSubgoalStack = [] }
+        S { subgoals = Data.Map.empty, uniqueNameVars = Data.Map.empty, usedSubgoalNames = S.empty, outputs = ["Ready to begin!"], curTheoremName = "", curModuleName = mName, theorems = Data.Map.empty, loadedModules = Data.Map.empty, openGoalStack = [] }
 
 {-| Assumes the initial  subgoal has no assumptions in -}
 -- initializeState :: String -> Subgoal m -> ProofState m
@@ -916,7 +923,7 @@ theorem s n p =
         fnVars = Data.Map.keys . fnContext . sequent $ goal
         allVars = channelVar : (linearVars ++ unrestrictedVars ++ fnVars)
     in
-        s { subgoals = singleton "?a" goal, curSubgoal = "?a", uniqueNameVars = Data.Map.fromList $ (\x -> (x, x)) <$> allVars, usedSubgoalNames = S.singleton "?a", outputs = "New theorem started":outputs s, curTheoremName = n, nextSubgoalStack = [] }
+        s { subgoals = singleton "?a" goal, uniqueNameVars = Data.Map.fromList $ (\x -> (x, x)) <$> allVars, usedSubgoalNames = S.singleton "?a", outputs = "New theorem started":outputs s, curTheoremName = n, openGoalStack = ["?a"] }
 
 applyTactic :: ProofState Identity -> Tactic Identity -> Either String (ProofState Identity)
 applyTactic s t = runIdentity $ applyTacticGeneral s t
@@ -1039,7 +1046,7 @@ _FTermR = do
     seq <- getCurrentSequent
     names <- getProofStateNames
     let fullTac p = do
-            ST.modify (\s1 -> s1 { curSubgoal = curSubgoal curState })
+            --ST.modify (\s1 -> s1 { curSubgoal = curSubgoal curState })
             functionalTermRightTac p
     case goalProposition seq of
         Lift t -> (do
@@ -1155,7 +1162,7 @@ _ForallL x = do
     seq <- getCurrentSequent
     names <- getProofStateNames
     let fullTac p = do
-            ST.modify (\s1 -> s1 { curSubgoal = curSubgoal curState })
+            --ST.modify (\s1 -> s1 { curSubgoal = curSubgoal curState })
             forallLeftTac x p
     case Data.Map.lookup x (linearContext seq) of
         Just (Forall x t p) -> (do
@@ -1174,7 +1181,7 @@ _ExistsR = do
     seq <- getCurrentSequent
     names <- getProofStateNames
     let fullTac p = do
-            ST.modify (\s1 -> s1 { curSubgoal = curSubgoal curState })
+            --ST.modify (\s1 -> s1 { curSubgoal = curSubgoal curState })
             existsRightTac p
     case goalProposition seq of
         Exists x t a -> (do
@@ -1266,34 +1273,44 @@ _Repeat = repeatTactical
 _Intros :: Monad m => Tactic m
 _Intros = _Repeat (_ImpliesR `_Alt` _ForallR `_Alt` _Forall2R)
 
-_Switch :: Monad m => String -> Tactic m
-_Switch newSg = do
-    validSwitch <- Data.Map.member newSg <$> ST.gets subgoals
-    if validSwitch
-    then (do
-        ST.modify (\s -> s{curSubgoal = newSg})
-        return $ "Switched subgoal to " ++ newSg)
-    else (do
-        curState <- ST.get
-        let sgName = L.takeWhile (/= '.') newSg
-            fgName = L.tail . L.dropWhile (/= '.') $ newSg
-        newSgData <- case Data.Map.lookup sgName (subgoals curState) of
-            Nothing -> tacError "No valid switch."
-            Just res -> return res
-        (fs, tac) <- case inProgressFunctionalProof newSgData of
-            Nothing -> tacError "No valid switch."
-            Just res -> return res
-        _ <- (if Data.Map.member fgName (FT.subgoals fs) then return () else tacError "No valid switch.")
-        ST.modify (\s -> s { curSubgoal = sgName, subgoals = Data.Map.insert sgName (newSgData { inProgressFunctionalProof = Just (fs { FT.curSubgoal = fgName }, tac) }) (subgoals s) })
-        return $ "Switched subgoal to " ++ newSg)
+-- _Switch :: Monad m => String -> Tactic m
+-- _Switch newSg = do
+--     validSwitch <- Data.Map.member newSg <$> ST.gets subgoals
+--     if validSwitch
+--     then (do
+--         --ST.modify (\s -> s{curSubgoal = newSg})
+--         return $ "Switched subgoal to " ++ newSg)
+--     else (do
+--         curState <- ST.get
+--         let sgName = L.takeWhile (/= '.') newSg
+--             fgName = L.tail . L.dropWhile (/= '.') $ newSg
+--         newSgData <- case Data.Map.lookup sgName (subgoals curState) of
+--             Nothing -> tacError "No valid switch."
+--             Just res -> return res
+--         (fs, tac) <- case inProgressFunctionalProof newSgData of
+--             Nothing -> tacError "No valid switch."
+--             Just res -> return res
+--         _ <- (if Data.Map.member fgName (FT.subgoals fs) then return () else tacError "No valid switch.")
+--         ST.modify (\s -> s { curSubgoal = sgName, subgoals = Data.Map.insert sgName (newSgData { inProgressFunctionalProof = Just (fs { FT.curSubgoal = fgName }, tac) }) (subgoals s) })
+--         return $ "Switched subgoal to " ++ newSg)
 
-_Defer :: Monad m => Tactic m
-_Defer = do
-    curS <- ST.get
-    let filteredStack = L.filter (\name -> maybe False (not . isUsed) (Data.Map.lookup name (subgoals curS))) (nextSubgoalStack curS)
+_Defer :: Monad m => ProofState m -> ProofState m
+_Defer curS =
+    let
+        filteredStack = L.filter (\name -> maybe False (not . isUsed) (Data.Map.lookup name (subgoals curS))) (openGoalStack curS)
         newStack = if L.null filteredStack then filteredStack else tail filteredStack ++ [head filteredStack]
-    ST.modify (\s -> s { nextSubgoalStack = newStack, curSubgoal = fromMaybe "" (listToMaybe newStack) })
-    return $ "Deferred subgoal." ++ show filteredStack
+    in
+        curS { openGoalStack = newStack }
+
+_Prefer :: Monad m => ProofState m -> Int ->  ProofState m
+_Prefer curS i =
+    let
+        curSgs = openGoalStack curS
+        (hs, ts) = L.splitAt i curSgs
+    in
+        if i >= L.length curSgs
+        then curS
+        else curS { openGoalStack = head ts : (hs ++ tail ts) }
 
 _PrintTheorems :: Monad m => ProofState m -> ProofState m
 _PrintTheorems s = let

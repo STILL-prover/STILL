@@ -21,7 +21,7 @@ functionalTermRightAction = do
     sg <- getCurrentSubgoal
     seq <- getCurrentSequent
     let fullTac p = do
-            ST.modify (\s1 -> s1 { curSubgoal = curSubgoal curState })
+            --ST.modify (\s1 -> s1 { curSubgoal = curSubgoal curState })
             functionalTermRightTac p
     case goalProposition seq of
         Lift t -> (do
@@ -125,7 +125,7 @@ forallLeftAction = do
     sg <- getCurrentSubgoal
     seq <- getCurrentSequent
     let fullTac p = do
-            ST.modify (\s1 -> s1 { curSubgoal = curSubgoal curState })
+            --ST.modify (\s1 -> s1 { curSubgoal = curSubgoal curState })
             forallLeftTac i p
     case Data.Map.lookup i $ linearContext seq of
         Just (Forall x t a) -> (do
@@ -149,7 +149,7 @@ existsRightAction = do
     sg <- getCurrentSubgoal
     seq <- getCurrentSequent
     let fullTac p = do
-            ST.modify (\s1 -> s1 { curSubgoal = curSubgoal curState })
+            --ST.modify (\s1 -> s1 { curSubgoal = curSubgoal curState })
             existsRightTac p
     case goalProposition seq of
         (Exists x t a) -> (do
@@ -180,7 +180,7 @@ availableSubgoalsAction = do
 switchSubgoalAction :: Tactic IO
 switchSubgoalAction = do
     nextSubgoal <- liftIO Prelude.getLine
-    ST.modify (\s -> s { curSubgoal = nextSubgoal })
+    --ST.modify (\s -> s { curSubgoal = nextSubgoal })
     return $ "Switched to " ++ nextSubgoal
 
 thenTacticalAction :: Tactic IO
