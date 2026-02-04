@@ -23,6 +23,7 @@
 :done
 -- z(a).z(Y).a[Y].[a <-> z]
 
+-- By hand.
 :theorem "one" forall X:stype. (1 + X -o X) -o X
 :apply _Cut (Implication (Forall2 "X" (Implication (Implication (Plus Unit (TyVar "X")) (TyVar "X")) (TyVar "X"))) (Forall2 "Y" (Implication (Implication (Plus Unit (TyVar "Y")) (TyVar "Y")) (TyVar "Y"))))
 :apply _Cut (Forall2 "X" (Implication (Implication (Plus Unit (TyVar "X")) (TyVar "X")) (TyVar "X")))
@@ -45,3 +46,14 @@
 :done
 -- one: ; ; ;  |- z:∀X. (1 ⊕ X ⊸ X) ⊸ X
 -- (ν a)(a(b).a(Y).b[Y].[b <-> a]) | ((ν c)(c(X).c(d).(ν e)d[e].(e.inl;0) | ([d <-> c])) | ((ν f)a[f].([c <-> f]) | (z(X).a[X].[a <-> z])))
+
+-- Use previous theorems.
+:theorem "two" forall X:stype. (1 + X -o X) -o X
+:apply _CutTheorem "one"
+:apply _CutTheorem "succ"
+:apply _ImpliesLA
+:apply _Forall2R
+:apply _Forall2L "b" (TyVar "X")
+:apply _IdA
+:apply _IdA
+:done

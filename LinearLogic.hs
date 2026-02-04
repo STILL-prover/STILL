@@ -24,7 +24,7 @@ import FunctionalSystem
       FunctionalContext,
       FunctionalProof,
       FunctionalSequent(goalTerm, goalType, functionalContext),
-      FunctionalTerm(Var) )
+      FunctionalTerm(Var), renameVarInFnProof )
 import Util
 import qualified Debug.Trace as DBG
 
@@ -524,6 +524,8 @@ data Proof = IdRule String String (S.Set String) FunctionalContext Context Recur
     | TyVarRule RecursiveBindings String [String]
     | ReplWeakening String Proposition Proof
     | FnWeakening String FunctionalTerm Proof
+    | TyVarWeakening String Proof
+    | RecBindingWeakening String ([String], BindingSequent) Proof
     | HoleRule (S.Set String) FunctionalContext Context Context RecursiveBindings String Proposition
     deriving (Eq, Show, Read)
 
@@ -562,10 +564,87 @@ getProofNames (TyNuLeftRule c x p) = S.fromList [c, x] `S.union` getProofNames p
 getProofNames (TyVarRule eta x zs) = S.insert x $ S.fromList zs `S.union` getRecursiveBindingsNames eta
 getProofNames (ReplWeakening u prop proof) = S.insert u $ propNames prop `S.union` getProofNames proof
 getProofNames (FnWeakening a fterm proof) = S.insert a $ functionalNames fterm `S.union` getProofNames proof
+getProofNames (TyVarWeakening a proof) = S.insert a $ getProofNames proof
+getProofNames (RecBindingWeakening a (ps, bs) proof) = S.fromList (a:ps) `S.union` getBindingSequentNames bs `S.union` getProofNames proof
 getProofNames (HoleRule tv fc uc lc eta z p) = tv `S.union` getFunctionalContextNames fc `S.union` getContextNames uc `S.union` getContextNames lc `S.union` propNames p `S.union` S.singleton z `S.union` getRecursiveBindingsNames eta
 
 isFreshInProof :: String -> Proof -> Bool
 isFreshInProof x p = not $ x `S.member` getProofNames p
+
+{-| renameVarInProof x y = P[x/y]. Rename y with x in proof P. -}
+renameVarInProof :: Proof -> String -> String -> Proof
+renameVarInProof p x y = if isFreshInProof x p
+    then go p
+    else renameVarInProof (renameVarInProof p newFreshName x) x y -- Rename x first, then y
+    where
+        allVars = S.fromList [x, y] `S.union` getProofNames p
+
+        newFreshName :: String
+        newFreshName = getFreshName $ S.fromList [x, y] `S.union` getProofNames p
+
+        swap :: String -> String
+        swap test = if test == y then x else test
+        swapSet :: S.Set String -> S.Set String
+        swapSet = (swap `S.map`)
+
+        swapFTerm :: FunctionalTerm -> FunctionalTerm
+        swapFTerm t = functionalSubst t (Var x) y
+
+        swapFn :: FunctionalContext -> FunctionalContext
+        swapFn fnCtx = Data.Map.fromList $ (\(k, a) -> (swap k, functionalSubst a (Var x) y)) <$> Data.Map.toList fnCtx
+
+        swapCtx :: Context -> Context
+        swapCtx ctx = Data.Map.fromList $ (\(k, a) -> (swap k, substVarProp a x y)) <$> Data.Map.toList ctx
+
+        swapBinding :: BindingSequent -> BindingSequent
+        swapBinding (BindingSequent tv fc uc lc c v) = BindingSequent (swap `S.map` tv) (swapFn fc) (swapCtx uc) (swapCtx lc) (swap c) (swap v)
+
+        swapRec :: RecursiveBindings -> RecursiveBindings
+        swapRec eta = Data.Map.fromList $ (\(k, (ps, bs)) -> (swap k, (swap <$> ps, swapBinding bs))) <$> Data.Map.toList eta
+
+        swapProp :: Proposition -> Proposition
+        swapProp p = substVarProp p x y
+
+        swapFnProof :: FunctionalProof -> FunctionalProof
+        swapFnProof p = renameVarInFnProof allVars p x y
+
+        go :: Proof -> Proof
+        go (IdRule x z tv fc c eta p) = IdRule (swap x) (swap z) (swapSet tv) (swapFn fc) (swapCtx c) (swapRec eta) (swapProp p)
+        go (FunctionalTermRightRule z p tv c eta) = FunctionalTermRightRule (swap z) (swapFnProof p) (swap `S.map` tv) (swapCtx c) (swapRec eta)
+        go (FunctionalTermLeftRule x p) = FunctionalTermLeftRule (swap x) (go p)
+        go (UnitRightRule z tv fc uc eta) = UnitRightRule (swap z) (swapSet tv) (swapFn fc) (swapCtx uc) (swapRec eta)
+        go (UnitLeftRule x p) = UnitLeftRule (swap x) (go p)
+        go (ReplicationRightRule z p) = ReplicationRightRule (swap z) (go p)
+        go (ReplicationLeftRule u x p) = ReplicationLeftRule (swap u) (swap x) (go p)
+        go (CopyRule u y p) = CopyRule (swap u) (swap y) (go p)
+        go (WithRightRule p1 p2) = WithRightRule (go p1) (go p2)
+        go (WithLeft1Rule z prop p) = WithLeft1Rule (swap z) (swapProp prop) (go p)
+        go (WithLeft2Rule z prop p) = WithLeft2Rule (swap z) (swapProp prop) (go p)
+        go (TensorRightRule p1 p2) = TensorRightRule (go p1) (go p2)
+        go (TensorLeftRule x y p) = TensorLeftRule (swap x) (swap y) (go p)
+        go (PlusRight1Rule prop p) = PlusRight1Rule (swapProp prop) (go p)
+        go (PlusRight2Rule prop p) = PlusRight2Rule (swapProp prop) (go p)
+        go (PlusLeftRule x p1 p2) = PlusLeftRule (swap x) (go p1) (go p2)
+        go (ImpliesRightRule x p) = ImpliesRightRule (swap x) (go p)
+        go (ImpliesLeftRule x p1 p2) = ImpliesLeftRule (swap x) (go p1) (go p2)
+        go (ForallRightRule x p) = ForallRightRule (swap x) (go p)
+        go (ForallLeftRule x y p1 p2) = ForallLeftRule (swap x) (swap y) (swapFnProof p1) (go p)
+        go (ExistsRightRule x p1 p2) = ExistsRightRule (swap x) (swapFnProof p1) (go p)
+        go (ExistsLeftRule x y p) = ExistsLeftRule (swap x) (swap y) (go p)
+        go (ForallRight2Rule x p) = ForallRight2Rule (swap x) (go p)
+        go (ForallLeft2Rule x y p1 p2) = ForallLeft2Rule (swap x) (swap y) (swapProp p1) (go p2)
+        go (ExistsRight2Rule x p1 p2) = ExistsRight2Rule (swap x) (swapProp p1) (go p2)
+        go (ExistsLeft2Rule x y p) = ExistsLeft2Rule (swap x) (swap y) (go p)
+        go (CutRule p1 p2) = CutRule (go p1) (go p2)
+        go (CutReplicationRule u p1 p2) = CutReplicationRule (swap u) (go p1) (go p2)
+        go (TyNuRightRule x zs p) = TyNuRightRule (swap x) (swap <$> zs) (go p)
+        go (TyNuLeftRule c x p) = TyNuLeftRule (swap c) (swap x) (go p)
+        go (TyVarRule eta x zs) = TyVarRule (swapRec eta) (swap x) (swap <$> zs)
+        go (ReplWeakening u prop proof) = ReplWeakening (swap u) (swapProp prop) (go proof)
+        go (FnWeakening a fterm proof) = FnWeakening (swap a) (swapFTerm fterm) (go p)
+        go (TyVarWeakening a proof) = TyVarWeakening (swap a) (go p)
+        go (RecBindingWeakening a (ps, bs) p) = RecBindingWeakening (swap a) ((swap <$> ps), (swapBinding bs)) (go p)
+        go (HoleRule tv fc uc lc eta z p) = HoleRule (swapSet tv) (swapFn fc) (swapCtx uc) (swapCtx lc) (swapRec eta) (swap z) (swapProp p)
 
 {-| A{y/N} replace N with y in A. -}
 abstTerm :: Proposition -> String -> FunctionalTerm -> Proposition
@@ -821,6 +900,12 @@ concl (ReplWeakening u prop proof) = do
 concl (FnWeakening a ft p) = do
     j <- concl p
     return $ j { fnContext = Data.Map.insert a ft $ fnContext j }
+concl (TyVarWeakening a p) = do
+    j <- concl p
+    return $ j { tyVarContext = S.insert a $ tyVarContext j }
+concl (RecBindingWeakening a (ps, bs) p) = do
+    j <- concl p
+    return $ j { recursiveBindings = Data.Map.insert a (ps, bs) $ recursiveBindings j }
 concl (HoleRule tv fc uc lc eta z p) = return $ Sequent { tyVarContext = tv, fnContext = fc, unrestrictedContext = uc, linearContext = lc, recursiveBindings = eta, channel = z, goalProposition = p }
 
 validBindingSequent :: BindingSequent -> Bool
@@ -1062,6 +1147,14 @@ verifyProofM (FnWeakening a ft proof) = do
     _ <- justTrue <$> verifyProofM proof
     seq <- concl proof
     return . not . Data.Map.member a $ fnContext seq
+verifyProofM (TyVarWeakening a proof) = do
+    _ <- justTrue <$> verifyProofM proof
+    seq <- concl proof
+    return . not . S.member a $ tyVarContext seq
+verifyProofM (RecBindingWeakening a (ps, bs) proof) = do
+    _ <- justTrue <$> verifyProofM proof
+    seq <- concl proof
+    return . not . Data.Map.member a $ recursiveBindings seq
 verifyProofM (HoleRule tv fc uc lc z p eta) = return False
 
 {-|
@@ -1206,6 +1299,8 @@ extractProcess rule@(CutReplicationRule u p1 p2) = do
     return (Nu u $ ParallelComposition (ReplicateReceive u (channel oldSeq2) process1) process2, seq)
 extractProcess rule@(ReplWeakening u prop proof) = extractProcess proof
 extractProcess rule@(FnWeakening u prop proof) = extractProcess proof
+extractProcess rule@(TyVarWeakening u proof) = extractProcess proof
+extractProcess rule@(RecBindingWeakening x _ proof) = extractProcess proof
 extractProcess rule@(HoleRule tv fc uc lc eta z p) = do
     seq <- concl rule
     return (HoleTerm, seq)
