@@ -13,6 +13,8 @@ import qualified Data.Set as S
 import qualified Data.String
 import FunctionalSystem (ftToS)
 import FunctionalTactics (ftseqToSHelper)
+import qualified System.FilePath
+import qualified System.Directory
 
 fcToS :: FS.FunctionalContext -> String
 fcToS = M.foldlWithKey (\acc k t -> acc ++ k ++ ":" ++ ftToS t) ""
@@ -110,4 +112,34 @@ printCommands = do
 removeNewlines :: String -> String
 removeNewlines args = L.unwords (L.lines args)
 
+-- Get file name
+-- Move to directory
+-- call script
+loadFileInternal :: String -> IO String
+loadFileInternal fn = do
+    let --newDir = System.FilePath.takeDirectory absolutFilePath
+        cmds = ["tempS = it"
+            , "oldDir <- System.Directory.getCurrentDirectory"
+            , "_dirStack = oldDir:_dirStack"
+            , "absoluteFilePath <- System.Directory.makeAbsolute \"" ++ fn ++ "\""
+            , "newDir = System.FilePath.takeDirectory absoluteFilePath"
+            , "System.Directory.setCurrentDirectory newDir"
+            , "fn = System.FilePath.takeFileName absoluteFilePath"
+            , ":run_script_internal fn"
+            , "tempS = it"
+            , "System.Directory.setCurrentDirectory (head _dirStack)"
+            , "_dirStack = tail _dirStack"
+            , "tempS"]
+    return (L.intercalate "\n" cmds)
 
+loadFileDebug :: String -> String -> IO String
+loadFileDebug curDir fn = loadFileInternal fn >>= (\cmds -> return $ cmds ++ "\n:print_theorems")
+
+loadFileSilent :: String -> String -> IO String
+loadFileSilent curDir fn = do
+    cmds <- loadFileInternal fn
+    return ((":set -interactive-print GhciUtil.ghciNoPrintFn\n" ++ cmds) ++ "\n:set -interactive-print GhciUtil.ghciPrintFn\n:print_theorems")
+
+runScript :: String -> IO String
+runScript fn = do
+    readFile fn

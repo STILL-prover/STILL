@@ -3,7 +3,7 @@
 -- In general the least fix point requires a replicating term. Toninho and Yoshida: ALL X . !(1 + X -o X) -o X.
 -- But linear natural numbers seem to work.
 -- Recursive Types for Free by Wadler 1990 https://homepages.inf.ed.ac.uk/wadler/papers/free-rectypes/free-rectypes.txt
-:init "SecondOrder"
+:init "second-order"
 
 :theorem "z" forall X : stype. (1 + X -o X) -o X
 -- :theorem "ztest" Forall2 "X" (Implication (Implication (Plus Unit (TyVar "X")) (TyVar "X")) (TyVar "X"))
@@ -57,3 +57,5 @@
 :apply _IdA
 :apply _IdA
 :done
+
+:end_module

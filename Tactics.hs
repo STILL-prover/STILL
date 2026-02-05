@@ -904,15 +904,7 @@ repeatTactical :: Monad m => Tactic m -> Tactic m
 repeatTactical t = t `thenTactical` (repeatTactical t `altTactical` return "Repeat applied")
 
 initCleanState :: String -> ProofState m
-initCleanState mName =
-    let
-        channelVar = []
-        linearVars = []
-        unrestrictedVars = []
-        fnVars = []
-        allVars = []
-    in
-        S { subgoals = Data.Map.empty, uniqueNameVars = Data.Map.empty, usedSubgoalNames = S.empty, outputs = ["Ready to begin!"], curTheoremName = "", curModuleName = mName, theorems = Data.Map.empty, loadedModules = Data.Map.empty, openGoalStack = [] }
+initCleanState mName = S { subgoals = Data.Map.empty, uniqueNameVars = Data.Map.empty, usedSubgoalNames = S.empty, outputs = ["Ready to begin!"], curTheoremName = "", curModuleName = mName, theorems = Data.Map.empty, loadedModules = Data.Map.empty, openGoalStack = [] }
 
 {-| Assumes the initial  subgoal has no assumptions in -}
 -- initializeState :: String -> Subgoal m -> ProofState m
@@ -982,6 +974,9 @@ done res = case runIdentity (verifyGeneral res) of
 
 _Init :: String -> ProofState Identity
 _Init = initCleanState
+
+_BeginModule :: Monad m => ProofState m -> String -> ProofState m
+_BeginModule s m = s { subgoals = Data.Map.empty, uniqueNameVars = Data.Map.empty, usedSubgoalNames = S.empty, outputs = ["Module started: " ++ m], curTheoremName = "", curModuleName = m, theorems = Data.Map.empty, openGoalStack = [] }
 
 -- _Clear :: String -> Proposition -> ProofState Identity
 -- _Clear = clear
@@ -1359,11 +1354,12 @@ _LoadModule curState moduleData = curState {
         outputs = ("Loaded module: " ++ curModuleName moduleData):outputs curState
     }
 
-_SaveModule :: Monad m => ProofState m -> String -> ProofState m
-_SaveModule curState mName = curState {
+_SaveModule :: Monad m => ProofState m -> ProofState m
+_SaveModule curState = curState {
     theorems = Data.Map.empty,
-    loadedModules = Data.Map.insert mName (theorems curState) (loadedModules curState),
-    outputs = ("Saved theorems as module: " ++ mName):outputs curState
+    curModuleName = "",
+    loadedModules = Data.Map.insert (curModuleName curState) (theorems curState) (loadedModules curState),
+    outputs = ("Saved theorems as module: " ++ curModuleName curState):outputs curState
 }
 
 _TestDisallowedVars :: Monad m => Tactic m

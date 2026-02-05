@@ -1,0 +1,9 @@
+:load_file ./second-order.still
+
+:begin_module "server-client"
+
+:theorem "succ-one" 1
+:apply _UnitR
+:done
+
+:end_module
