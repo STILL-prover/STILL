@@ -109,5 +109,3 @@ printCommands = do
 
 removeNewlines :: String -> String
 removeNewlines args = L.unwords (L.lines args)
-
-

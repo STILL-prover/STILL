@@ -1,78 +1,87 @@
 module Main where
 
-import Data.Map
-import qualified Data.Set as S
-import qualified Control.Monad.State.Lazy as ST
-import qualified Data.List as L
-import Control.Monad (when)
-import Text.Read (readMaybe)
-import Data.Maybe (isJust, fromMaybe)
-import FunctionalSystem
-import Util
-import LinearLogic
-import Tactics
-import TacticsIO
-import FunctionalTactics (_FAx, _FWF, _FVar, _FVarA, _FPi, _FLambda, _FApp, _FSigma, _FPair, _FProj1, _FProj2, _FCumulativity, _FSimp, _FExact, _FExactKnown, _FThen, _FRepeat, _FAlt, _FSkip)
-import qualified FunctionalTactics as FT
-import qualified AC
-import GhciUtil
-import Control.Monad.Identity (Identity (runIdentity))
-import PropParser
+import System.IO
+import System.Directory (getModificationTime, doesFileExist)
+import System.Environment (getArgs)
+import Control.Concurrent (threadDelay)
+import Control.Exception (catch, IOException)
+import Data.Time.Clock (UTCTime)
 
-viewJustificationsLoop :: ProofState IO -> IO ()
-viewJustificationsLoop s = do
-    Prelude.putStrLn ("Enter subgoal to see justification (exit to quit): " ++ L.drop 1 (L.foldl' (\acc n -> acc ++ " " ++ n) "" $ Data.Map.keys (subgoals s)))
-    a <- Prelude.getLine
-    if a == "exit"
-    then return ()
-    else case Data.Map.lookup a $ subgoals s of
-        Just sg -> (do
-            res <- runProofState (subgoalJustification sg) s
-            case res of
-                Right (p, newState) -> (do
-                    Prelude.print p
-                    if verifyProof p then Prelude.putStrLn "Valid proof" >>= (\() -> Prelude.putStrLn (case extractProcess p of Right (p, seq) -> pToS p ++ "\n" ++ seqToS seq ; Left e -> "Error: " ++ e)) else Prelude.putStrLn "Not a valid proof"
-                    viewJustificationsLoop s)
-                Left err -> Prelude.putStrLn err >>= (\a -> viewJustificationsLoop s))
-        Nothing -> Prelude.putStrLn ("Could not find the subgoal " ++ a) >>= (\a -> viewJustificationsLoop s)
+runMyLogic :: String -> String
+runMyLogic content = 
+    let lineCount = length (lines content)
+        wordCount = length (words content)
+    in  "  [Result] Lines: " ++ show lineCount ++ ", Words: " ++ show wordCount
 
-mainLoop :: ProofState IO -> IO ()
-mainLoop s = do
-    if Data.Map.member (curSubgoal s) (subgoals s)
-    then (do
-        Prelude.putStrLn "Current state:"
-        Prelude.putStrLn $ "Current subgoal: " ++ curSubgoal s
-        Prelude.putStrLn $ "Sequent: " ++ seqToS (sequent (subgoals s! curSubgoal s))
-        Prelude.putStrLn "Enter a tactic: "
-        (i :: String) <- Prelude.getLine
-        when (L.any (\a -> fst a == i) actions) $ do
-            let nextTactic = snd . head $ L.filter (\a -> fst a == i) actions
-            tacRes <- runProofState nextTactic s
-            case tacRes of
-                Right (res, newState) -> (do
-                    Prelude.putStrLn res
-                    mainLoop newState)
-                Left err -> (do
-                    Prelude.putStrLn err
-                    mainLoop s))
-    else (do
-        case Data.Map.lookup "?a" $ subgoals s of
-            Just sg -> (do
-                res <- runProofState (subgoalJustification sg) s
-                case res of
-                    Right (p, newState) -> (do
-                        Prelude.print p
-                        if verifyProof p then Prelude.putStrLn "Proof has been verified" >>= (\a -> Prelude.putStrLn (case extractProcess p of Right (p, seq) -> pToS p ++ "\n" ++ seqToS seq ; Left e -> "Error: " ++ e)) else Prelude.putStrLn "Not a valid proof"
-                        viewJustificationsLoop s)
-                    Left err -> Prelude.putStrLn err >>= (\a -> viewJustificationsLoop s))
-            Nothing -> Prelude.putStrLn "There is an issue finding the initial subgoal" >>= (\() -> viewJustificationsLoop s))
+main :: IO ()
+main = do
+    hSetBuffering stdout NoBuffering -- Ensures prompts appear immediately
+    args <- getArgs
+    case args of
+        ("watch":fileName:[]) -> startWatcher fileName
+        ("watch":[])          -> startWatcher "data.txt"
 
--- mainInit :: IO ()
--- mainInit = do
---     Prelude.putStrLn "Please enter the proposition in the sequent you would like to prove. Empty to begin proving. e.g. Par (Par (Dual \"A\") (Dual \"B\")) (Times (Var \"B\") (Var \"A\"))"
---     initialSeq <- Prelude.getLine
---     mainLoop $ initializeState "test" (initializeProof (Sequent { fnContext = Data.Map.empty, unrestrictedContext = Data.Map.empty, linearContext = Data.Map.empty, recursiveBindings = Data.Map.empty, channel = "z", goalProposition = Prelude.read initialSeq }))
+        -- REPL Mode (User typed: ./still repl)
+        ("repl":_) -> startRepl
 
-main = putStrLn "Command line interface is not complete should run the prover using GHCi" --mainInit
+-- ==========================================
+-- REPL IMPLEMENTATION (Interactive Mode)
+-- ==========================================
+startRepl :: IO ()
+startRepl = do
+    putStrLn "--- Interactive Mode (Type :q to quit) ---"
+    replLoop
 
+replLoop :: IO ()
+replLoop = do
+    putStr "Logic> " -- The Prompt
+    
+    -- Check for End of File (Ctrl+D)
+    done <- isEOF
+    if done 
+        then putStrLn "\nGoodbye!"
+        else do
+            input <- getLine
+            if input `elem` [":q", "quit", "exit"]
+                then putStrLn "Goodbye!"
+                else do
+                    -- Run the logic on the input line
+                    putStrLn (runMyLogic input)
+                    -- Loop back to the start
+                    replLoop
 
+-- ==========================================
+-- WATCHER IMPLEMENTATION (File Mode)
+-- ==========================================
+startWatcher :: FilePath -> IO ()
+startWatcher targetFile = do
+    putStrLn $ "Watching " ++ targetFile ++ " ... (Ctrl+C to stop)"
+
+    exists <- doesFileExist targetFile
+    if not exists then writeFile targetFile "" else return ()
+
+    initialTime <- getModificationTime targetFile
+    initialContent <- readFileSafe targetFile
+    putStrLn (runMyLogic initialContent)
+
+    watchLoop targetFile initialTime
+
+watchLoop :: FilePath -> UTCTime -> IO ()
+watchLoop filePath lastModified = do
+    threadDelay 1000000 -- 1 second
+    exists <- doesFileExist filePath
+    if not exists
+        then watchLoop filePath lastModified
+        else do
+            currentModified <- getModificationTime filePath
+            if currentModified > lastModified
+                then do
+                    putStrLn $ "\n[Change detected in " ++ filePath ++ "]"
+                    content <- readFileSafe filePath
+                    putStrLn (runMyLogic content)
+                    watchLoop filePath currentModified
+                else 
+                    watchLoop filePath lastModified
+
+readFileSafe :: FilePath -> IO String
+readFileSafe path = catch (readFile path) (\e -> let _ = (e :: IOException) in return "")
