@@ -1,6 +1,6 @@
 module commutative begin
 -- Implication (Tensor (Lift (Var "A")) (Lift (Var "B"))) (Tensor (Lift (Var "B")) (Lift (Var "A")))
-theorem tensor: "$A * $B -o $B * $A"
+theorem tensor: "A * B -o B * A"
 apply ImpliesR
 apply TensorLA
 apply TensorR
@@ -10,7 +10,7 @@ done
 -- z(a).a(b).(ν c)z[c].([a <-> c]) | ([b <-> z])
 
 -- :theoremP "with" Implication (With (Lift (Var "A")) (Lift (Var "B"))) (With (Lift (Var "B")) (Lift (Var "A")))
-theorem with: "$A & $B -o $B & $A"
+theorem with: "A & B -o B & A"
 apply ImpliesR
 apply WithR
 apply WithL1A
@@ -19,3 +19,11 @@ apply WithL2A
 apply IdA
 done
 -- z(a).z.case(a.inr;[a <-> z], a.inl;[a <-> z])
+
+theorem tenTensor: "A * B * C * D * E * F * G * H * I * J -o A * B * C * D * E * F * G * H * I * J"
+apply ImpliesR; TensorLA+; (TensorR; (IdA <|> Skip))+
+done
+
+theorem hundredTensor: "a * b * c * d * e * f * g * h * i * j * k * l * m * n * o * p * q * r * s * t * u * v * w * x * y * z * a1 * b1 * c1 * d1 * e1 * f1 * g1 * h1 * i1 * j1 * k1 * l1 * m1 * n1 * o1 * p1 * q1 * r1 * s1 * t1 * u1 * v1 * w1 * x1 * y1 * z1 * a2 * b2 * c2 * d2 * e2 * f2 * g2 * h2 * i2 * j2 * k2 * l2 * m2 * n2 * o2 * p2 * q2 * r2 * s2 * t2 * u2 * v2 * w2 * x2 * y2 * z2 * a3 * b3 * c3 * d3 * e3 * f3 * g3 * h3 * i3 * j3 * k3 * l3 * m3 * n3 * o3 * p3 * q3 * r3 * s3 * t3 * u3 * v3 -o a * b * c * d * e * f * g * h * i * j * k * l * m * n * o * p * q * r * s * t * u * v * w * x * y * z * a1 * b1 * c1 * d1 * e1 * f1 * g1 * h1 * i1 * j1 * k1 * l1 * m1 * n1 * o1 * p1 * q1 * r1 * s1 * t1 * u1 * v1 * w1 * x1 * y1 * z1 * a2 * b2 * c2 * d2 * e2 * f2 * g2 * h2 * i2 * j2 * k2 * l2 * m2 * n2 * o2 * p2 * q2 * r2 * s2 * t2 * u2 * v2 * w2 * x2 * y2 * z2 * a3 * b3 * c3 * d3 * e3 * f3 * g3 * h3 * i3 * j3 * k3 * l3 * m3 * n3 * o3 * p3 * q3 * r3 * s3 * t3 * u3 * v3"
+apply ImpliesR; TensorLA+; (TensorR; (IdA <|> Skip))+
+done

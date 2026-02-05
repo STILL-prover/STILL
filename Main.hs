@@ -5,15 +5,18 @@ import System.Directory (getModificationTime, doesFileExist)
 import System.Environment (getArgs)
 import Control.Concurrent (threadDelay)
 import Control.Exception (catch, IOException)
-import Data.Time.Clock (UTCTime)
+import Data.Time.Clock (UTCTime, getCurrentTime, diffUTCTime)
 import qualified Data.Map as Map
 import qualified Data.Set as S
 import Control.Monad.Identity (Identity, runIdentity)
 
-import Tactics (ProofState(..)) -- Ensure you import necessary types
+import Tactics (ProofState(..), Theorem (proofObject, numberOfSubgoals)) -- Ensure you import necessary types
 import LinearLogic
 import STILLParser (parseFile, parseStringCommand)
 import DisplayUtil
+import Data.List (intercalate)
+import Data.Map (toList)
+import Data.Time (formatTime, defaultTimeLocale)
 
 -- ==========================================
 -- 1. State Initialization
@@ -55,33 +58,33 @@ loadImports :: [String] -> ProofState Identity -> IO (ProofState Identity)
 loadImports [] s = return s
 loadImports (m:ms) s = do
     if Map.member m (loadedModules s)
-        then loadImports ms s -- Already loaded
+    then loadImports ms s -- Already loaded
+    else do
+        let filename = m ++ ".still" -- Assumption: Module X is in X.still
+        exists <- doesFileExist filename
+        if not exists
+        then do
+            putStrLn $ "[Warning] Import not found: " ++ filename
+            loadImports ms s
         else do
-            let filename = m ++ ".still" -- Assumption: Module X is in X.still
-            exists <- doesFileExist filename
-            if not exists
-                then do
-                    putStrLn $ "[Warning] Import not found: " ++ filename
+            content <- readFileSafe filename
+            case parseFile filename content of
+                Left err -> do
+                    putStrLn $ "[Error] Failed to parse import " ++ m ++ ": " ++ show err
                     loadImports ms s
-                else do
-                    content <- readFileSafe filename
-                    case parseFile filename content of
-                        Left err -> do
-                            putStrLn $ "[Error] Failed to parse import " ++ m ++ ": " ++ show err
-                            loadImports ms s
-                        Right (subImports, subCmds) -> do
-                            -- 1. Load recursive imports for this module
-                            s' <- loadImports subImports s
+                Right (subImports, subCmds) -> do
+                    -- 1. Load recursive imports for this module
+                    s' <- loadImports subImports s
 
-                            -- 2. Run module commands on a clean slate (inheriting only loadedModules)
-                            let modState = s' { subgoals = Map.empty, theorems = Map.empty, curModuleName = m, openGoalStack = [] }
-                            let modResult = foldl (\st f -> f st) modState subCmds
+                    -- 2. Run module commands on a clean slate (inheriting only loadedModules)
+                    let modState = s' { subgoals = Map.empty, theorems = Map.empty, curModuleName = m, openGoalStack = [] }
+                    let modResult = foldl (\st f -> f st) modState subCmds
 
-                            -- 3. Store the resulting theorems in the global loadedModules map
-                            let newLoaded = Map.insert m (theorems modResult) (loadedModules s')
+                    -- 3. Store the resulting theorems in the global loadedModules map
+                    let newLoaded = Map.insert m (theorems modResult) (loadedModules s')
 
-                            -- 4. Continue
-                            loadImports ms (s' { subgoals = Map.empty, theorems = Map.empty, openGoalStack = [], loadedModules = newLoaded })
+                    -- 4. Continue
+                    loadImports ms (s' { subgoals = Map.empty, theorems = Map.empty, openGoalStack = [], loadedModules = newLoaded })
 
 -- ==========================================
 -- 3. Main Entry Point
@@ -95,11 +98,39 @@ main = do
         ("watch":fileName:[]) -> startWatcher fileName
         ("watch":[])          -> startWatcher "data.txt"
         ("repl":_)            -> startRepl
-        (fname:[])            -> do -- Run once mode
-            content <- readFileSafe fname
-            result <- runProofScript fname content
-            case result of Left e -> putStrLn e; Right fs -> putStrLn $ unlines (reverse (outputs fs))
+        ("benchmark":fnames)  -> runScripts True fnames
+        (fname:fnames)        -> runScripts False (fname:fnames)
         []                    -> startRepl
+    where
+        runScripts :: Bool -> [String] -> IO ()
+        runScripts diag [] = return ()
+        runScripts diag (fname:fnames) = do
+            putStrLn $ "Running: " ++ fname
+            runScript diag fname
+            if null fnames then return () else putStrLn "" >> putStrLn ""
+            runScripts diag fnames
+            return ()
+        
+        runScript :: Bool -> String -> IO ()
+        runScript diagnostic fname = do
+            startTime <- getCurrentTime
+            content <- readFileSafe fname
+            afterReadTime <- getCurrentTime
+            result <- runProofScript fname content
+            endTime <- getCurrentTime
+            case result of
+                Left e -> putStrLn e
+                Right fs -> if diagnostic
+                    then putStrLn (getDiagnostics startTime afterReadTime endTime fs)
+                    else putStrLn $ unlines (reverse (outputs fs))
+
+getDiagnostics st at et s = intercalate "\n" (("Ran in " ++ formatTime defaultTimeLocale "%Es" totalDiffTime ++ " seconds total."):
+    if modulePrint == "" then [localTs] else [modulePrint, localTs])
+    where
+        totalDiffTime = diffUTCTime et st
+        runExecuteDiffTime = diffUTCTime et at
+        localTs = intercalate "\n" $ filter (/= "") $ (\(n, i) -> n ++ ": " ++ show i ++ " subgoals in proof") <$> toList (numberOfSubgoals <$> theorems s)
+        modulePrint = intercalate "\n" $ filter (/= "") $ (\(mName, moduleTheorems) -> intercalate "\n" $ filter (/= "") $ (\(n, i) -> mName ++ "." ++ n ++ ": " ++ show i ++ " subgoals in proof.") <$> Data.Map.toList (numberOfSubgoals <$> moduleTheorems)) <$> Data.Map.toList (loadedModules s)
 
 -- ==========================================
 -- 4. REPL Implementation
@@ -127,7 +158,6 @@ replLoop currentState = do
                         replLoop currentState
                     Right cmdFunc -> do
                         let newState = cmdFunc currentState
-                        -- Print only the NEW output (head of the list)
                         mainPrinter (Right newState)
                         replLoop newState
 

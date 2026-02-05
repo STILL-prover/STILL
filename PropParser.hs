@@ -162,7 +162,7 @@ propAtom = parens proposition
 
 parseLift :: Parser Proposition
 parseLift = do
-    reservedOp "$"
+    Tok.lexeme lexer (oneOf "$")
     t <- fTerm
     return (Lift t)
 
