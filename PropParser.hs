@@ -21,6 +21,7 @@ lexer = Tok.makeTokenParser style
         , Tok.commentStart = "{-"
         , Tok.commentEnd = "-}"
         , Tok.reservedOpNames = ops
+        , Tok.opLetter = oneOf ">o"
         , Tok.reservedNames = names
         , Tok.identStart = letter
         , Tok.identLetter = alphaNum <|> char '_' <|> char '\''
@@ -167,7 +168,7 @@ parseLift = do
 
 -- Handles forall, exists, forall2, exists2, nu
 parseQuantifiers :: Parser Proposition
-parseQuantifiers = try (parseForall2) <|> try (parseExists2) <|> parseForall <|> parseExists <|> parseNu
+parseQuantifiers = (try parseForall2) <|> (try parseExists2) <|> parseForall <|> parseExists <|> parseNu
 
 -- forall x : A . P
 parseForall :: Parser Proposition

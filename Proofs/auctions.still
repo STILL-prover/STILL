@@ -1,0 +1,100 @@
+module auctions begin
+-- theoremE "receiveBids" Forall "curBid" (Var "nat") (TyNu "Y" (Forall "newBid" (Var "nat") (TyVar "Y")))
+theorem receiveBids: "forall curBid : nat . nu Y . forall newBid : nat . Y"
+apply ForallR
+apply NuR AUC (bid) (curBid)
+apply ForallR
+apply Weaken curBid
+apply TyVar AUC (newBid)
+done
+-- z(curBid).(corec AUC(bid).z(newBid).AUC(newBid)) (curBid)
+
+
+theorem english:
+    "forall ItemType:stype.
+    forall bid:Type 1.
+    forall zeroB:bid.
+    forall validNewB:(Pi b1:bid. Pi b2:bid. Type 1).
+    forall currency:(Pi b:bid.Type 1).
+    ItemType -o
+    (forall b:bid. $currency b -o 1) -o
+    forall firstB:bid.
+    forall firstValid:validNewB zeroB firstB.
+    $currency firstB -o
+    (ItemType + $currency firstB -o 1) -o
+    nu Y. (forall newB:bid.
+        forall nextValid:validNewB firstB newB.
+        $currency newB -o
+        (ItemType + $currency newB -o 1) -o Y) & 1"
+apply Intros
+apply NuR AUC
+    (item, ownerC, curB, winnerChan, oldB, lastB, curValid)
+    (a, c, d, e, zeroB, firstB, firstValid)
+apply WithR
+apply ForallLA
+apply Exact "firstB"
+apply ImpliesLA
+apply UnitLA
+apply ImpliesLA
+apply UnitLA
+apply UnitR
+apply PlusR1
+apply IdA
+apply IdA
+apply ImpliesLA
+apply UnitLA
+apply Intros
+defer
+apply PlusR2
+apply IdA
+apply Weaken zeroB
+apply Weaken firstValid
+apply TyVar AUC (a, c, i, j, firstB, newB, nextValid)
+done
+-- z(ItemType).z(bid).z(zeroB).z(validNewB).z(currency).z(a).z(c).z(firstB).z(firstValid).z(d).z(e).
+--  (corec AUC(item, ownerChan, curBid, winnerChan, oldBid, lastBid, curValid).z.case((ν h)winnerChan[h].(h.inr;[curBid <-> h]) | (z(newB).z(nextValid).z(i).z(j).AUC(item, ownerChan, i, j, lastBid, newB, nextValid)), ownerChan[lastBid].(ν f)ownerChan[f].([curBid <-> f]) | ((ν g)winnerChan[g].(g.inl;[item <-> g]) | (0)) )) (a, c, d, e, zeroB, firstB, firstValid)
+
+-- Demonstrate a different proof and extraction of the english auction.
+-- It receives the new bid before returning the old one. Original english returns then receives the new one.
+theorem english2:
+    "forall ItemType:stype.
+    forall bid:Type 1.
+    forall zeroB:bid.
+    forall validNewB:(Pi b1:bid. Pi b2:bid. Type 1).
+    forall currency:(Pi b:bid.Type 1).
+    ItemType -o
+    (forall b:bid. $currency b -o 1) -o
+    forall firstB:bid.
+    forall firstValid:validNewB zeroB firstB.
+    $currency firstB -o
+    (ItemType + $currency firstB -o 1) -o
+    nu Y. (forall newB:bid.
+        forall nextValid:validNewB firstB newB.
+        $currency newB -o
+        (ItemType + $currency newB -o 1) -o Y) & 1"
+apply Intros
+apply NuR AUC
+    (item, ownerC, curB, winnerC, oldB, lastB, curValid)
+    (a, c, d, e, zeroB, firstB, firstValid)
+apply WithR
+apply ForallLA
+apply Exact "firstB"
+apply ImpliesLA
+apply UnitLA
+apply ImpliesLA
+apply UnitLA
+apply UnitR
+apply PlusR1
+apply IdA
+apply IdA
+apply Intros
+apply ImpliesLA
+apply UnitLA
+defer
+apply PlusR2
+apply IdA
+apply Weaken zeroB
+apply Weaken firstValid
+apply TyVar AUC (a, c, h, i, firstB, newB, nextValid)
+done
+-- z(ItemType).z(bid).z(zeroB).z(validNewB).z(currency).z(a).z(c).z(firstB).z(firstValid).z(d).z(e).(corec AUC(item, ownerC, curB, winnerC, oldB, lastB, curValid).z.case(inl z(newB).z(nextValid).z(h).z(i).((ν j) winnerC[j].(j.inr;[curB <-> j] | AUC(item, ownerC, h, i, lastB, newB, nextValid))), inr ownerC[lastB].((ν f) ownerC[f].([curB <-> f] | (ν g) winnerC[g].(g.inl;[item <-> g] | 0))) )) (a, c, d, e, zeroB, firstB, firstValid)

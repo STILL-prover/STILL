@@ -1,5 +1,5 @@
 {-# LANGUAGE UndecidableInstances #-}
-module GhciUtil where
+module DisplayUtil where
 
 import Tactics
 import qualified Data.List as L

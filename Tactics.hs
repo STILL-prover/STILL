@@ -825,6 +825,32 @@ useModuleProofTac mName tName = do
             else tacError ("Conclusion of the theorem does not match the current goal:\nExpected: " ++ seqToS seq ++ "\nFound: " ++ seqToS conclusion)
             return $ "Applied theorem " ++ mName ++ "." ++ tName)
 
+cutLinearTheoremTac :: Monad m => String -> Tactic m
+cutLinearTheoremTac theoremName = do
+    seq <- getCurrentSequent
+    ms <- ST.gets loadedModules
+    ts <- ST.gets theorems
+    let mName = L.takeWhile (/= '.') theoremName
+        tName = L.drop 1 . L.dropWhile (/= '.') $ theoremName
+        maybeTheorem = if '.' `L.elem` theoremName then (Data.Map.lookup mName ms >>= Data.Map.lookup tName) else (Data.Map.lookup theoremName ts)
+    theorem <- case maybeTheorem of Nothing -> tacError "Could not find the theorem."; Just t -> return t
+    conclusion <- case concl theorem of Left e -> tacError ("Could not get conclusion of theorem: " ++ e); Right c -> return c
+    -- unless (Data.Map.null $ linearContext conclusion) $ tacError "Only theorems with empty linear contexts are supported right now."
+    -- unless (Data.Map.null $ unrestrictedContext conclusion) $ tacError "Only theorems with empty unrestricted contexts are supported right now."
+    -- unless (Data.Map.null $ fnContext conclusion) $ tacError "Only theorems with empty functional contexts are supported right now."
+    -- unless (S.null $ tyVarContext conclusion) $ tacError "Only theorems with empty type variable contexts are supported right now."
+    -- unless (Data.Map.null $ recursiveBindings conclusion) $ tacError "Only theorems with empty recursive binding information are supported right now."
+    newChan <- getFreshVar
+    let newRenamedProof = renameVarInProof theorem newChan (channel conclusion)
+        weakenedUnrestrictedProof = L.foldl' (\proof (k, prop) -> ReplWeakening k prop proof) newRenamedProof (Data.Map.toList (unrestrictedContext seq)) -- Add everything needed for the unrestricted context.
+        weakenedFnProof = L.foldl' (\proof (k, term) -> FnWeakening k term proof) weakenedUnrestrictedProof (Data.Map.toList (fnContext seq)) -- Add everything needed for the functional context.
+        weakenedTyVarProof = L.foldl' (\proof (k) -> TyVarWeakening k proof) weakenedFnProof (S.toList (tyVarContext seq)) -- Add everything needed for the type variable context.
+        weakenedRecBindProof = L.foldl' (\proof (k, b) -> RecBindingWeakening k b proof) weakenedTyVarProof (Data.Map.toList (recursiveBindings seq)) -- Add everything needed for the recursive binding context.
+    newConclusion <- case concl weakenedRecBindProof of Left e -> tacError ("Could not get conclusion of the renamed variable theorem: " ++ e); Right c -> return c
+    freshGoal <- createNewSubgoal (seq { linearContext = Data.Map.insert newChan (goalProposition newConclusion) (linearContext seq) })
+    useCurrentSubgoal Multiplicative . buildJustification1 freshGoal $ CutRule weakenedRecBindProof
+    return $ "Linear theorem cut tactic applied: " ++ propToS (goalProposition conclusion)
+
 weakenTac :: Monad m => String -> Tactic m
 weakenTac t = altTactical (replWeakenTac t) (fnWeakenTac t)
 

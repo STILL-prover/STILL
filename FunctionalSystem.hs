@@ -252,6 +252,36 @@ getFunctionalProofNames (Proj1Rule p) = getFunctionalProofNames p
 getFunctionalProofNames (Proj2Rule p) = getFunctionalProofNames p
 getFunctionalProofNames (CumulativiyRule p1 p2) = getFunctionalProofNames p1 `S.union` getFunctionalProofNames p2
 
+{-| renameVarInProof x y = P[x/y]. Rename y with x in proof P. -}
+renameVarInFnProof :: S.Set String -> FunctionalProof -> String -> String -> FunctionalProof
+renameVarInFnProof vars p x y = if x `S.member`(vars `S.union` getFunctionalProofNames p)
+    then go p
+    else renameVarInFnProof vars (renameVarInFnProof vars p newFreshName x) x y -- Rename x first, then y
+    where
+        newFreshName :: String
+        newFreshName = getFreshName $ S.fromList [x, y] `S.union` getFunctionalProofNames p
+
+        swap :: String -> String
+        swap test = if test == y then x else test
+
+        swapCtx :: FunctionalContext -> FunctionalContext
+        swapCtx ctx = M.fromList $ (\(k, a) -> (swap k, substVarFunctional a x y)) <$> M.toList ctx
+
+        go FunctionalAxiom = FunctionalAxiom
+        go (CRule x p) = CRule (swap x) (go p)
+        go (TRule i p) = TRule i (go p)
+        go (VarRule x p) = VarRule (swap x) (go p)
+        go (Pi1Rule x p) = Pi1Rule (swap x) (go p)
+        go (Pi2Rule x p1 p2) = Pi2Rule (swap x) (go p1) (go p2)
+        go (LambdaRule x p) = LambdaRule (swap x) (go p)
+        go (AppRule p1 p2) = AppRule (go p1) (go p2)
+        go (SigmaRule x p1 p2) = SigmaRule (swap x) (go p1) (go p2)
+        go (PairRule x p1 p2 p3) = PairRule (swap x) (go p1) (go p2) (go p3)
+        go (Proj1Rule p) = Proj1Rule (go p)
+        go (Proj2Rule p) = Proj2Rule (go p)
+        go (CumulativiyRule p1 p2) = CumulativiyRule (go p1) (go p2)
+
+
 simpleFunctionalProof :: FunctionalProof
 simpleFunctionalProof = VarRule "x" $ VarRule "A" $ FunctionalAxiom
 simpleFunctionalProof2 :: FunctionalProof

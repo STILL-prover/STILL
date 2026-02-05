@@ -1,0 +1,33 @@
+module Semaphore begin
+-- :theorem "unarytest" Forall "p" (Var "signal") (Forall "v" (Var "signal") (TyNu "Y" (Forall "p" (Var "signal") (Forall "v" (Var "signal") (TyVar "Y")))))
+theorem unarytest: "forall p:signal . forall v:signal . nu Y . forall p:signal . forall v:signal . Y"
+apply Intros
+apply Weaken p
+apply Weaken v
+apply NuR S () ()
+apply Intros
+apply Weaken p
+apply Weaken v
+apply TyVar S ()
+done
+
+-- :theorem "unary" (Implication (Lift (Var "resource")) (TyNu "Y" (Tensor (Lift (Var "resource")) (Implication (Lift (Var "resource")) (TyVar "Y")))))
+theorem unary: "$resource -o nu Y. $resource * ($resource -o Y)"
+apply ImpliesR
+apply NuR S (handle) (a)
+apply TensorR
+apply ImpliesR
+defer
+apply IdA
+apply TyVar S (c)
+done
+-- z(a).(corec S(handle).(ν b)z[b].([handle <-> b]) | (z(c).S(c))) (a)
+
+-- theorem "unary2" (TyNu "Y" (Implication (Lift (Var "resource")) (Tensor (Lift (Var "resource")) (TyVar "Y"))))
+theorem unary2: "nu Y. $resource -o $resource * Y"
+apply NuR S () ()
+apply ImpliesR
+apply TensorR; (IdA <|> Skip)
+apply TyVar S ()
+done
+-- (corec S().z(a).(ν b)z[b].([a <-> b]) | (S())) ()
