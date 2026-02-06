@@ -12,7 +12,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import PropParser (proposition, fTerm)
 import Data.Functor ((<&>))
-import FunctionalTactics (FunctionalTactic, _FAx, _FWF, _FVarA, _FVar, _FRepeat, _FAlt, _FThen, _FPi, _FLambda, _FApp, _FSigma, _FPair, _FProj1, _FProj2, _FCumulativity, _FSimp, _FExactKnown, _FExact, _FSkip)
+import FunctionalTactics (FunctionalTactic, _FAx, _FVarA, _FVar, _FRepeat, _FAlt, _FThen, _FPi, _FLambda, _FApp, _FSigma, _FPair, _FProj1, _FProj2, _FCumulativity, _FSimp, _FExactKnown, _FExact, _FSkip)
 
 -- ==========================================
 -- 1. Parser Entry Points
@@ -192,7 +192,7 @@ singleStringArgTactics =
 
 simpleFunctionalTactics :: [(String, FunctionalTactic Identity)]
 simpleFunctionalTactics = [("Ax", _FAx)
-    , ("WF", _FWF)
+    --, ("WF", _FWF)
     , ("VarA", _FVarA)
     , ("Lambda", _FLambda)
     , ("FSkip", _FSkip)]

@@ -836,7 +836,7 @@ concl (ForallRightRule x p) = do
     xFnProp <- eitherLookup x $ fnContext j
     return $ j { fnContext = Data.Map.delete x $ fnContext j, goalProposition = Forall x xFnProp (goalProposition j) }
 concl (ForallLeftRule x y p1 p2) = do
-    j1 <- functionalConcl p1
+    (j1) <- functionalConcl p1
     j2 <- concl p2
     xProp <- eitherLookup x $ linearContext j2
     let tau = goalType j1
@@ -1171,7 +1171,7 @@ extractProcess rule@(IdRule x z tv fCtx uCtx eta prop) = do
     seq <- concl rule
     return (Link x z, seq)
 extractProcess rule@(FunctionalTermRightRule x p tv uc eta) = do
-    functionalSeq <- functionalConcl p
+    (functionalSeq) <- functionalConcl p
     curSeq <- concl rule
     return (LiftTerm (channel curSeq) (goalTerm functionalSeq), curSeq)
 extractProcess rule@(FunctionalTermLeftRule x p) = do

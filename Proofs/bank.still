@@ -8,22 +8,64 @@ theorem bank: "forall string:Type 1.
     forall balance:(Pi s:string. Pi n:nat.Type 1).
     forall dep:(Pi s:string. Pi n:nat. Pi m:deposit s n.receipt s n).
     forall bal:(Pi s : string. Sigma m : nat . balance s m).
-    !(forall s:string. $uid s -o
-    (forall n:nat.$deposit s n -o (($receipt s n) * 1)) & 
-    (exists m:nat.$balance s m))"
+    !(forall userId:string. $uid userId -o
+    (forall n:nat.$deposit userId n -o (($receipt userId n) * 1)) & 
+    (exists m:nat.$balance userId m))"
 apply Intros
 apply BangR
 apply Intros
 apply FTermLA
 apply WithR
 apply ExistsR
-apply Exact "fst (bal s)"
+apply Exact "fst (bal userId)"
 apply FTermR
-apply Exact "snd (bal s)"
+apply Exact "snd (bal userId)"
 apply Intros
 apply FTermLA
 apply TensorR
 apply UnitR
 apply FTermR
-apply Exact "dep s n c"
+apply Exact "dep userId n c"
+done
+
+theorem atmClient: "(!(forall userId:string. $uid userId -o
+    (forall n:nat.$deposit userId n -o (($receipt userId n) * 1)) & 
+    (exists m:nat.$balance userId m))) -- Bank service
+    -o
+    (forall string:Type 1.
+    forall nat:Type 1.
+    forall uid:(Pi s:string.Type 1).
+    forall deposit:(Pi s:string. Pi n:nat.Type 1).
+    forall receipt:(Pi s:string. Pi n:nat.Type 1).
+    forall boundedBy:(Pi m:nat. Pi n:nat.Type 1).
+    forall charge:(Pi s : string. Pi n : nat. Pi d: deposit s n.  Sigma m : nat. Sigma p : boundedBy m n.deposit s m).
+    forall s : string.$uid(s) -o
+    (forall n : nat.$deposit s n -o exists m : nat.
+    exists p : boundedBy m n.($receipt s m * 1)))"
+apply Intros
+apply FTermLA+
+apply ExistsR
+apply Exact "fst (charge s n c)"
+apply ExistsR
+apply Exact "fst (snd (charge s n c))"
+apply TensorR
+apply UnitR
+apply BangLA
+apply Copy f
+apply ForallLA
+apply Exact "s"
+apply ImpliesLA
+defer
+apply FTermR
+apply Exact "b"
+apply WithL1A
+apply ForallLA
+apply Exact "fst (charge s n c)"
+apply ImpliesLA
+defer
+apply FTermR
+apply Exact "snd (snd (charge s n c))"
+apply TensorLA
+apply UnitLA
+apply IdA
 done
