@@ -1,0 +1,29 @@
+module bank begin
+
+theorem bank: "forall string:Type 1.
+    forall nat:Type 1.
+    forall uid:(Pi s:string.Type 1).
+    forall deposit:(Pi s:string. Pi n:nat.Type 1).
+    forall receipt:(Pi s:string. Pi n:nat.Type 1).
+    forall balance:(Pi s:string. Pi n:nat.Type 1).
+    forall dep:(Pi s:string. Pi n:nat. Pi m:deposit s n.receipt s n).
+    forall bal:(Pi s : string. Sigma m : nat . balance s m).
+    !(forall s:string. $uid s -o
+    (forall n:nat.$deposit s n -o (($receipt s n) * 1)) & 
+    (exists m:nat.$balance s m))"
+apply Intros
+apply BangR
+apply Intros
+apply FTermLA
+apply WithR
+apply ExistsR
+apply Exact "fst (bal s)"
+apply FTermR
+apply Exact "snd (bal s)"
+apply Intros
+apply FTermLA
+apply TensorR
+apply UnitR
+apply FTermR
+apply Exact "dep s n c"
+done

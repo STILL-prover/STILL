@@ -117,13 +117,16 @@ main = do
             content <- readFileSafe fname
             afterReadTime <- getCurrentTime
             result <- runProofScript fname content
-            endTime <- getCurrentTime
             case result of
                 Left e -> putStrLn e
                 Right fs -> if diagnostic
-                    then putStrLn (getDiagnostics startTime afterReadTime endTime fs)
+                    then do 
+                            mainPrinter result
+                            endTime <- getCurrentTime
+                            putStrLn (getDiagnostics startTime afterReadTime endTime fs)
                     else putStrLn $ unlines (reverse (outputs fs))
 
+getDiagnostics :: UTCTime -> UTCTime -> UTCTime -> ProofState m -> [Char]
 getDiagnostics st at et s = intercalate "\n" (("Ran in " ++ formatTime defaultTimeLocale "%Es" totalDiffTime ++ " seconds total."):
     if modulePrint == "" then [localTs] else [modulePrint, localTs])
     where

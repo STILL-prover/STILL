@@ -158,6 +158,7 @@ simpleTactics =
     , ("PlusR2", plusRight2Tac)
     , ("PlusLA", plusLeftTacA)
     , ("ForallR", forallRightTac)
+    , ("ExistsR", _ExistsR)
     , ("ExistsLA", existsLeftTacA)
     , ("Forall2R", forallRight2Tac)
     , ("Exists2LA", existsLeft2TacA)

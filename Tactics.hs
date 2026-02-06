@@ -421,7 +421,7 @@ replicationRightTac = do
             zName <- lookupVarName $ channel seq
             -- Mark subgoal as used and justify
             useCurrentSubgoal Trunk . buildJustification1 freshGoal $ ReplicationRightRule zName
-            return "Unit left side tactic applied."
+            return "Replication right side tactic applied."
         _ -> tacError "Not a Replication proposition."
 
 replicationLeftTac :: Monad m => String -> Tactic m
