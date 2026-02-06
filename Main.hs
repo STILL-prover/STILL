@@ -11,7 +11,7 @@ import qualified Data.Set as S
 import Control.Monad.Identity (Identity, runIdentity)
 
 import Tactics (ProofState(..), Theorem (proofObject, numberOfSubgoals)) -- Ensure you import necessary types
-import LinearLogic
+import SessionTypes
 import STILLParser (parseFile, parseStringCommand)
 import DisplayUtil
 import Data.List (intercalate)
@@ -110,7 +110,7 @@ main = do
             if null fnames then return () else putStrLn "" >> putStrLn ""
             runScripts diag fnames
             return ()
-        
+
         runScript :: Bool -> String -> IO ()
         runScript diagnostic fname = do
             startTime <- getCurrentTime
@@ -120,7 +120,7 @@ main = do
             case result of
                 Left e -> putStrLn e
                 Right fs -> if diagnostic
-                    then do 
+                    then do
                             mainPrinter result
                             endTime <- getCurrentTime
                             putStrLn (getDiagnostics startTime afterReadTime endTime fs)
@@ -128,12 +128,14 @@ main = do
 
 getDiagnostics :: UTCTime -> UTCTime -> UTCTime -> ProofState m -> [Char]
 getDiagnostics st at et s = intercalate "\n" (("Ran in " ++ formatTime defaultTimeLocale "%Es" totalDiffTime ++ " seconds total."):
-    if modulePrint == "" then [localTs] else [modulePrint, localTs])
+    (if modulePrint == "" then [localTs] else [modulePrint, localTs]) ++ [totalNodes, totalSubgoals])
     where
         totalDiffTime = diffUTCTime et st
         runExecuteDiffTime = diffUTCTime et at
-        localTs = intercalate "\n" $ filter (/= "") $ (\(n, i) -> n ++ ": " ++ show i ++ " subgoals in proof") <$> toList (numberOfSubgoals <$> theorems s)
+        localTs = intercalate "\n" $ filter (/= "") $ (\(n, i) -> n ++ ": " ++ show (numberOfSubgoals i) ++ " subgoals in proof. " ++ show (proofSize (proofObject i)) ++ " nodes in the proof object.") <$> toList (theorems s)
         modulePrint = intercalate "\n" $ filter (/= "") $ (\(mName, moduleTheorems) -> intercalate "\n" $ filter (/= "") $ (\(n, i) -> mName ++ "." ++ n ++ ": " ++ show i ++ " subgoals in proof.") <$> Data.Map.toList (numberOfSubgoals <$> moduleTheorems)) <$> Data.Map.toList (loadedModules s)
+        totalNodes = show (sum $ (\(n, i) -> proofSize (proofObject i)) <$> toList (theorems s)) ++ " total proof nodes in the module."
+        totalSubgoals = show (sum $ (\(n, i) -> numberOfSubgoals i) <$> toList (theorems s)) ++ " total subgoals in the module."
 
 -- ==========================================
 -- 4. REPL Implementation

@@ -8,7 +8,7 @@ import qualified FunctionalTactics as FT
 import qualified Data.Map
 import qualified Data.Map as M
 import Data.Maybe (isNothing, isJust, fromJust)
-import LinearLogic (Process (..), Proposition (..), Sequent (fnContext, unrestrictedContext, linearContext, channel, goalProposition), pToS, propToS, seqToS)
+import SessionTypes (Process (..), Proposition (..), Sequent (fnContext, unrestrictedContext, linearContext, channel, goalProposition), pToS, propToS, seqToS)
 import qualified Data.Set as S
 import qualified Data.String
 import FunctionalSystem (ftToS)

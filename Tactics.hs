@@ -13,7 +13,7 @@ import Data.Maybe (isJust, fromMaybe, isNothing, fromJust, listToMaybe)
 import FunctionalSystem
 import qualified FunctionalTactics as FT
 import Util
-import LinearLogic
+import SessionTypes
 import Debug.Trace
 import Control.Monad.Identity (Identity (runIdentity))
 import Control.Monad.Trans (MonadIO(liftIO))

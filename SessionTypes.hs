@@ -1,4 +1,4 @@
-module LinearLogic where
+module SessionTypes where
 
 import Data.Map
 import qualified Data.Set as S
@@ -24,7 +24,7 @@ import FunctionalSystem
       FunctionalContext,
       FunctionalProof,
       FunctionalSequent(goalTerm, goalType, functionalContext),
-      FunctionalTerm(Var), renameVarInFnProof )
+      FunctionalTerm(Var), renameVarInFnProof, foldFunctionalProof )
 import Util
 import qualified Debug.Trace as DBG
 
@@ -528,6 +528,69 @@ data Proof = IdRule String String (S.Set String) FunctionalContext Context Recur
     | RecBindingWeakening String ([String], BindingSequent) Proof
     | HoleRule (S.Set String) FunctionalContext Context Context RecursiveBindings String Proposition
     deriving (Eq, Show, Read)
+
+-- Extracts children from Proof as Either FunctionalProof or Proof
+subProofs :: Proof -> [Either FunctionalProof Proof]
+subProofs rule = case rule of
+    -- Cases with FunctionalProof
+    FunctionalTermRightRule _ fp _ _ _ -> [Left fp]
+    ForallLeftRule _ _ fp p            -> [Left fp, Right p]
+    ExistsRightRule _ fp p             -> [Left fp, Right p]
+    
+    -- Binary Proof cases
+    WithRightRule p1 p2                -> [Right p1, Right p2]
+    ImpliesLeftRule _ p1 p2            -> [Right p1, Right p2]
+    TensorRightRule p1 p2              -> [Right p1, Right p2]
+    PlusLeftRule _ p1 p2               -> [Right p1, Right p2]
+    CutRule p1 p2                      -> [Right p1, Right p2]
+    CutReplicationRule _ p1 p2         -> [Right p1, Right p2]
+
+    -- Unary Proof cases
+    FunctionalTermLeftRule _ p         -> [Right p]
+    UnitLeftRule _ p                   -> [Right p]
+    ReplicationRightRule _ p           -> [Right p]
+    ReplicationLeftRule _ _ p          -> [Right p]
+    CopyRule _ _ p                     -> [Right p]
+    WithLeft1Rule _ _ p                -> [Right p]
+    WithLeft2Rule _ _ p                -> [Right p]
+    ImpliesRightRule _ p               -> [Right p]
+    TensorLeftRule _ _ p               -> [Right p]
+    PlusRight1Rule _ p                 -> [Right p]
+    PlusRight2Rule _ p                 -> [Right p]
+    ForallRightRule _ p                -> [Right p]
+    ExistsLeftRule _ _ p               -> [Right p]
+    ForallRight2Rule _ p               -> [Right p]
+    ForallLeft2Rule _ _ _ p            -> [Right p]
+    ExistsRight2Rule _ _ p             -> [Right p]
+    ExistsLeft2Rule _ _ p              -> [Right p]
+    TyNuRightRule _ _ p                -> [Right p]
+    TyNuLeftRule _ _ p                 -> [Right p]
+    ReplWeakening _ _ p                -> [Right p]
+    FnWeakening _ _ p                  -> [Right p] -- Assuming FunctionalTerm is not traversed
+    TyVarWeakening _ p                 -> [Right p]
+    RecBindingWeakening _ _ p          -> [Right p]
+
+    -- Leaf cases
+    IdRule{}                           -> []
+    UnitRightRule{}                    -> []
+    TyVarRule{}                        -> []
+    HoleRule{}                         -> []
+
+foldProof :: ([a] -> a) -> ([a] -> a) -> Proof -> a
+foldProof fProof fFunc rule = 
+    fProof (L.map resolve (subProofs rule))
+  where
+    resolve (Left fp) = foldFunctionalProof fFunc fp
+    resolve (Right p) = foldProof fProof fFunc p
+
+proofSize :: Proof -> Integer
+proofSize = foldProof sumResults sumResults
+  where
+    sumResults results = 1 + sum results
+
+-- proofDepth :: Proof -> Integer
+-- proofDepth = foldProof (\results -> 1 + maximum (0 : results))
+
 
 {-| Get all the names used in a proof derivation. -}
 getProofNames :: Proof -> S.Set String

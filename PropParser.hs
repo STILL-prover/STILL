@@ -5,7 +5,7 @@ import Text.Parsec.String (Parser)
 import qualified Text.Parsec.Expr as Ex
 import qualified Text.Parsec.Token as Tok
 import Text.Parsec.Language (emptyDef)
-import LinearLogic (Proposition(..))
+import SessionTypes (Proposition(..))
 import FunctionalSystem (FunctionalTerm(..))
 
 lexer :: Tok.TokenParser ()

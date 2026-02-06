@@ -1,6 +1,6 @@
 module AC where
 
-import LinearLogic
+import SessionTypes
 import FunctionalSystem as FS
 import qualified FunctionalTactics as FT
 import Control.Monad.Identity (Identity(Identity))

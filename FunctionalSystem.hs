@@ -248,6 +248,26 @@ data FunctionalProof = FunctionalAxiom FunctionalContext -- \vdash P:T
     -- | FHoleRule FunctionalContext FunctionalTerm FunctionalTerm
     deriving (Eq, Show, Read)
 
+subFunctionalProofs :: FunctionalProof -> [FunctionalProof]
+subFunctionalProofs rule = case rule of
+    PiRule _ fp1 fp2          -> [fp1, fp2]
+    SigmaRule _ fp1 fp2       -> [fp1, fp2]
+    PairRule _ fp1 fp2 fp3    -> [fp1, fp2, fp3]
+    CumulativiyRule fp1 fp2   -> [fp1, fp2]
+    TRule _ fp                -> [fp]
+    VarRule _ fp              -> [fp]
+    LambdaRule _ fp           -> [fp]
+    AppRule fp1 fp2           -> [fp1, fp2]
+    Proj1Rule fp              -> [fp]
+    Proj2Rule fp              -> [fp]
+    FunctionalAxiom{}         -> []
+
+foldFunctionalProof :: ([a] -> a) -> FunctionalProof -> a
+foldFunctionalProof fFunc rule = fFunc (map (foldFunctionalProof fFunc) (subFunctionalProofs rule))
+
+functionalProofSize :: FunctionalProof -> Integer
+functionalProofSize = foldFunctionalProof (\results -> 1 + sum results)
+
 {-| Get all names used in a proof derivation. -}
 getFunctionalProofNames :: FunctionalProof -> S.Set String
 getFunctionalProofNames (FunctionalAxiom ctx) = getFunctionalContextNames ctx
