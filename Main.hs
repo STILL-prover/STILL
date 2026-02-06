@@ -132,7 +132,7 @@ getDiagnostics st at et s = intercalate "\n" (("Ran in " ++ formatTime defaultTi
     where
         totalDiffTime = diffUTCTime et st
         runExecuteDiffTime = diffUTCTime et at
-        localTs = intercalate "\n" $ filter (/= "") $ (\(n, i) -> n ++ ": " ++ show (numberOfSubgoals i) ++ " subgoals in proof. " ++ show (proofSize (proofObject i)) ++ " nodes in the proof object.") <$> toList (theorems s)
+        localTs = intercalate "\n" $ filter (/= "") $ (\(n, i) -> n ++ ": " ++ show (numberOfSubgoals i) ++ " subgoals in proof. " ++ show (proofSize (proofObject i)) ++ " nodes in the proof object. " ++ show (proofDepth (proofObject i)) ++ " depth of proof tree.") <$> toList (theorems s)
         modulePrint = intercalate "\n" $ filter (/= "") $ (\(mName, moduleTheorems) -> intercalate "\n" $ filter (/= "") $ (\(n, i) -> mName ++ "." ++ n ++ ": " ++ show i ++ " subgoals in proof.") <$> Data.Map.toList (numberOfSubgoals <$> moduleTheorems)) <$> Data.Map.toList (loadedModules s)
         totalNodes = show (sum $ (\(n, i) -> proofSize (proofObject i)) <$> toList (theorems s)) ++ " total proof nodes in the module."
         totalSubgoals = show (sum $ (\(n, i) -> numberOfSubgoals i) <$> toList (theorems s)) ++ " total subgoals in the module."

@@ -28,3 +28,8 @@ eitherLookup :: forall k a. (Ord k, Show k, Show a) => k -> M.Map k a -> Either 
 eitherLookup k m = case M.lookup k m of
     Just res -> Right res
     Nothing -> Left $ "Could not find " ++ show k ++ " in " ++ show m
+
+expr [] ex = ex
+expr (h1:h2:rest) "" = expr rest (h1 ++ " * " ++ h2)
+expr (h1:h2:rest) ex = expr rest (h1 ++ " * ( " ++ ex ++ " ) * " ++ h2)
+expr a ex = ex

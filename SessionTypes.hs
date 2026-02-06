@@ -588,9 +588,10 @@ proofSize = foldProof sumResults sumResults
   where
     sumResults results = 1 + sum results
 
--- proofDepth :: Proof -> Integer
--- proofDepth = foldProof (\results -> 1 + maximum (0 : results))
-
+proofDepth :: Proof -> Integer
+proofDepth = foldProof maxDepth maxDepth
+  where
+    maxDepth results = 1 + maximum (0 : results)
 
 {-| Get all the names used in a proof derivation. -}
 getProofNames :: Proof -> S.Set String

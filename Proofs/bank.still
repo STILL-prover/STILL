@@ -1,4 +1,4 @@
-module bank begin
+module Bank begin
 
 theorem bank: "forall string:Type 1.
     forall nat:Type 1.

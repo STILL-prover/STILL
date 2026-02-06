@@ -1,4 +1,4 @@
-module auctions begin
+module Auction begin
 -- theoremE "receiveBids" Forall "curBid" (Var "nat") (TyNu "Y" (Forall "newBid" (Var "nat") (TyVar "Y")))
 theorem receiveBids: "forall curBid : nat . nu Y . forall newBid : nat . Y"
 apply ForallR

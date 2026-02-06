@@ -268,6 +268,9 @@ foldFunctionalProof fFunc rule = fFunc (map (foldFunctionalProof fFunc) (subFunc
 functionalProofSize :: FunctionalProof -> Integer
 functionalProofSize = foldFunctionalProof (\results -> 1 + sum results)
 
+functionalProofDepth :: FunctionalProof -> Integer
+functionalProofDepth = foldFunctionalProof (\results -> 1 + maximum (0 : results))
+
 {-| Get all names used in a proof derivation. -}
 getFunctionalProofNames :: FunctionalProof -> S.Set String
 getFunctionalProofNames (FunctionalAxiom ctx) = getFunctionalContextNames ctx
