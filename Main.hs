@@ -10,8 +10,8 @@ import qualified Data.Map as Map
 import qualified Data.Set as S
 import Control.Monad.Identity (Identity, runIdentity)
 
-import Tactics (ProofState(..), Theorem (proofObject, numberOfSubgoals)) -- Ensure you import necessary types
-import SessionTypes
+import SessionTypes.Tactics (ProofState(..), Theorem (proofObject, numberOfSubgoals)) -- Ensure you import necessary types
+import SessionTypes.Kernel
 import STILLParser (parseFile, parseStringCommand)
 import DisplayUtil
 import Data.List (intercalate)

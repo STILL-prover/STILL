@@ -1,4 +1,4 @@
-module FunctionalTactics where
+module ECC.Tactics where
 
 import Data.Map
 import qualified Data.Set as S
@@ -8,8 +8,8 @@ import qualified Data.List as L
 import Control.Monad (mplus)
 import Text.Read (readMaybe)
 import Data.Maybe (isJust, fromMaybe, isNothing)
-import FunctionalSystem hiding (FunctionalSequent(functionalContext, goalType, goalTerm))
-import qualified FunctionalSystem as FS (FunctionalSequent(..))
+import ECC.Kernel hiding (FunctionalSequent(functionalContext, goalType, goalTerm))
+import qualified ECC.Kernel as FS (FunctionalSequent(..))
 import Util
 import Debug.Trace
 import Control.Monad.Trans (MonadIO(liftIO))

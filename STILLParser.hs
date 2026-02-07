@@ -6,13 +6,13 @@ import qualified Text.Parsec.Expr as Ex
 import qualified Text.Parsec.Token as Tok
 import Text.Parsec.Language (emptyDef)
 import Control.Monad.Identity (Identity)
-import Tactics
+import SessionTypes.Tactics
 import Data.List
 import Data.Map (Map)
 import qualified Data.Map as Map
 import PropParser (proposition, fTerm)
 import Data.Functor ((<&>))
-import FunctionalTactics (FunctionalTactic, _FAx, _FVarA, _FVar, _FRepeat, _FAlt, _FThen, _FPi, _FLambda, _FApp, _FSigma, _FPair, _FProj1, _FProj2, _FCumulativity, _FSimp, _FExactKnown, _FExact, _FSkip)
+import ECC.Tactics (FunctionalTactic, _FAx, _FVarA, _FVar, _FRepeat, _FAlt, _FThen, _FPi, _FLambda, _FApp, _FSigma, _FPair, _FProj1, _FProj2, _FCumulativity, _FSimp, _FExactKnown, _FExact, _FSkip)
 
 -- ==========================================
 -- 1. Parser Entry Points

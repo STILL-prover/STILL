@@ -1,6 +1,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE LambdaCase #-}
-module Tactics where
+module SessionTypes.Tactics where
 
 import Data.Map
 import qualified Data.Set as S
@@ -10,10 +10,10 @@ import qualified Data.List as L
 import Control.Monad (mplus, when)
 import Text.Read (readMaybe)
 import Data.Maybe (isJust, fromMaybe, isNothing, fromJust, listToMaybe)
-import FunctionalSystem
-import qualified FunctionalTactics as FT
+import ECC.Kernel
+import qualified ECC.Tactics as FT
 import Util
-import SessionTypes
+import SessionTypes.Kernel
 import Debug.Trace
 import Control.Monad.Identity (Identity (runIdentity))
 import Control.Monad.Trans (MonadIO(liftIO))

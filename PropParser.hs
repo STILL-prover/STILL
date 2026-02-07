@@ -5,17 +5,17 @@ import Text.Parsec.String (Parser)
 import qualified Text.Parsec.Expr as Ex
 import qualified Text.Parsec.Token as Tok
 import Text.Parsec.Language (emptyDef)
-import SessionTypes (Proposition(..))
-import FunctionalSystem (FunctionalTerm(..))
+import SessionTypes.Kernel (Proposition(..))
+import ECC.Kernel (FunctionalTerm(..))
 
 lexer :: Tok.TokenParser ()
 lexer = Tok.makeTokenParser style
   where
-    ops = ["->", ":", ".", ",", "=>", "-o", "*", "&", "+", "!", "_", "$"]
+    ops = ["->", ":", ".", ",", "=>", "-o", "*", "&", "+", "!", "_", "$", "\\"]
     names = ["Type", "Prop", "fst", "snd", 
-             "lambda", "Pi", "Sigma", 
+             "Pi", "Sigma", 
              "Unit", "1", "lift", 
-             "forall", "exists", "forall2", "exists2", "nu", "stype"]
+             "forall", "exists", "forall2", "exists2", "nu", "stype", "lambda"]
     style = emptyDef
         { Tok.commentLine = "--"
         , Tok.commentStart = "{-"
