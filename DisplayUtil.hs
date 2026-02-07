@@ -1,18 +1,18 @@
 {-# LANGUAGE UndecidableInstances #-}
-module GhciUtil where
+module DisplayUtil where
 
-import Tactics
+import SessionTypes.Tactics
 import qualified Data.List as L
-import qualified FunctionalSystem as FS
-import qualified FunctionalTactics as FT
+import qualified ECC.Kernel as FS
+import qualified ECC.Tactics as FT
 import qualified Data.Map
 import qualified Data.Map as M
 import Data.Maybe (isNothing, isJust, fromJust)
-import LinearLogic (Process (..), Proposition (..), Sequent (fnContext, unrestrictedContext, linearContext, channel, goalProposition), pToS, propToS, seqToS)
+import SessionTypes.Kernel (Process (..), Proposition (..), Sequent (fnContext, unrestrictedContext, linearContext, channel, goalProposition), pToS, propToS, seqToS)
 import qualified Data.Set as S
 import qualified Data.String
-import FunctionalSystem (ftToS)
-import FunctionalTactics (ftseqToSHelper)
+import ECC.Kernel (ftToS)
+import ECC.Tactics (ftseqToSHelper)
 
 fcToS :: FS.FunctionalContext -> String
 fcToS = M.foldlWithKey (\acc k t -> acc ++ k ++ ":" ++ ftToS t) ""
@@ -109,5 +109,3 @@ printCommands = do
 
 removeNewlines :: String -> String
 removeNewlines args = L.unwords (L.lines args)
-
-

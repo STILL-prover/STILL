@@ -1,6 +1,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE LambdaCase #-}
-module Tactics where
+module SessionTypes.Tactics where
 
 import Data.Map
 import qualified Data.Set as S
@@ -10,10 +10,10 @@ import qualified Data.List as L
 import Control.Monad (mplus, when, unless)
 import Text.Read (readMaybe)
 import Data.Maybe (isJust, fromMaybe, isNothing, fromJust, listToMaybe)
-import FunctionalSystem
-import qualified FunctionalTactics as FT
+import ECC.Kernel
+import qualified ECC.Tactics as FT
 import Util
-import LinearLogic
+import SessionTypes.Kernel
 import Debug.Trace
 import Control.Monad.Identity (Identity (runIdentity))
 import Control.Monad.Trans (MonadIO(liftIO))
@@ -61,20 +61,26 @@ getUnavailableVarsForSubgoal sgName s = case Data.Map.lookup sgName (subgoals s)
             _ -> S.empty))
     Nothing -> S.empty
 
+data Theorem = Theorem {
+    proofObject :: Proof,
+    numberOfSubgoals :: Integer
+}
+
 data ProofState m = S {
     subgoals :: Map String (Subgoal m),
-    uniqueNameVars :: Map String String,
-    usedSubgoalNames :: S.Set String,
     outputs :: [String],
-    theorems :: Map String Proof,
+    theorems :: Map String Theorem,
     curTheoremName :: String,
     curModuleName :: String,
-    loadedModules :: Map String (Map String Proof),
+    loadedModules :: Map String (Map String Theorem),
     openGoalStack :: [String]
 } deriving ()
 
 curSubgoal :: ProofState m -> String
 curSubgoal s = if L.null (openGoalStack s) then "" else head (openGoalStack s)
+
+usedSubgoalNames :: ProofState m -> S.Set String
+usedSubgoalNames s = S.fromList $ Data.Map.keys $ subgoals s
 
 getStateReservedVars :: Monad m => ProofState m -> S.Set String
 getStateReservedVars s = Data.Map.foldl' (\acc sg -> S.union acc (reservedVars sg)) S.empty (subgoals s)
@@ -117,22 +123,13 @@ getSubgoalNames sg = let
 getProofStateNames :: Monad m => ProverStateT m (S.Set String)
 getProofStateNames = do
     curSubgoals <- ST.gets subgoals
-    uniqueNames <- S.fromList . L.concatMap (\(k,v) -> [k, v]) . Data.Map.toList <$> ST.gets uniqueNameVars
-    let vars = S.unions (uniqueNames:(getSubgoalNames <$> Data.Map.elems curSubgoals))
+    let vars = S.unions (getSubgoalNames <$> Data.Map.elems curSubgoals)
     return vars
 
 getFreshVar :: Monad m => ProverStateT m String
 getFreshVar = do
     vars <- getProofStateNames
     let newVar = head $ Prelude.filter (\l -> not $ S.member l vars) namesInOrder
-    ST.modify (\s -> s { uniqueNameVars = Data.Map.insert newVar newVar $ uniqueNameVars s })
-    return newVar
-
-getFreshVarNamed :: Monad m => String -> ProverStateT m String
-getFreshVarNamed n = do
-    vars <- getProofStateNames
-    let newVar = head $ Prelude.filter (\l -> not $ S.member l vars) namesInOrder
-    ST.modify (\s -> s { uniqueNameVars = Data.Map.insert newVar n $ uniqueNameVars s })
     return newVar
 
 getFreshVarAttempt :: Monad m => String -> ProverStateT m String
@@ -140,20 +137,16 @@ getFreshVarAttempt z = do
     vars <- getProofStateNames
     let zs = z:[z ++ show i | i <- numbers]
         newVar = head $ Prelude.filter (\l -> not $ S.member l vars) zs
-    ST.modify (\s -> s { uniqueNameVars = Data.Map.insert newVar newVar $ uniqueNameVars s })
     return newVar
 
 getFreshSubgoalName :: Monad m => ProverStateT m String
 getFreshSubgoalName = do
     curSubgoals <- ST.gets usedSubgoalNames
     let newSubgoalName = head $ Prelude.filter (\l -> not $ S.member l curSubgoals) allSubgoalNames
-    ST.modify (\s -> s { usedSubgoalNames = S.insert newSubgoalName $ usedSubgoalNames s })
     return newSubgoalName
 
 lookupVarName :: Monad m => String -> ProverStateT m String
-lookupVarName x = do
-    xNameMaybe <- Data.Map.lookup x <$> ST.gets uniqueNameVars
-    liftMaybeWithError ("Cannot find name for " ++ x) xNameMaybe
+lookupVarName x = return x
 
 initializeSequent :: Proposition -> Sequent
 initializeSequent p = Sequent { tyVarContext = S.empty, fnContext = Data.Map.empty, unrestrictedContext = Data.Map.empty, linearContext = Data.Map.empty, recursiveBindings = Data.Map.empty, channel = "z", goalProposition = p }
@@ -428,7 +421,7 @@ replicationRightTac = do
             zName <- lookupVarName $ channel seq
             -- Mark subgoal as used and justify
             useCurrentSubgoal Trunk . buildJustification1 freshGoal $ ReplicationRightRule zName
-            return "Unit left side tactic applied."
+            return "Replication right side tactic applied."
         _ -> tacError "Not a Replication proposition."
 
 replicationLeftTac :: Monad m => String -> Tactic m
@@ -477,7 +470,6 @@ withRightTac = do
         With p1 p2 -> do
             zName <- lookupVarName $ channel seq
             --reserveVars [channel seq]
-            allUniqueNameVars <- ST.gets uniqueNameVars
             leftGoal <- createNewSubgoal $ seq { goalProposition = p1 }
             rightGoal <- createNewSubgoal $ seq { goalProposition = p2 }
             useCurrentSubgoal Additive $ buildJustification2 leftGoal rightGoal WithRightRule
@@ -577,7 +569,6 @@ plusLeftTac x = do
             xName <- lookupVarName x
             --freshXRight <- getFreshVarNamed xName
             reserveVars [x]
-            allUniqueNameVars <- ST.gets uniqueNameVars
             --let restLC = Data.Map.delete x $ linearContext seq
             -- copiedLinearContext <- Data.Map.fromList <$> mapM (\(k, v) -> case Data.Map.lookup k allUniqueNameVars of
             --     Just n -> (do
@@ -815,7 +806,7 @@ fnWeakenTac t = do
 useProofTac :: Monad m => String -> Tactic m
 useProofTac tName = do
     seq <- getCurrentSequent
-    ts <- ST.gets theorems
+    ts <- Data.Map.map proofObject <$> ST.gets theorems
     case concl <$> Data.Map.lookup tName ts of
         Nothing -> tacError "Could not find the provided theorem."
         Just (Left e) -> tacError $ "Error in conclusion: " ++ e
@@ -829,13 +820,13 @@ useModuleProofTac :: Monad m => String -> String -> Tactic m
 useModuleProofTac mName tName = do
     seq <- getCurrentSequent
     ms <- ST.gets loadedModules
-    let t = Data.Map.lookup mName ms >>= Data.Map.lookup tName
+    let t = proofObject <$> (Data.Map.lookup mName ms >>= Data.Map.lookup tName)
     case concl <$> t of
         Nothing -> tacError "Could not find the provided theorem."
         Just (Left e) -> tacError $ "Error in conclusion: " ++ e
         Just (Right conclusion) -> (do
             if conclusion == seq
-            then useCurrentSubgoal Trunk . buildJustification0 $ (ms Data.Map.! mName) Data.Map.! tName
+            then useCurrentSubgoal Trunk . buildJustification0 $ proofObject ((ms Data.Map.! mName) Data.Map.! tName)
             else tacError ("Conclusion of the theorem does not match the current goal:\nExpected: " ++ seqToS seq ++ "\nFound: " ++ seqToS conclusion)
             return $ "Applied theorem " ++ mName ++ "." ++ tName)
 
@@ -846,7 +837,7 @@ cutLinearTheoremTac theoremName = do
     ts <- ST.gets theorems
     let mName = L.takeWhile (/= '.') theoremName
         tName = L.drop 1 . L.dropWhile (/= '.') $ theoremName
-        maybeTheorem = if '.' `L.elem` theoremName then (Data.Map.lookup mName ms >>= Data.Map.lookup tName) else (Data.Map.lookup theoremName ts)
+        maybeTheorem = if '.' `L.elem` theoremName then (proofObject <$> (Data.Map.lookup mName ms >>= Data.Map.lookup tName)) else (Data.Map.lookup theoremName (proofObject <$> ts))
     theorem <- case maybeTheorem of Nothing -> tacError "Could not find the theorem."; Just t -> return t
     conclusion <- case concl theorem of Left e -> tacError ("Could not get conclusion of theorem: " ++ e); Right c -> return c
     -- unless (Data.Map.null $ linearContext conclusion) $ tacError "Only theorems with empty linear contexts are supported right now."
@@ -912,7 +903,7 @@ initCleanState mName =
         fnVars = []
         allVars = []
     in
-        S { subgoals = Data.Map.empty, uniqueNameVars = Data.Map.empty, usedSubgoalNames = S.empty, outputs = ["Ready to begin!"], curTheoremName = "", curModuleName = mName, theorems = Data.Map.empty, loadedModules = Data.Map.empty, openGoalStack = [] }
+        S { subgoals = Data.Map.empty, outputs = ["Ready to begin!"], curTheoremName = "", curModuleName = mName, theorems = Data.Map.empty, loadedModules = Data.Map.empty, openGoalStack = [] }
 
 {-| Assumes the initial  subgoal has no assumptions in -}
 -- initializeState :: String -> Subgoal m -> ProofState m
@@ -949,7 +940,7 @@ theorem s n p =
         fnVars = Data.Map.keys . fnContext . sequent $ goal
         allVars = channelVar : (linearVars ++ unrestrictedVars ++ fnVars)
     in
-        s { subgoals = singleton "?a" goal, uniqueNameVars = Data.Map.fromList $ (\x -> (x, x)) <$> allVars, usedSubgoalNames = S.singleton "?a", outputs = "New theorem started":outputs s, curTheoremName = n, openGoalStack = ["?a"] }
+        s { subgoals = singleton "?a" goal, outputs = "New theorem started":outputs s, curTheoremName = n, openGoalStack = ["?a"] }
 
 applyTactic :: ProofState Identity -> Tactic Identity -> Either String (ProofState Identity)
 applyTactic s t = runIdentity $ applyTacticGeneral s t
@@ -975,7 +966,7 @@ extractFromJustification s = do
 
 done :: ProofState Identity -> ProofState Identity
 done res = case runIdentity (verifyGeneral res) of
-    Right (p, s) -> s { theorems = Data.Map.insert (curTheoremName s) p (theorems s),  outputs = ("Theorem complete: " ++ curTheoremName s):outputs res}
+    Right (p, s) -> s { theorems = Data.Map.insert (curTheoremName s) (Theorem p (fromIntegral . L.length . Data.Map.keys $ subgoals s)) (theorems s),  outputs = ("Theorem complete: " ++ curTheoremName s):outputs res}
     Left err -> res { outputs = ("Could not verify proof: " ++ err):outputs res }
 
 -- DSL
@@ -1007,8 +998,8 @@ _Extract s tName =
                 Nothing -> s { outputs = "Could not find the supplied theorem.":outputs s }
                 Just m -> maybe
                   s {outputs = "Could not find the supplied theorem." : outputs s}
-                  extractor (Data.Map.lookup (L.tail $ L.dropWhile (/= '.') tName) m)
-            Just p -> extractor p
+                  extractor (proofObject <$> (Data.Map.lookup (L.tail $ L.dropWhile (/= '.') tName) m))
+            Just p -> extractor (proofObject p)
 
 _PushMessage :: ProofState Identity -> String -> ProofState Identity
 _PushMessage s m = s { outputs = m:outputs s }
@@ -1347,8 +1338,8 @@ _Prefer curS i =
 _PrintTheorems :: Monad m => ProofState m -> ProofState m
 _PrintTheorems s = let
     --printTs curMessage prefix ts = Data.Map.foldrWithKey (\k v acc -> case concl v of Right seq -> k ++ ": " ++ seqToS seq ++ "\n" ++ acc; Left e -> acc) curMessage ts
-    localTs = L.intercalate "\n" $ L.filter (/= "") $ (\(n, p) -> case concl p of Right seq -> n ++ ": " ++ seqToS seq; Left e -> "") <$> Data.Map.toList (theorems s)
-    modulePrint = L.intercalate "\n" $ L.filter (/= "") $ (\(mName, moduleTheorems) -> L.intercalate "\n" $ L.filter (/= "") $ (\(n, p) -> case concl p of Right seq -> mName ++ "." ++ n ++ ": " ++ seqToS seq; Left e -> "") <$> Data.Map.toList moduleTheorems) <$> Data.Map.toList (loadedModules s)
+    localTs = L.intercalate "\n" $ L.filter (/= "") $ (\(n, p) -> case concl p of Right seq -> n ++ ": " ++ seqToS seq; Left e -> "") <$> Data.Map.toList (proofObject <$> theorems s)
+    modulePrint = L.intercalate "\n" $ L.filter (/= "") $ (\(mName, moduleTheorems) -> L.intercalate "\n" $ L.filter (/= "") $ (\(n, p) -> case concl p of Right seq -> mName ++ "." ++ n ++ ": " ++ seqToS seq; Left e -> "") <$> Data.Map.toList (proofObject <$> moduleTheorems)) <$> Data.Map.toList (loadedModules s)
     --localTs = printTs "" "" (theorems s)
     --fullMessage = Data.Map.foldrWithKey (\k v acc -> acc ++ )
     in s { outputs = (L.intercalate "\n" [modulePrint, localTs]):outputs s }

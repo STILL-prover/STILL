@@ -1,10 +1,10 @@
 module AC where
 
-import LinearLogic
-import FunctionalSystem as FS
-import qualified FunctionalTactics as FT
+import SessionTypes.Kernel
+import ECC.Kernel as FS
+import qualified ECC.Tactics as FT
 import Control.Monad.Identity (Identity(Identity))
-import Tactics
+import SessionTypes.Tactics
 import Data.Map
 import qualified Data.Set as S
 
@@ -51,7 +51,7 @@ axiomOfChoiceProof = let
     s7 = _FApply s6 (FT._FExact (Proj2 (App (Var "a") (Var "x"))))
     in _Done s7
 
-axiomOfChoiceInOnlyFunctionalSystem = let
+axiomOfChoiceInOnlyECC = let
     t = _Theorem (_Init "ACF") "axiomOfChoiceFunctional" $ AC.axiomOfChoiceFunctional (Type 1) (Type 1)
     s1 = _Apply t _FTermR
     s2 = _FApply s1 (FT._FRepeat FT._FLambda)

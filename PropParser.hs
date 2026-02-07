@@ -5,22 +5,23 @@ import Text.Parsec.String (Parser)
 import qualified Text.Parsec.Expr as Ex
 import qualified Text.Parsec.Token as Tok
 import Text.Parsec.Language (emptyDef)
-import LinearLogic (Proposition(..))
-import FunctionalSystem (FunctionalTerm(..))
+import SessionTypes.Kernel (Proposition(..))
+import ECC.Kernel (FunctionalTerm(..))
 
 lexer :: Tok.TokenParser ()
 lexer = Tok.makeTokenParser style
   where
-    ops = ["->", ":", ".", ",", "=>", "-o", "*", "&", "+", "!", "_", "$"]
+    ops = ["->", ":", ".", ",", "=>", "-o", "*", "&", "+", "!", "_", "$", "\\"]
     names = ["Type", "Prop", "fst", "snd", 
-             "lambda", "Pi", "Sigma", 
+             "Pi", "Sigma", 
              "Unit", "1", "lift", 
-             "forall", "exists", "forall2", "exists2", "nu", "stype"]
+             "forall", "exists", "forall2", "exists2", "nu", "stype", "lambda"]
     style = emptyDef
         { Tok.commentLine = "--"
         , Tok.commentStart = "{-"
         , Tok.commentEnd = "-}"
         , Tok.reservedOpNames = ops
+        , Tok.opLetter = oneOf ">o"
         , Tok.reservedNames = names
         , Tok.identStart = letter
         , Tok.identLetter = alphaNum <|> char '_' <|> char '\''
@@ -161,13 +162,13 @@ propAtom = parens proposition
 
 parseLift :: Parser Proposition
 parseLift = do
-    reservedOp "$"
+    Tok.lexeme lexer (oneOf "$")
     t <- fTerm
     return (Lift t)
 
 -- Handles forall, exists, forall2, exists2, nu
 parseQuantifiers :: Parser Proposition
-parseQuantifiers = try (parseForall2) <|> try (parseExists2) <|> parseForall <|> parseExists <|> parseNu
+parseQuantifiers = (try parseForall2) <|> (try parseExists2) <|> parseForall <|> parseExists <|> parseNu
 
 -- forall x : A . P
 parseForall :: Parser Proposition

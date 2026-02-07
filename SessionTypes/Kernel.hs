@@ -1,4 +1,4 @@
-module LinearLogic where
+module SessionTypes.Kernel where
 
 import Data.Map
 import qualified Data.Set as S
@@ -7,7 +7,7 @@ import qualified Data.List as L
 import Control.Monad (when)
 import Text.Read (readMaybe)
 import Data.Maybe (isJust, fromMaybe)
-import FunctionalSystem
+import ECC.Kernel
     ( abstTermFunctional,
       extractFunctionalTerm,
       extractProofFromTermUnderCtx,
@@ -24,7 +24,7 @@ import FunctionalSystem
       FunctionalContext,
       FunctionalProof,
       FunctionalSequent(goalTerm, goalType, functionalContext),
-      FunctionalTerm(Var), renameVarInFnProof )
+      FunctionalTerm(Var), renameVarInFnProof, foldFunctionalProof )
 import Util
 import qualified Debug.Trace as DBG
 
@@ -242,7 +242,7 @@ substVarType (TyVar y) n x = if y == x then n else TyVar y
 
 data Process = Halt
     | ParallelComposition Process Process
-    | Nu String Process
+    | Nu String Proposition Process
     | Send String String Process
     | SendTerm String FunctionalTerm Process
     | SendType String Proposition Process
@@ -274,7 +274,7 @@ pToS = go 0
     go _ Halt = "0"
     go d (ParallelComposition p q) =
         parens (d > precPar) $ go precPar p ++ " | " ++ go precPar q
-    go d (Nu x p) =
+    go d (Nu x _ p) =
         parens (d > precNu) $ "(ν " ++ x ++ ") " ++ go precNu p
     go d (Send ch v p) =
         parens (d > precPrefix) $ ch ++ "[" ++ v ++ "]." ++ go precPrefix p
@@ -307,7 +307,7 @@ pToS = go 0
 
 processNames :: Process -> S.Set String
 processNames Halt = S.empty
-processNames (Nu y p) = S.singleton y `S.union` processNames p
+processNames (Nu y prop p) = S.singleton y `S.union` processNames p `S.union` propNames prop
 processNames (Send x y p) = S.fromList [x, y] `S.union` processNames p
 processNames (SendTerm x t p) = S.singleton x `S.union` functionalNames t `S.union` processNames p
 processNames (SendType x t p) = S.singleton x `S.union` propNames t `S.union` processNames p
@@ -326,7 +326,7 @@ processNames HoleTerm = S.empty
 {-| Rename a var name in a process. P{x/u}. Replace the name u with x in P. Does not avoid capturing. -}
 renameVar :: Process -> String -> String -> Process
 renameVar Halt x u = Halt
-renameVar (Nu y p) x u = Nu (if y == u then x else y) (renameVar p x u)
+renameVar (Nu y prop p) x u = Nu (if y == u then x else y) (renameVarProp prop x u) (renameVar p x u)
 renameVar (Send v w p) x u = Send (if v == u then x else v) (if w == u then x else w) (renameVar p x u)
 renameVar (SendTerm v t p) x u = SendTerm (if v == u then x else v) (substVarFunctional t x u) (renameVar p x u)
 renameVar (SendType v t p) x u = SendType (if v == u then x else v) (substVarProp t x u) (renameVar p x u)
@@ -343,11 +343,11 @@ renameVar (Call y zs) x u = Call (if y == u then x else y) ((\y -> if y == x the
 renameVar HoleTerm x u = HoleTerm
 
 alphaConvertProcess :: Process -> S.Set String -> Process
-alphaConvertProcess (Nu y p) names =
+alphaConvertProcess (Nu y prop p) names =
     let
-        z = getFreshName names
+        z = getFreshName (S.insert y $ names `S.union` propNames prop `S.union` processNames p)
     in
-        Nu z (renameVar p z y)
+        Nu z prop (renameVar p z y)
 alphaConvertProcess (Receive x y p) names =
     let
         z = getFreshName names
@@ -384,12 +384,15 @@ ParallelComposition (Nu "y" (Send "x" "y" Halt)) (Receive "x" "y" (Send "y" "w" 
 substVar :: Process -> String -> String -> Process
 substVar Halt x u = Halt
 substVar (ParallelComposition p1 p2) x u = ParallelComposition (substVar p1 x u) (substVar p2 x u)
-substVar outerP@(Nu y p) x u = let
-    newY = if u == y then x else y
-    allNamesConsidered = S.fromList [y, x, u] `S.union` processNames p
-    in if u == y then Nu y p -- u is no longer free. No more work.
-    else if x == y then substVar (alphaConvertProcess outerP allNamesConsidered) x u -- new variable name will be captured
-    else Nu y (substVar p x u)
+substVar outerP@(Nu y prop p) x u =
+    let
+        newY = if u == y then x else y
+        newProp = substVarProp prop x u
+        allNamesConsidered = S.fromList [y, x, u] `S.union` processNames p `S.union` propNames prop
+    in
+        if u == y then Nu y newProp p -- u is no longer free. No more work.
+        else if x == y then substVar (alphaConvertProcess outerP allNamesConsidered) x u -- new variable name will be captured
+        else Nu y newProp (substVar p x u)
 substVar (Send y z p) x u =
     let
         newY = if y == u then x else y
@@ -528,6 +531,70 @@ data Proof = IdRule String String (S.Set String) FunctionalContext Context Recur
     | RecBindingWeakening String ([String], BindingSequent) Proof
     | HoleRule (S.Set String) FunctionalContext Context Context RecursiveBindings String Proposition
     deriving (Eq, Show, Read)
+
+-- Extracts children from Proof as Either FunctionalProof or Proof
+subProofs :: Proof -> [Either FunctionalProof Proof]
+subProofs rule = case rule of
+    -- Cases with FunctionalProof
+    FunctionalTermRightRule _ fp _ _ _ -> [Left fp]
+    ForallLeftRule _ _ fp p            -> [Left fp, Right p]
+    ExistsRightRule _ fp p             -> [Left fp, Right p]
+
+    -- Binary Proof cases
+    WithRightRule p1 p2                -> [Right p1, Right p2]
+    ImpliesLeftRule _ p1 p2            -> [Right p1, Right p2]
+    TensorRightRule p1 p2              -> [Right p1, Right p2]
+    PlusLeftRule _ p1 p2               -> [Right p1, Right p2]
+    CutRule p1 p2                      -> [Right p1, Right p2]
+    CutReplicationRule _ p1 p2         -> [Right p1, Right p2]
+
+    -- Unary Proof cases
+    FunctionalTermLeftRule _ p         -> [Right p]
+    UnitLeftRule _ p                   -> [Right p]
+    ReplicationRightRule _ p           -> [Right p]
+    ReplicationLeftRule _ _ p          -> [Right p]
+    CopyRule _ _ p                     -> [Right p]
+    WithLeft1Rule _ _ p                -> [Right p]
+    WithLeft2Rule _ _ p                -> [Right p]
+    ImpliesRightRule _ p               -> [Right p]
+    TensorLeftRule _ _ p               -> [Right p]
+    PlusRight1Rule _ p                 -> [Right p]
+    PlusRight2Rule _ p                 -> [Right p]
+    ForallRightRule _ p                -> [Right p]
+    ExistsLeftRule _ _ p               -> [Right p]
+    ForallRight2Rule _ p               -> [Right p]
+    ForallLeft2Rule _ _ _ p            -> [Right p]
+    ExistsRight2Rule _ _ p             -> [Right p]
+    ExistsLeft2Rule _ _ p              -> [Right p]
+    TyNuRightRule _ _ p                -> [Right p]
+    TyNuLeftRule _ _ p                 -> [Right p]
+    ReplWeakening _ _ p                -> [Right p]
+    FnWeakening _ _ p                  -> [Right p] -- Assuming FunctionalTerm is not traversed
+    TyVarWeakening _ p                 -> [Right p]
+    RecBindingWeakening _ _ p          -> [Right p]
+
+    -- Leaf cases
+    IdRule{}                           -> []
+    UnitRightRule{}                    -> []
+    TyVarRule{}                        -> []
+    HoleRule{}                         -> []
+
+foldProof :: ([a] -> a) -> ([a] -> a) -> Proof -> a
+foldProof fProof fFunc rule =
+    fProof (L.map resolve (subProofs rule))
+  where
+    resolve (Left fp) = foldFunctionalProof fFunc fp
+    resolve (Right p) = foldProof fProof fFunc p
+
+proofSize :: Proof -> Integer
+proofSize = foldProof sumResults sumResults
+  where
+    sumResults results = 1 + sum results
+
+proofDepth :: Proof -> Integer
+proofDepth = foldProof maxDepth maxDepth
+  where
+    maxDepth results = 1 + maximum (0 : results)
 
 {-| Get all the names used in a proof derivation. -}
 getProofNames :: Proof -> S.Set String
@@ -836,7 +903,7 @@ concl (ForallRightRule x p) = do
     xFnProp <- eitherLookup x $ fnContext j
     return $ j { fnContext = Data.Map.delete x $ fnContext j, goalProposition = Forall x xFnProp (goalProposition j) }
 concl (ForallLeftRule x y p1 p2) = do
-    j1 <- functionalConcl p1
+    (j1) <- functionalConcl p1
     j2 <- concl p2
     xProp <- eitherLookup x $ linearContext j2
     let tau = goalType j1
@@ -1171,7 +1238,7 @@ extractProcess rule@(IdRule x z tv fCtx uCtx eta prop) = do
     seq <- concl rule
     return (Link x z, seq)
 extractProcess rule@(FunctionalTermRightRule x p tv uc eta) = do
-    functionalSeq <- functionalConcl p
+    (functionalSeq) <- functionalConcl p
     curSeq <- concl rule
     return (LiftTerm (channel curSeq) (goalTerm functionalSeq), curSeq)
 extractProcess rule@(FunctionalTermLeftRule x p) = do
@@ -1194,7 +1261,8 @@ extractProcess rule@(ReplicationLeftRule u x p) = do
 extractProcess rule@(CopyRule u y p) = do
     (process, oldSeq) <- extractProcess p
     seq <- concl rule
-    return (Nu y (Send u y process), seq)
+    yTy <- eitherLookup u (unrestrictedContext seq)
+    return (Nu y yTy (Send u y process), seq)
 extractProcess rule@(WithRightRule p1 p2) = do
     (process1, oldSeq1) <- extractProcess p1
     (process2, oldSeq2) <- extractProcess p2
@@ -1217,13 +1285,13 @@ extractProcess rule@(ImpliesLeftRule x p1 p2) = do
     (process2, oldSeq2) <- extractProcess p2
     seq <- concl rule
     let y = channel oldSeq1
-    return (Nu y $ Send x y $ ParallelComposition process1 process2, seq)
+    return (Nu y (goalProposition oldSeq1) $ Send x y $ ParallelComposition process1 process2, seq)
 extractProcess rule@(TensorRightRule p1 p2) = do
     (process1, oldSeq1) <- extractProcess p1
     (process2, oldSeq2) <- extractProcess p2
     seq <- concl rule
     let y = channel oldSeq1
-    return (Nu y $ Send (channel seq) y $ ParallelComposition process1 process2, seq)
+    return (Nu y (goalProposition oldSeq1) $ Send (channel seq) y $ ParallelComposition process1 process2, seq)
 extractProcess rule@(TensorLeftRule x y p) = do
     (process, oldSeq) <- extractProcess p
     seq <- concl rule
@@ -1291,12 +1359,12 @@ extractProcess rule@(CutRule p1 p2) = do
     (process1, oldSeq1) <- extractProcess p1
     (process2, oldSeq2) <- extractProcess p2
     seq <- concl rule
-    return (Nu (channel oldSeq1) $ ParallelComposition process1 process2, seq)
+    return (Nu (channel oldSeq1) (goalProposition oldSeq1) $ ParallelComposition process1 process2, seq)
 extractProcess rule@(CutReplicationRule u p1 p2) = do
     (process1, oldSeq1) <- extractProcess p1
     (process2, oldSeq2) <- extractProcess p2
     seq <- concl rule
-    return (Nu u $ ParallelComposition (ReplicateReceive u (channel oldSeq2) process1) process2, seq)
+    return (Nu u (goalProposition oldSeq1) $ ParallelComposition (ReplicateReceive u (channel oldSeq2) process1) process2, seq)
 extractProcess rule@(ReplWeakening u prop proof) = extractProcess proof
 extractProcess rule@(FnWeakening u prop proof) = extractProcess proof
 extractProcess rule@(TyVarWeakening u proof) = extractProcess proof
@@ -1329,7 +1397,19 @@ checkNamesMatch z1 z2 = when (z1 /= z2) $ Left $ "Expected matching channels do 
     Must be checked after proof is derived.
     Pass functional context, unrestricted context, linear context, active channel name, and process. -}
 extractProofFromProcessUnderCtx :: S.Set String -> FunctionalContext -> Context -> Context -> RecursiveBindings -> String -> Process -> Either String Proof
-extractProofFromProcessUnderCtx tv fctx uctx lctx eta z Halt = return $ UnitRightRule z tv fctx uctx eta
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z Halt | Data.Map.empty == lctx = return $ UnitRightRule z tv fctx uctx eta
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z Halt = do -- Try to use all variables in linear context.
+        let
+            unitProps = L.filter (\(k, v) -> v == Unit) $ Data.Map.toList lctx
+            replProps = L.filter (\(k, v) -> case v of Replication p -> True; _ -> False) $ Data.Map.toList lctx
+            fnProps = L.filter (\(k, v) -> case v of Lift p -> True; _ -> False) $ Data.Map.toList lctx
+            freshName = getFreshName (S.insert z $ tv `S.union` getFunctionalContextNames fctx `S.union` getContextNames uctx `S.union` getContextNames lctx `S.union` getRecursiveBindingsNames eta)
+        varRem <- case (unitProps, replProps, fnProps) of
+            ((u, _):_, _, _) -> return (u, UnitLeftRule u)
+            ([], (u, _):_, _) -> return (u, ReplicationLeftRule freshName u)
+            ([], [], (u, _):_) -> return (u, FunctionalTermLeftRule u)
+        newP <- extractProofFromProcessUnderCtx tv fctx uctx (Data.Map.delete (fst varRem) lctx) eta z Halt
+        return $ (snd varRem) newP
 extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (Link x z2) = if z1 /= z2
     then Left $ "Active channel " ++ z1 ++ "not on right side of " ++ show (Link x z2)
     else case Data.Map.lookup x lctx of
@@ -1338,24 +1418,17 @@ extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (LiftTerm z2 t) = do
     checkNamesMatch z1 z2
     p1 <- extractProofFromTermUnderCtx fctx t
     return $ FunctionalTermRightRule z1 p1 tv uctx eta
-extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (Nu y1 (Send z2 y2 (ParallelComposition p q))) | z1 == z2 && y1 == y2 = do
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (Nu y1 prop (Send z2 y2 (ParallelComposition p q))) | z1 == z2 && y1 == y2 = do
     p1 <- extractProofFromProcessUnderCtx tv fctx uctx lctx eta y1 p
     p2 <- extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 q
     return $ TensorRightRule p1 p2
-extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (Nu y1 (Send u (y2) p)) = do
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (Nu y1 prop (Send u (y2) p)) = do
     _ <- (if y1 == y2 then Right () else Left $ y1 ++ " must match " ++ y2)
     return $ UnitRightRule z tv fctx uctx eta
-extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (Nu u1 (ParallelComposition (ReplicateReceive u2 x p) q)) = if u1 /= u2
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (Nu u1 prop (ParallelComposition (ReplicateReceive u2 x p) q)) = if u1 /= u2
     then Left $ "Nu " ++ u1 ++ " is not the same as receiving " ++ u2
     else do
         p1 <- extractProofFromProcessUnderCtx tv fctx uctx Data.Map.empty eta x p
         p1Concl <- concl p1
         p2 <- extractProofFromProcessUnderCtx tv fctx (Data.Map.insert u1 (goalProposition p1Concl) uctx) lctx eta z q
         return (CutReplicationRule u1 p1 p2)
-
--- testProof = AxRule "w" "z" (Dual "B") (Var "B")
--- testProof1 = AxRule "x" "x" (Dual "B") (Var "B")
--- testProof2 = AxRule "y" "x" (Dual "A") (Var "A")
--- testProof3 = TimesRule "z" "x" testProof testProof2
--- testProof3_bad = TimesRule "x" "x" testProof testProof2
--- testProof4 = ParRule "y" "w" testProof3

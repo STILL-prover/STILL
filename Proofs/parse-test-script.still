@@ -1,0 +1,21 @@
+module test begin
+
+theorem testUnit: "1"
+apply UnitR
+done
+
+theorem testMultiLine:
+    "forall a:nat.
+        forall b:nat.1"
+    apply ForallR
+    apply ForallR
+    apply UnitR
+done
+
+theorem testTacticExpression: "forall a:nat. forall b:nat. 1"
+apply ForallR+;UnitR
+done
+
+theorem testTacticExpression2: "forall a:nat. forall b:nat. 1"
+apply (ForallR <|> UnitR)+
+done

@@ -1,0 +1,25 @@
+module Commutative begin
+-- Implication (Tensor (Lift (Var "A")) (Lift (Var "B"))) (Tensor (Lift (Var "B")) (Lift (Var "A")))
+theorem tensor: "A * B -o B * A"
+apply ImpliesR
+apply TensorLA
+apply TensorR
+apply IdA
+apply IdA
+done
+-- z(a).a(b).(ν c)z[c].([a <-> c]) | ([b <-> z])
+
+-- :theoremP "with" Implication (With (Lift (Var "A")) (Lift (Var "B"))) (With (Lift (Var "B")) (Lift (Var "A")))
+theorem with: "A & B -o B & A"
+apply ImpliesR
+apply WithR
+apply WithL1A
+apply IdA
+apply WithL2A
+apply IdA
+done
+-- z(a).z.case(a.inr;[a <-> z], a.inl;[a <-> z])
+
+theorem tenTensor: "A * B * C * D * E * F * G * H * I * J -o A * B * C * D * E * F * G * H * I * J"
+apply ImpliesR; TensorLA+; (TensorR; (IdA <|> Skip))+
+done

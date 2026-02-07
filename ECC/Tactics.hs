@@ -1,4 +1,4 @@
-module FunctionalTactics where
+module ECC.Tactics where
 
 import Data.Map
 import qualified Data.Set as S
@@ -8,8 +8,8 @@ import qualified Data.List as L
 import Control.Monad (mplus)
 import Text.Read (readMaybe)
 import Data.Maybe (isJust, fromMaybe, isNothing)
-import FunctionalSystem hiding (FunctionalSequent(functionalContext, goalType, goalTerm))
-import qualified FunctionalSystem as FS (FunctionalSequent(..))
+import ECC.Kernel hiding (FunctionalSequent(functionalContext, goalType, goalTerm))
+import qualified ECC.Kernel as FS (FunctionalSequent(..))
 import Util
 import Debug.Trace
 import Control.Monad.Trans (MonadIO(liftIO))
@@ -166,22 +166,22 @@ axTac = do
     let ctx = functionalContext seq
     case goalType seq of
         Type 0 -> if ctx == M.empty then do
-                useCurrentSubgoal . buildJustification0 $ FunctionalAxiom
+                useCurrentSubgoal . buildJustification0 $ FunctionalAxiom ctx
                 return "Ax tactic applied." else tacError "Empty context required"
         _ -> tacError $ "EXPECTED: " ++ show (Type 0) ++ "\nRECEIVED: " ++ show (goalType seq)
 
-cTac :: Monad m => String -> Integer -> FunctionalTactic m
-cTac x j = do
-    seq <- getCurrentSequent
-    let ctx = functionalContext seq
-    case M.lookup x ctx of
-        Just xTy -> if goalType seq == Type 0 && (isNothing (goalTerm seq) || goalTerm seq == Just Prop) && j >= 0
-            then (do
-                freshGoal <- createNewSubgoal $ seq { goalTerm = Just xTy, goalType = Type j }
-                useCurrentSubgoal . buildJustification1 freshGoal $ CRule x
-                return "C tactic applied.")
-            else tacError "Cannot apply to non- (Prop:Type 0) goal."
-        Nothing -> tacError $ "Could not find " ++ show x ++ " in the context."
+-- cTac :: Monad m => String -> Integer -> FunctionalTactic m
+-- cTac x j = do
+--     seq <- getCurrentSequent
+--     let ctx = functionalContext seq
+--     case M.lookup x ctx of
+--         Just xTy -> if goalType seq == Type 0 && (isNothing (goalTerm seq) || goalTerm seq == Just Prop) && j >= 0
+--             then (do
+--                 freshGoal <- createNewSubgoal $ seq { goalTerm = Just xTy, goalType = Type j }
+--                 useCurrentSubgoal . buildJustification1 freshGoal $ CRule x
+--                 return "C tactic applied.")
+--             else tacError "Cannot apply to non- (Prop:Type 0) goal."
+--         Nothing -> tacError $ "Could not find " ++ show x ++ " in the context."
 
 tTac :: Monad m => FunctionalTactic m
 tTac = do
@@ -196,17 +196,17 @@ tTac = do
             else tacError "Goal term is not valid. Should be type universe minus 1."
         _ -> tacError "Cannot apply to non-Type j goal."
 
-wfTac :: Monad m => FunctionalTactic m
-wfTac = do
-    seq <- getCurrentSequent
-    let ctx = functionalContext seq
-        p = extractProofFromTermUnderCtx ctx Prop
-    case (p, p >>= verifyFunctionalProofM) of
-        (Right pRes, Right True) -> do
-                useCurrentSubgoal . buildJustification0 $ pRes
-                return "WF tactic applied."
-        (Left e, _) -> tacError e
-        (_, Left e) -> tacError e
+-- wfTac :: Monad m => FunctionalTactic m
+-- wfTac = do
+--     seq <- getCurrentSequent
+--     let ctx = functionalContext seq
+--         p = extractProofFromTermUnderCtx ctx Prop
+--     case (p, p >>= (`verifyFunctionalProofM` Data.Map.empty)) of
+--         (Right pRes, Right (True, _)) -> do
+--                 useCurrentSubgoal . buildJustification0 $ pRes
+--                 return "WF tactic applied."
+--         (Left e, _) -> tacError e
+--         (_, Left e) -> tacError e
 
 varTac :: Monad m => String -> FunctionalTactic m
 varTac x = do
@@ -215,8 +215,13 @@ varTac x = do
     case Data.Map.lookup x ctx of
         Just xTy -> if xTy == goalType seq && (isNothing (goalTerm seq) || goalTerm seq == Just (Var x))
             then (do
-                freshGoal <- createNewSubgoal $ seq { goalTerm = Just Prop, goalType = Type 0 }
-                useCurrentSubgoal . buildJustification1 freshGoal $ VarRule x
+                let wf = extractProofFromTermUnderCtx (M.delete x ctx) xTy
+                    verifWf = wf >>= verifyFunctionalProofM
+                case (verifWf, wf) of
+                    (Right True, Right wfP) -> useCurrentSubgoal . buildJustification0 $ VarRule x wfP
+                    _ -> (do
+                        freshGoal <- createNewSubgoal $ seq { functionalContext = M.delete x ctx, goalTerm = Just xTy, goalType = Type 0 }
+                        useCurrentSubgoal . buildJustification1 freshGoal $ VarRule x)
                 return "Var tactic applied.")
             else tacError $ "Cannot apply tactic. Goal term or type is mismatched.\nEXPECTED: " ++ maybe "" show (goalTerm seq) ++ show (goalType seq) ++ "\nRECEIVED: " ++ show xTy
         _ -> tacError $ "Cannot find " ++ x ++ " in the context."
@@ -228,10 +233,7 @@ varATac = do
     case goalTerm seq of
         Just (Var x) -> varTac x
         Nothing -> case L.filter (\(_, p) -> p == goalType seq) . Data.Map.toList $ ctx of
-            ((x,xTy):rest) -> do
-                    freshGoal <- createNewSubgoal $ seq { goalTerm = Just Prop, goalType = Type 0 }
-                    useCurrentSubgoal . buildJustification1 freshGoal $ VarRule x
-                    return "Var tactic applied."
+            ((x,xTy):rest) -> varTac x
             _ -> tacError $ "Cannot find a variable with type " ++ show (goalType seq) ++ " in the context."
 
 piTac :: Monad m => Maybe FunctionalTerm -> FunctionalTactic m
@@ -246,16 +248,10 @@ piTac fa = do
         _ -> tacError "Invalid application of tactic. Goal term or attempted term is not a Pi term."
     --freshX <- getFreshVarAttempt realX
     --let newB = functionalSubst realB (Var freshX) realX
-    if goalType seq == Prop
-    then (do
-            freshGoal <- createNewSubgoal $ seq { functionalContext = Data.Map.insert realX realA $ functionalContext seq, goalTerm = Just realB, goalType = Prop }
-            useCurrentSubgoal . buildJustification1 freshGoal $ Pi1Rule realX
-            return "Pi tactic applied.")
-    else (do
-            freshGoalLeft <- createNewSubgoal $ seq { goalTerm = Just realA }
-            freshGoalRight <- createNewSubgoal $ seq { functionalContext = Data.Map.insert realX realA $ functionalContext seq, goalTerm = Just realB }
-            useCurrentSubgoal . buildJustification2 freshGoalLeft freshGoalRight $ Pi2Rule realX
-            return "Pi tactic applied.")
+    freshGoalLeft <- createNewSubgoal $ seq { goalTerm = Just realA }
+    freshGoalRight <- createNewSubgoal $ seq { functionalContext = Data.Map.insert realX realA $ functionalContext seq, goalTerm = Just realB }
+    useCurrentSubgoal . buildJustification2 freshGoalLeft freshGoalRight $ PiRule realX
+    return "Pi tactic applied."
 
 lambdaTac :: Monad m => FunctionalTactic m
 lambdaTac = do
@@ -366,17 +362,17 @@ simpTac steps = do
     freshGoalLeft <- createNewSubgoal $ seq { goalType = newGoal }
     case extractProofFromTermUnderCtx (functionalContext seq) (goalType seq) of -- Prove the original type was well formed
         Right wfP ->
-            case (verifyFunctionalProofM wfP, functionalConcl wfP) of
-                (Right True, Right j) -> (do
-                    case FS.goalType j of
-                        Type j -> return ()
-                        _ -> tacError "Cannot simplify types that are not in a Type j universe."
-                    useCurrentSubgoal . buildJustification1 freshGoalLeft $ (`CumulativiyRule` wfP)
-                    return "Simp applied.")
-                (Left e, Right j) -> tacError e
-                (Right True, Left e) -> tacError e
-                (Right False, Left e) -> tacError $ "Could not verify proof and " ++ e
-                (Left e1, Left e2) -> tacError $ "Error verifying proof of " ++ show (goalType seq) ++ " in context " ++ show (functionalContext seq) ++ " " ++ e1 ++ " and " ++ e2-- ++ "\n\n" ++ show wfP
+            case verifyFunctionalProofM wfP of
+                Right True -> case functionalConcl wfP of
+                        Right j -> (do
+                            case FS.goalType j of
+                                Type j -> return ()
+                                _ -> tacError "Cannot simplify types that are not in a Type j universe."
+                            useCurrentSubgoal . buildJustification1 freshGoalLeft $ (`CumulativiyRule` wfP)
+                            return "Simp applied.")
+                        Left e -> tacError e
+                (Left e) -> tacError e
+                (Right False) -> tacError $ "Could not verify proof"
         Left e -> tacError e
 
 exactTac :: Monad m => FunctionalTerm -> FunctionalTactic m
@@ -555,8 +551,8 @@ _FAx :: Monad m => FunctionalTactic m
 _FAx = axTac
 
 {-| Tactic: Apply the well-formed tactic. Attempt to complete a full proof that the types in the context are well formed. -}
-_FWF :: Monad m => FunctionalTactic m
-_FWF = wfTac
+-- _FWF :: Monad m => FunctionalTactic m
+-- _FWF = wfTac
 
 {-| Tactic: Provide the variable with the type in the context. -}
 _FVar :: Monad m => String -> FunctionalTactic m
@@ -611,14 +607,14 @@ _FExactKnown :: Monad m => FunctionalTactic m
 _FExactKnown = exactKnownTac
 
 -- Hole / Fiat (alias for axiom/hole-style step)
-_FHole :: Monad m => FunctionalTactic m
-_FHole = do
-    seq <- getCurrentSequent
-    useCurrentSubgoal . buildJustification0 $ FHoleRule (functionalContext seq) (fromMaybe FHoleTerm (goalTerm seq)) (goalType seq)
-    return "Hole applied."
+-- _FHole :: Monad m => FunctionalTactic m
+-- _FHole = do
+--     seq <- getCurrentSequent
+--     useCurrentSubgoal . buildJustification0 $ FHoleRule (functionalContext seq) (fromMaybe FHoleTerm (goalTerm seq)) (goalType seq)
+--     return "Hole applied."
 
-_FFiat :: Monad m => FunctionalTactic m
-_FFiat = _FHole
+-- _FFiat :: Monad m => FunctionalTactic m
+-- _FFiat = _FHole
 
 -- Tacticals
 {-| Tactic: Apply the first tactic and then the second to the resulting subgoals. -}
