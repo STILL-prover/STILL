@@ -1,0 +1,59 @@
+-- Lfix X . F X = ALL X . F X -o X
+-- Nat = Lfix X . 1 + X = ALL X . (1 + X -o X) -o X
+-- In general the least fix point requires a replicating term. Toninho and Yoshida: ALL X . !(1 + X -o X) -o X.
+-- But linear natural numbers seem to work.
+-- Recursive Types for Free by Wadler 1990 https://homepages.inf.ed.ac.uk/wadler/papers/free-rectypes/free-rectypes.txt
+:init "SecondOrder"
+
+:theorem "z" forall X : stype. (1 + X -o X) -o X
+-- :theorem "ztest" Forall2 "X" (Implication (Implication (Plus Unit (TyVar "X")) (TyVar "X")) (TyVar "X"))
+:apply _Intros
+:apply _ImpliesLA
+:apply _IdA
+:apply _PlusR1
+:apply _UnitR
+:done
+-- z(X).z(a).(ν b)a[b].(b.inl;0) | ([a <-> z])
+
+:theorem "succ" (forall X : stype. (1 + X -o X) -o X) -o (forall Y:stype. (1 + Y -o Y) -o Y)
+:apply _ImpliesR
+:apply _Forall2R
+:apply _Forall2L "a" (TyVar "Y")
+:apply _IdA
+:done
+-- z(a).z(Y).a[Y].[a <-> z]
+
+-- By hand.
+:theorem "one" forall X:stype. (1 + X -o X) -o X
+:apply _Cut (Implication (Forall2 "X" (Implication (Implication (Plus Unit (TyVar "X")) (TyVar "X")) (TyVar "X"))) (Forall2 "Y" (Implication (Implication (Plus Unit (TyVar "Y")) (TyVar "Y")) (TyVar "Y"))))
+:apply _Cut (Forall2 "X" (Implication (Implication (Plus Unit (TyVar "X")) (TyVar "X")) (TyVar "X")))
+:apply _ImpliesLA
+:apply _Forall2R
+:apply _Forall2L "a" (TyVar "X")
+:apply _IdA
+:apply _IdA
+-- z
+:apply _Intros
+:apply _ImpliesLA
+:apply _IdA
+:apply _PlusR1
+:apply _UnitR
+-- succ
+:apply _ImpliesR
+:apply _Forall2R
+:apply _Forall2L "f" (TyVar "Y")
+:apply _IdA
+:done
+-- one: ; ; ;  |- z:∀X. (1 ⊕ X ⊸ X) ⊸ X
+-- (ν a)(a(b).a(Y).b[Y].[b <-> a]) | ((ν c)(c(X).c(d).(ν e)d[e].(e.inl;0) | ([d <-> c])) | ((ν f)a[f].([c <-> f]) | (z(X).a[X].[a <-> z])))
+
+-- Use previous theorems.
+:theorem "two" forall X:stype. (1 + X -o X) -o X
+:apply _CutTheorem "one"
+:apply _CutTheorem "succ"
+:apply _ImpliesLA
+:apply _Forall2R
+:apply _Forall2L "b" (TyVar "X")
+:apply _IdA
+:apply _IdA
+:done

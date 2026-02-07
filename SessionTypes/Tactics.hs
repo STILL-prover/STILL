@@ -7,7 +7,7 @@ import qualified Data.Set as S
 import qualified Control.Monad.State.Lazy as ST
 import qualified Control.Monad.Trans.Except as E
 import qualified Data.List as L
-import Control.Monad (mplus, when)
+import Control.Monad (mplus, when, unless)
 import Text.Read (readMaybe)
 import Data.Maybe (isJust, fromMaybe, isNothing, fromJust, listToMaybe)
 import ECC.Kernel
@@ -1241,6 +1241,12 @@ _Cut = cutTac
 {-| Tactic: Cut a replicating theorem into the proof. A goal to prove the theorem is created, and another goal to use it as an unrestricted assumption is created. -}
 _CutRepl :: Monad m => Proposition -> Tactic m
 _CutRepl = cutReplicationTac
+
+_CutTheorem :: Monad m => String -> Tactic m
+_CutTheorem = cutLinearTheoremTac
+
+_CutReplTheorem :: Monad m => String -> Tactic m
+_CutReplTheorem = (\s -> return "Not implemented!")
 
 {-| Tactic: Refine a corecursive proposition. Provide the binding name, parameter names, and initial arguments. -}
 _NuR :: Monad m => String -> [String] -> [String] -> Tactic m
