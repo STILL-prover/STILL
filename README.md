@@ -1,23 +1,39 @@
-# Running with ghci (Recommended)
+# Running STILL
+
+The still prover has three modes:
+
+1. repl
+    - ```./still repl```
+2. file watch
+    - ```./still watch FILE_PATH```
+3. proof execution
+    - ```./still [FILE_PATH ...]```
+    - ```./still benchmark [FILE_PATH ...]```
+
+The proof execution mode accepts multiple files as arguments. Each file
+is ran as a standalone script and doesn't affect the execution of the other scripts.
+
+# Writing Proofs
+
+Proof modules use the ```.still``` extension. Modules must begin with a module
+declaration that includes any optional imports
+
+```module ModuleName \[imports Name1 Name2 ...\] begin```
+
+After the module declaration you may start a theorem with the theorem command.
+The proposition of the theorem must be wrapped in quotes.
+
+```theorem TheoremName: "proposition"```
+
+After a theorem is started you can start proving it using the proving commands.
+The ```apply``` command must be followed by a tactic expression. Use ```defer```
+to move the current subgoal to the end.
+
+# Compiling
 
 1. Use ghcup to install ghc 9.6.7
-2. Run ```ghci``` this loads the Main module. See .ghci for details.
-3. Create a theorem with the theorem command ```:theorem "theorem_name" 1```
-4. Apply a tactic E.g. ```:apply _UnitR```
-5. Check the proof ```:done```
-6. Extract the process ```:extract "theorem_name"```
-
-You can also save your commands in a module and run the ```:load_module
-path/to/module.txt``` command.
-
-For a full list of commands use the ```:help_commands``` command. For a full
-list of tactics use the ```:help_tactics``` and ```:help_functional_tactics``` commands.
-
-# Compiling (Not supported at the moment)
-
-1. Use ghcup to install ghc 9.6.7
-2. ghc Main.hs -o tac
-3. Run with ./tac
+2. ghc Main.hs -o still
+3. Run with ./still (still.exe on Windows)
 
 # License
 
