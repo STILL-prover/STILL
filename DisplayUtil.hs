@@ -94,18 +94,14 @@ getFTactics = do
     fileLines <- getGoodLines [] . lines <$> readFile "FunctionalTactics.hs"
     putStrLn $ L.intercalate "\n" (prettyPrintGoodLine <$> fileLines)
 
-printCommands :: IO ()
+printCommands :: String
 printCommands = do
-    putStrLn $ L.intercalate "\n" ["init <module_name> :: Initializes a module with a fresh prover state. Wrap module name in quotes.",
-        "theorem <theorem_name> <proposition> :: Initializes a theorem in the module. The theorem name must be wrapped in quotes and be one word, no spaces.",
-        "apply <tactic> :: Applies the supplied tactic to the current subgoal. Must be a result with the Tactic m type",
-        "switch <subgoal_name> :: Switches to the supplied subgoal name. Must wrap name in quotes.",
+    L.intercalate "\n" ["module MODULE_NAME [imports [IMPORT_MODULE_NAME ...]] begin :: starts a module.",
+        "theorem THEOREM_NAME: \"PROPOSITION\" :: Initializes a theorem.",
+        "apply TACTIC_EXPRESSION :: Applies the supplied tactic to the current subgoal.",
+        "defer :: Moves the current subgoal to the end of the list of open subgoals.",
         "done :: Validates the current proof, and loads it as a theorem if validation succeeds.",
-        "extract <theorem_name> :: Extracts the process term corresponding to the proof of the theorem. The theorem name must be wrapped in quotes.",
-        "load_module <file_name> :: Loads the file with prover commands as a separate state, then loads that state into the current one as a module.",
-        "help_tactics :: Display all tactics and a small description for each one.",
-        "help_functional_tactics :: Display all functional tactics and a small description for each one.",
-        "help_commands :: Display this text."]
+        "help :: Display this text."]
 
 removeNewlines :: String -> String
 removeNewlines args = L.unwords (L.lines args)
