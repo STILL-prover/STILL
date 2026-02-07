@@ -50,11 +50,17 @@ cmd = parseTheorem
   <|> parseProvingCommand
   <|> parseDone
   <|> parseHelp
+  <|> parsePrintTheorems
 
 parseHelp :: Parser (ProofState Identity -> ProofState Identity)
 parseHelp = do
     reserved "help"
     return (\s -> s { outputs = printCommands:outputs s})
+
+parsePrintTheorems :: Parser (ProofState Identity -> ProofState Identity)
+parsePrintTheorems = do
+    reserved "print_theorems"
+    return _PrintTheorems
 
 parseImports :: Parser [String]
 parseImports = do
@@ -323,7 +329,7 @@ lexer :: Tok.TokenParser ()
 lexer = Tok.makeTokenParser style
   where
     ops = [":", "\"", ";", "+", "<|>"]
-    names = ["module", "imports", "begin", "end", "theorem", "done", "defer", "prefer", "apply"] ++ (fst <$> simpleTactics)
+    names = ["module", "imports", "begin", "end", "theorem", "done", "defer", "prefer", "apply", "help", "print_theorems"] ++ (fst <$> simpleTactics)
     style = emptyDef
         { Tok.commentLine = "--"
         , Tok.commentStart = "{-"

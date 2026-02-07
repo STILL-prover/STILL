@@ -3,6 +3,7 @@ module Main where
 import System.IO
 import System.Directory (getModificationTime, doesFileExist)
 import System.Environment (getArgs)
+import System.FilePath.Posix (dropExtensions)
 import Control.Concurrent (threadDelay)
 import Control.Exception (catch, IOException)
 import Data.Time.Clock (UTCTime, getCurrentTime, diffUTCTime)
@@ -96,11 +97,11 @@ main = do
     args <- getArgs
     case args of
         ("watch":fileName:[]) -> startWatcher fileName
-        ("watch":[])          -> startWatcher "data.txt"
-        ("repl":_)            -> startRepl
+        ("watch":[])          -> startWatcher "Scratch.still"
+        ("repl":fnames)       -> startRepl fnames
         ("benchmark":fnames)  -> runScripts True fnames
         (fname:fnames)        -> runScripts False (fname:fnames)
-        []                    -> startRepl
+        []                    -> startRepl []
     where
         runScripts :: Bool -> [String] -> IO ()
         runScripts diag [] = return ()
@@ -141,10 +142,11 @@ getDiagnostics st at et s = intercalate "\n" (("Ran in " ++ formatTime defaultTi
 -- 4. REPL Implementation
 -- ==========================================
 
-startRepl :: IO ()
-startRepl = do
+startRepl :: [String] -> IO ()
+startRepl fnames = do
+    initState <- loadImports (dropExtensions <$> fnames) emptyState
     putStrLn "--- STILL Interactive Mode (Type :q to quit) ---"
-    replLoop emptyState
+    replLoop initState
 
 replLoop :: ProofState Identity -> IO ()
 replLoop currentState = do
@@ -167,7 +169,7 @@ replLoop currentState = do
                         replLoop newState
 
 -- ==========================================
--- 5. Watcher Implementation
+-- File Watcher
 -- ==========================================
 
 startWatcher :: FilePath -> IO ()
