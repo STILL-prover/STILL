@@ -1,0 +1,90 @@
+module Counter begin
+
+-- CImpl = νX. {val:int ⊃ int ∧ X, inc: ⊕ {carry:X, done:X}, halt:1}
+theorem epsilon: "forall int:Type 1.nu X. ((forall m:int.exists n:int.X) & (X + X) & 1)"
+apply Intros
+apply NuR X () ()
+apply WithR
+apply UnitR
+apply WithR
+apply PlusR1
+apply TyVar X ()
+apply ForallR
+apply ExistsR
+apply Exact "m"
+apply Weaken m
+apply TyVar X ()
+done
+
+theorem Node: "forall int:Type 1.forall b:int.forall compute:(Pi m:int.Pi b:int.int). --!(forall sZero:stype . forall sOne:stype . $int -o (sZero + sOne)) -o
+    (nu X. ((forall m:int.exists n:int.X) & (X + X) & 1)) -o (nu X. ((forall m:int.exists n:int.X) & (X + X) & 1))"
+apply Intros
+apply BangLA
+apply NuR N (x) (a)
+apply WithR
+apply NuLA
+apply WithL2A
+apply UnitLA
+apply UnitR
+apply WithR
+apply NuLA
+apply WithL1A
+apply WithL2A
+apply PlusLA
+apply PlusR2
+apply TyVar N (a)
+apply PlusR1
+apply TyVar N (a)
+apply NuLA
+apply WithL1A
+apply WithL1A
+apply ForallR
+apply ForallLA
+apply Exact "compute m b"
+apply ExistsLA
+apply ExistsR
+apply Exact "n"
+apply Weaken m
+apply Weaken n
+apply TyVar N (a)
+done
+
+-- Counter νX. {val:int ∧ X, inc:X, halt:1}
+theorem Counter: "forall int:Type 1.forall compute:(Pi m:int.Pi b:int.int).forall zero:int.forall one:int.nu X. (X & X & 1)"
+apply CutTheorem epsilon
+apply Intros
+apply ForallLA
+apply Exact "int"
+apply NuR COORD (x) (a)
+apply WithR
+apply NuLA
+apply WithL2A
+apply UnitLA
+apply UnitR
+apply WithR
+apply NuLA
+apply WithL1A
+apply WithL2A
+apply PlusLA
+apply TyVar COORD (a)
+apply CutTheorem Node
+apply ForallLA
+apply Exact "int"
+apply ForallLA
+apply Exact "one"
+apply ForallLA
+apply Exact "compute"
+apply ImpliesLA
+defer
+apply IdA
+defer
+apply TyVar COORD (c)
+apply NuLA
+apply WithL1A
+apply WithL1A
+apply ForallLA
+apply Exact "zero"
+apply ExistsLA
+apply Weaken n
+apply TyVar COORD (a)
+done

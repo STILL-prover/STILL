@@ -134,7 +134,8 @@ getFreshVar = do
 
 getFreshVarAttempt :: Monad m => String -> ProverStateT m String
 getFreshVarAttempt z = do
-    vars <- getProofStateNames
+    seq <- getCurrentSequent
+    let vars = getSequentFreeNames seq
     let zs = z:[z ++ show i | i <- numbers]
         newVar = head $ Prelude.filter (\l -> not $ S.member l vars) zs
     return newVar
@@ -669,7 +670,7 @@ forallRight2Tac = do
 forallLeft2Tac :: Monad m => String -> Proposition -> Tactic m
 forallLeft2Tac x b = do
     seq <- getCurrentSequent
-    _ <- case wellFormedType (tyVarContext seq) b of Left e ->tacError (propToS b ++ " is not a well-formed type: " ++ e) ; Right () -> return ()
+    _ <- case wellFormedType (((tyVarContext seq) `S.union` (S.fromList ((\v -> bindingTyVar v) . snd . snd <$> Data.Map.toList (recursiveBindings seq))))) b of Left e ->tacError (propToS b ++ " is not a well-formed type: " ++ e) ; Right () -> return ()
     case Data.Map.lookup x $ linearContext seq of
         Just (Forall2 y p) -> do
             reserveVars [x]
@@ -683,7 +684,7 @@ forallLeft2Tac x b = do
 existsRight2Tac :: Monad m => Proposition -> Tactic m
 existsRight2Tac b = do
     seq <- getCurrentSequent
-    _ <- case wellFormedType (tyVarContext seq) b of Left e ->tacError (propToS b ++ " is not a well-formed type: " ++ e) ; Right () -> return ()
+    _ <- case wellFormedType (((tyVarContext seq) `S.union` (S.fromList ((\v -> bindingTyVar v) . snd . snd <$> Data.Map.toList (recursiveBindings seq))))) b of Left e ->tacError (propToS b ++ " is not a well-formed type: " ++ e) ; Right () -> return ()
     case goalProposition seq of
         Exists2 y p -> do
             --reserveVars [(channel seq)]
@@ -845,15 +846,19 @@ cutLinearTheoremTac theoremName = do
     -- unless (Data.Map.null $ fnContext conclusion) $ tacError "Only theorems with empty functional contexts are supported right now."
     -- unless (S.null $ tyVarContext conclusion) $ tacError "Only theorems with empty type variable contexts are supported right now."
     -- unless (Data.Map.null $ recursiveBindings conclusion) $ tacError "Only theorems with empty recursive binding information are supported right now."
-    newChan <- getFreshVar
+    curNames <- getProofStateNames
+    let otherNames = getProofNames theorem
+        allNames = S.union otherNames curNames
+        freshName = getFreshName allNames
+    newChan <- getFreshVarAttempt freshName
     let newRenamedProof = renameVarInProof theorem newChan (channel conclusion)
         weakenedUnrestrictedProof = L.foldl' (\proof (k, prop) -> ReplWeakening k prop proof) newRenamedProof (Data.Map.toList (unrestrictedContext seq)) -- Add everything needed for the unrestricted context.
         weakenedFnProof = L.foldl' (\proof (k, term) -> FnWeakening k term proof) weakenedUnrestrictedProof (Data.Map.toList (fnContext seq)) -- Add everything needed for the functional context.
         weakenedTyVarProof = L.foldl' (\proof (k) -> TyVarWeakening k proof) weakenedFnProof (S.toList (tyVarContext seq)) -- Add everything needed for the type variable context.
         weakenedRecBindProof = L.foldl' (\proof (k, b) -> RecBindingWeakening k b proof) weakenedTyVarProof (Data.Map.toList (recursiveBindings seq)) -- Add everything needed for the recursive binding context.
     newConclusion <- case concl weakenedRecBindProof of Left e -> tacError ("Could not get conclusion of the renamed variable theorem: " ++ e); Right c -> return c
-    freshGoal <- createNewSubgoal (seq { linearContext = Data.Map.insert newChan (goalProposition newConclusion) (linearContext seq) })
-    useCurrentSubgoal Multiplicative . buildJustification1 freshGoal $ CutRule weakenedRecBindProof
+    freshGoal <- DBG.trace "NewGoal" $ createNewSubgoal (seq { linearContext = Data.Map.insert newChan (goalProposition newConclusion) (linearContext seq) })
+    DBG.trace "Use" $ useCurrentSubgoal Multiplicative . buildJustification1 freshGoal $ CutRule newRenamedProof
     return $ "Linear theorem cut tactic applied: " ++ propToS (goalProposition conclusion)
 
 weakenTac :: Monad m => String -> Tactic m

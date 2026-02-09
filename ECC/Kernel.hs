@@ -212,6 +212,9 @@ type FunctionalContext = M.Map String FunctionalTerm
 getFunctionalContextNames :: FunctionalContext -> S.Set String
 getFunctionalContextNames c = S.fromList (M.keys c) `S.union` S.unions (functionalNames <$> M.elems c)
 
+getFunctionalContextFreeNames :: FunctionalContext -> S.Set String
+getFunctionalContextFreeNames c = S.fromList (M.keys c) `S.union` S.unions (functionalFreeVariables <$> M.elems c)
+
 data FunctionalSequent = FunctionalSequent {
     functionalContext :: FunctionalContext,
     goalTerm :: FunctionalTerm,

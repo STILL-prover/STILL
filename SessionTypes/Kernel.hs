@@ -24,7 +24,7 @@ import ECC.Kernel
       FunctionalContext,
       FunctionalProof,
       FunctionalSequent(goalTerm, goalType, functionalContext),
-      FunctionalTerm(Var), renameVarInFnProof, foldFunctionalProof )
+      FunctionalTerm(Var), renameVarInFnProof, foldFunctionalProof, getFunctionalContextFreeNames )
 import Util
 import qualified Debug.Trace as DBG
 
@@ -432,6 +432,9 @@ type Context = Map String Proposition
 getContextNames :: Context -> S.Set String
 getContextNames c = S.fromList (Data.Map.keys c) `S.union` S.unions (propNames <$> Data.Map.elems c)
 
+getContextFreeNames :: Context -> S.Set String
+getContextFreeNames c = S.fromList (Data.Map.keys c) `S.union` S.unions (freePropNames <$> Data.Map.elems c)
+
 {-| Map from bound process variable names to parameter list, functional context, unrestricted context, linear context, channel name, type variable name -}
 data BindingSequent = BindingSequent {
     bindingTyVarContext :: S.Set String,
@@ -445,10 +448,16 @@ data BindingSequent = BindingSequent {
 getBindingSequentNames :: BindingSequent -> S.Set String
 getBindingSequentNames (BindingSequent tv fc uc lc c v) = S.insert c $ S.insert v $ tv `S.union` getFunctionalContextNames fc `S.union` getContextNames uc `S.union` getContextNames lc
 
+getBindingSequentFreeNames :: BindingSequent -> S.Set String
+getBindingSequentFreeNames (BindingSequent tv fc uc lc c v) = S.insert c $ S.insert v $ tv `S.union` getFunctionalContextFreeNames fc `S.union` getContextFreeNames uc `S.union` getContextFreeNames lc
+
 type RecursiveBindings = Map String ([String], BindingSequent)
 
 getRecursiveBindingsNames :: RecursiveBindings -> S.Set String
 getRecursiveBindingsNames rb = S.fromList (Data.Map.keys rb) `S.union` S.unions ((\(ps, bs) -> S.fromList ps `S.union` getBindingSequentNames bs) <$> Data.Map.elems rb)
+
+getRecursiveBindingsFreeNames :: RecursiveBindings -> S.Set String
+getRecursiveBindingsFreeNames rb = S.fromList (Data.Map.keys rb) `S.union` S.unions ((\(ps, bs) -> S.fromList ps `S.union` getBindingSequentFreeNames bs) <$> Data.Map.elems rb)
 
 data Sequent = Sequent {
     tyVarContext :: S.Set String,
@@ -469,6 +478,9 @@ seqToS seq = L.intercalate ", " (S.toList . tyVarContext $ seq) ++ "; " ++
 
 getSequentNames :: Sequent -> S.Set String
 getSequentNames (Sequent tv fc uc lc eta ch goalProp) = S.insert ch $ tv `S.union` getFunctionalContextNames fc `S.union` getContextNames uc `S.union` getContextNames lc `S.union` propNames goalProp `S.union` getRecursiveBindingsNames eta
+
+getSequentFreeNames :: Sequent -> S.Set String
+getSequentFreeNames (Sequent tv fc uc lc eta ch goalProp) = S.insert ch $ tv `S.union` getFunctionalContextFreeNames fc `S.union` getContextFreeNames uc `S.union` getContextFreeNames lc `S.union` freePropNames goalProp `S.union` getRecursiveBindingsFreeNames eta
 
 {-| Rename a type variable in the type variable context. substVarTyVarContext ctx x u replaces u with x in ctx. -}
 substVarTyVarContext :: S.Set String -> String -> String -> S.Set String
@@ -640,7 +652,7 @@ isFreshInProof x p = not $ x `S.member` getProofNames p
 
 {-| renameVarInProof x y = P[x/y]. Rename y with x in proof P. -}
 renameVarInProof :: Proof -> String -> String -> Proof
-renameVarInProof p x y = if isFreshInProof x p
+renameVarInProof p x y {-| DBG.trace "Renaming" True-} = if isFreshInProof x p
     then go p
     else renameVarInProof (renameVarInProof p newFreshName x) x y -- Rename x first, then y
     where
@@ -695,8 +707,8 @@ renameVarInProof p x y = if isFreshInProof x p
         go (ImpliesRightRule x p) = ImpliesRightRule (swap x) (go p)
         go (ImpliesLeftRule x p1 p2) = ImpliesLeftRule (swap x) (go p1) (go p2)
         go (ForallRightRule x p) = ForallRightRule (swap x) (go p)
-        go (ForallLeftRule x y p1 p2) = ForallLeftRule (swap x) (swap y) (swapFnProof p1) (go p)
-        go (ExistsRightRule x p1 p2) = ExistsRightRule (swap x) (swapFnProof p1) (go p)
+        go (ForallLeftRule x y p1 p2) = ForallLeftRule (swap x) (swap y) (swapFnProof p1) (go p2)
+        go (ExistsRightRule x p1 pOther) = ExistsRightRule (swap x) (swapFnProof p1) (go pOther)--(go p2)
         go (ExistsLeftRule x y p) = ExistsLeftRule (swap x) (swap y) (go p)
         go (ForallRight2Rule x p) = ForallRight2Rule (swap x) (go p)
         go (ForallLeft2Rule x y p1 p2) = ForallLeft2Rule (swap x) (swap y) (swapProp p1) (go p2)
@@ -708,8 +720,8 @@ renameVarInProof p x y = if isFreshInProof x p
         go (TyNuLeftRule c x p) = TyNuLeftRule (swap c) (swap x) (go p)
         go (TyVarRule eta x zs) = TyVarRule (swapRec eta) (swap x) (swap <$> zs)
         go (ReplWeakening u prop proof) = ReplWeakening (swap u) (swapProp prop) (go proof)
-        go (FnWeakening a fterm proof) = FnWeakening (swap a) (swapFTerm fterm) (go p)
-        go (TyVarWeakening a proof) = TyVarWeakening (swap a) (go p)
+        go (FnWeakening a fterm proof) = FnWeakening (swap a) (swapFTerm fterm) (go proof)
+        go (TyVarWeakening a proof) = TyVarWeakening (swap a) (go proof)
         go (RecBindingWeakening a (ps, bs) p) = RecBindingWeakening (swap a) ((swap <$> ps), (swapBinding bs)) (go p)
         go (HoleRule tv fc uc lc eta z p) = HoleRule (swapSet tv) (swapFn fc) (swapCtx uc) (swapCtx lc) (swapRec eta) (swap z) (swapProp p)
 
@@ -943,7 +955,7 @@ concl (TyNuRightRule x zs p) = do
 concl (TyNuLeftRule c x p) = do
     j <- concl p
     cProp <- eitherLookup c $ linearContext j
-    let newCProp = foldUpRec x cProp -- TODO fix
+    let newCProp = TyNu x (foldUpRec x cProp) -- TODO fix
     return $ j { linearContext = Data.Map.insert c newCProp $ linearContext j }
 concl (TyVarRule eta x zs) = do
     (ys, xBinding) <- eitherLookup x eta
@@ -998,7 +1010,7 @@ wellFormedType tyVarContext b = case b of
     Forall2 x p -> wellFormedType (S.insert x tyVarContext) p
     Exists2 x p -> wellFormedType (S.insert x tyVarContext) p
     TyNu x p -> wellFormedType (S.insert x tyVarContext) p
-    TyVar x -> if S.member x tyVarContext then return () else Left (x ++ " is free what should be a well-formed type.")
+    TyVar x -> if S.member x tyVarContext then return () else Left (x ++ " is free in what should be a well-formed type.")
     where
         wf2 p1 p2 = wellFormedType tyVarContext p1 >> wellFormedType tyVarContext p2
         wf = wellFormedType tyVarContext
@@ -1139,12 +1151,15 @@ verifyProofM (ForallRight2Rule x p) = do
 verifyProofM (ForallLeft2Rule x y b p) = do
     _ <- justTrue <$> verifyProofM p
     tvCtx <- tyVarContext <$> concl p
-    wellFormedType tvCtx b
+    eta <- recursiveBindings <$> concl p
+    wellFormedType (tvCtx `S.union` (S.fromList ((\v -> bindingTyVar v) . snd . snd <$> Data.Map.toList eta))) b
     return True
 verifyProofM (ExistsRight2Rule x b p) = do
     _ <- justTrue <$> verifyProofM p
-    tvCtx <- tyVarContext <$> concl p
-    wellFormedType tvCtx b
+    let conc = concl p
+    tvCtx <- tyVarContext <$> conc
+    eta <- recursiveBindings <$> conc
+    wellFormedType (tvCtx `S.union` (S.fromList ((\v -> bindingTyVar v) . snd . snd <$> Data.Map.toList eta))) b
     return True
 verifyProofM (ExistsLeft2Rule x y p) = do
     _ <- justTrue <$> verifyProofM p
