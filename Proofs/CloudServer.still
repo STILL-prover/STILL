@@ -1,0 +1,29 @@
+module CloudServer begin
+
+theorem CS: "forall X:stype.!API -o !(API -o X) -o !X"
+apply Intros
+apply BangLA+
+apply BangR
+apply Copy d
+apply ImpliesLA
+apply IdA
+apply Copy c
+apply IdA
+done
+
+-- conv = (file -o (pdf * 1))
+-- pubconv = !(API -o conv)
+theorem Conv: "forall file:stype.forall pdf:stype.!API -o (forall X:stype.!API -o !(API -o X) -o !X) -o (!(API -o file -o (pdf * 1))) -o !(file -o (pdf * 1))"
+apply Intros
+apply Forall2L b "(file -o (pdf * 1))"
+apply BangLA
+apply ImpliesL b
+defer
+apply BangR
+apply Copy d
+apply IdA
+apply ImpliesL b
+defer
+apply IdA
+apply IdA
+done
