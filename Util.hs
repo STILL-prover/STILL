@@ -33,3 +33,7 @@ expr [] ex = ex
 expr (h1:h2:rest) "" = expr rest (h1 ++ " * " ++ h2)
 expr (h1:h2:rest) ex = expr rest (h1 ++ " * ( " ++ ex ++ " ) * " ++ h2)
 expr a ex = ex
+
+expr2 [] ex = ex
+expr2 (h1:[]) ex = ex
+expr2 (h1:h2:rest) ex = expr2 (h2:rest) $ ex ++ " -o (" ++ (h1 ++ " -o " ++ h2) ++ ")" 

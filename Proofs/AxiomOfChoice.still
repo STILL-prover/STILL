@@ -1,0 +1,18 @@
+module AxiomOfChoice begin
+
+theorem AC: "forall A:Type 1.
+    forall B:Type 1.
+    forall P:(Pi x:A. Pi y:B. Type 1).
+    $(Pi x:A.Sigma y:B.P x y) -o
+    exists f:(Pi v:A.B).
+    forall x:A.
+    $(P x (f x))"
+apply Intros
+apply FTermLA
+apply ExistsR
+apply Exact "\v:A. fst (a v)"
+apply Intros
+apply FTermR
+apply Simp
+apply Exact "(snd (a x))"
+done
