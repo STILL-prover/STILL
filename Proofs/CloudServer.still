@@ -13,7 +13,10 @@ done
 
 -- conv = (file -o (pdf * 1))
 -- pubconv = !(API -o conv)
-theorem Conv: "forall file:stype.forall pdf:stype.!API -o (forall X:stype.!API -o !(API -o X) -o !X) -o (!(API -o file -o (pdf * 1))) -o !(file -o (pdf * 1))"
+theorem Conv: "forall file:stype.forall pdf:stype.!API -o
+    (forall X:stype.!API -o !(API -o X) -o !X) -o
+    (!(API -o file -o (pdf * 1))) -o
+    !(file -o (pdf * 1))"
 apply Intros
 apply Forall2L b "(file -o (pdf * 1))"
 apply BangLA

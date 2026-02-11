@@ -51,6 +51,7 @@ cmd = parseTheorem
   <|> parseDone
   <|> parseHelp
   <|> parsePrintTheorems
+  <|> parseExtract
 
 parseHelp :: Parser (ProofState Identity -> ProofState Identity)
 parseHelp = do
@@ -61,6 +62,12 @@ parsePrintTheorems :: Parser (ProofState Identity -> ProofState Identity)
 parsePrintTheorems = do
     reserved "print_theorems"
     return _PrintTheorems
+
+parseExtract :: Parser (ProofState Identity -> ProofState Identity)
+parseExtract = do
+    reserved "extract"
+    tName <- identifier
+    return (\s -> _Extract s tName)
 
 parseImports :: Parser [String]
 parseImports = do

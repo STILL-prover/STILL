@@ -16,3 +16,5 @@ apply FTermR
 apply Simp
 apply Exact "(snd (a x))"
 done
+
+-- extract AC

@@ -1,6 +1,6 @@
 module Counter begin
 
--- CImpl = νX. {val:int ⊃ int ∧ X, inc: ⊕ {carry:X, done:X}, halt:1}
+-- CImpl = νX. &{val: int ⊃ int ∧ X, inc: ⊕ {carry:X, done:X}, halt:1}
 theorem epsilon: "forall int:Type 1.nu X. ((forall m:int.exists n:int.X) & (X + X) & 1)"
 apply Intros
 apply NuR X () ()
@@ -88,3 +88,7 @@ apply ExistsLA
 apply Weaken n
 apply TyVar COORD (a)
 done
+
+extract epsilon
+extract Node
+extract Counter
