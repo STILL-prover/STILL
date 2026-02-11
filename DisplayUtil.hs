@@ -57,9 +57,9 @@ mainPrinter (Right s) =
         let
             sgNameSep = ">> "
             curSgName = curSubgoal s
-            curReservedVars = getUnavailableVarsForSubgoal curSgName s
+            curReservedVars sgn = getUnavailableVarsForSubgoal sgn s
             subgoalPrinter n sg = case inProgressFunctionalProof sg of
-                Nothing -> (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered curReservedVars sg
+                Nothing -> (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (curReservedVars n) sg
                 Just (fs, p) -> L.foldl' (\acc kvp -> acc ++ "\n" ++ (if n == curSubgoal s && fst kvp == FT.curSubgoal fs then "*" else " ") ++ n ++ "." ++ fst kvp ++ sgNameSep ++ fsgToS (snd kvp)) ""  (Data.Map.toList (Data.Map.filter (not . FT.used) (FT.subgoals fs)))
             messagePrinter = if L.null $ outputs s then "" else head $ outputs s
             orderedSubgoals = L.reverse $ (\(sgn, sg) -> (sgn, fromJust sg)) <$> L.filter (\(sgn, sg) -> isJust sg) ((\sgn -> (sgn, Data.Map.lookup  sgn (subgoals s))) <$> openGoalStack s)

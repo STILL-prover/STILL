@@ -1,0 +1,11 @@
+module Scratch begin
+
+theorem test: "a -o b -o (a -o b -o c) -o c"
+apply Intros
+apply ImpliesLA
+defer
+apply IdA
+apply ImpliesLA
+apply IdA
+apply IdA
+done
