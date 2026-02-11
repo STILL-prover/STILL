@@ -73,7 +73,10 @@ data ProofState m = S {
     curTheoremName :: String,
     curModuleName :: String,
     loadedModules :: Map String (Map String Theorem),
-    openGoalStack :: [String]
+    openGoalStack :: [String],
+    cachedProofStateNames :: S.Set String,
+    newSubgoalNameList :: [String],
+    cachedVarNames :: [String]
 } deriving ()
 
 curSubgoal :: ProofState m -> String
@@ -109,8 +112,12 @@ type Tactic m = ProverStateT m String
 -- allVars :: [String]
 -- allVars = letters ++ letterNumbers
 
+-- allSubgoalNames :: [String]
+-- allSubgoalNames = ('?' :) . (\a -> [a]) <$> ['a'..'z']
+
 allSubgoalNames :: [String]
 allSubgoalNames = ('?' :) <$> namesInOrder
+
 -- >>>L.take 10 allSubgoalNames
 -- ["?a","?b","?c","?d","?e","?f","?g","?h","?i","?j"]
 
@@ -122,14 +129,22 @@ getSubgoalNames sg = let
 
 getProofStateNames :: Monad m => ProverStateT m (S.Set String)
 getProofStateNames = do
-    curSubgoals <- ST.gets subgoals
-    let vars = S.unions (getSubgoalNames <$> Data.Map.elems curSubgoals)
-    return vars
+    cachedNames <- ST.gets cachedProofStateNames
+    if S.null cachedNames
+    then (do
+        curSubgoals <- ST.gets subgoals
+        let vars = S.unions (getSubgoalNames <$> Data.Map.elems curSubgoals)
+        ST.modify (\s -> s { cachedProofStateNames = vars })
+        return vars)
+    else return cachedNames
 
 getFreshVar :: Monad m => ProverStateT m String
 getFreshVar = do
     vars <- getProofStateNames
-    let newVar = head $ Prelude.filter (\l -> not $ S.member l vars) namesInOrder
+    vNames <- ST.gets cachedVarNames
+    let newVNames = Prelude.filter (\l -> not $ S.member l vars) vNames
+        newVar = head $ Prelude.filter (\l -> not $ S.member l vars) vNames
+    ST.modify (\s -> s { cachedProofStateNames = S.insert newVar (cachedProofStateNames s), cachedVarNames = newVNames })
     return newVar
 
 getFreshVarAttempt :: Monad m => String -> ProverStateT m String
@@ -138,13 +153,28 @@ getFreshVarAttempt z = do
     let vars = getSequentFreeNames seq
     let zs = z:[z ++ show i | i <- numbers]
         newVar = head $ Prelude.filter (\l -> not $ S.member l vars) zs
+    ST.modify (\s -> s { cachedProofStateNames = S.insert newVar (cachedProofStateNames s) })
     return newVar
 
 getFreshSubgoalName :: Monad m => ProverStateT m String
 getFreshSubgoalName = do
-    curSubgoals <- ST.gets usedSubgoalNames
-    let newSubgoalName = head $ Prelude.filter (\l -> not $ S.member l curSubgoals) allSubgoalNames
-    return newSubgoalName
+    newNames <- ST.gets newSubgoalNameList
+    ST.modify (\s -> s { newSubgoalNameList = tail (newSubgoalNameList s)})
+    return (head newNames)
+
+-- getFreshSubgoalName :: Monad m => ProverStateT m String
+-- getFreshSubgoalName = do
+--     newNamesList <- ST.gets newSubgoalNameList
+--     if newNamesList == []
+--     then (do
+--         ST.modify (\s -> s { newSubgoalNameList = (\a -> a ++ show (1 + newlyCreatedSubgoalNameLists s)) <$> allSubgoalNames, newlyCreatedSubgoalNameLists = (1 + newlyCreatedSubgoalNameLists s) })
+--         getFreshSubgoalName)
+--     else (do
+--         ST.modify (\s -> s { newSubgoalNameList = L.drop 1 (newSubgoalNameList s)})
+--         return (head newNamesList))
+
+invalidateNameCache :: Monad m => ProverStateT m ()
+invalidateNameCache = ST.modify (\s -> s { cachedProofStateNames = S.empty })
 
 lookupVarName :: Monad m => String -> ProverStateT m String
 lookupVarName x = return x
@@ -675,6 +705,7 @@ forallLeft2Tac x b = do
         Just (Forall2 y p) -> do
             reserveVars [x]
             xName <- lookupVarName x
+            invalidateNameCache
             freshGoal <- createNewSubgoal $ seq { linearContext = Data.Map.insert x (substVarType p b y) $ linearContext seq }
             useCurrentSubgoal Trunk . buildJustification1 freshGoal $ ForallLeft2Rule xName y b
             return "Forall second order left side tactic applied."
@@ -689,6 +720,7 @@ existsRight2Tac b = do
         Exists2 y p -> do
             --reserveVars [(channel seq)]
             zName <- lookupVarName (channel seq)
+            invalidateNameCache
             freshGoal <- createNewSubgoal $ seq { goalProposition = substVarType p b y }
             useCurrentSubgoal Trunk . buildJustification1 freshGoal $ ExistsRight2Rule y b
             return "Exists second order right side tactic applied."
@@ -716,6 +748,7 @@ cutTac p = do
     --reserveVars [channel seq]
     x <- getFreshVar
     zName <- lookupVarName $ channel seq
+    invalidateNameCache
     freshGoalY <- createNewSubgoal $ seq { goalProposition = p, channel = x }
     freshGoalZ <- createNewSubgoal $ seq { linearContext = Data.Map.insert x p $ linearContext seq }
     useCurrentSubgoal Cut . buildJustification2 freshGoalY freshGoalZ $ CutRule
@@ -728,6 +761,7 @@ cutReplicationTac p = do
     x <- getFreshVar
     u <- getFreshVar
     zName <- lookupVarName $ channel seq
+    invalidateNameCache
     freshGoalY <- createNewSubgoal $ seq { linearContext = Data.Map.empty, goalProposition = p, channel = x }
     freshGoalZ <- createNewSubgoal $ seq { unrestrictedContext = Data.Map.insert u p $ unrestrictedContext seq }
     useCurrentSubgoal Multiplicative . buildJustification2 freshGoalY freshGoalZ $ CutRule
@@ -908,7 +942,7 @@ initCleanState mName =
         fnVars = []
         allVars = []
     in
-        S { subgoals = Data.Map.empty, outputs = ["Ready to begin!"], curTheoremName = "", curModuleName = mName, theorems = Data.Map.empty, loadedModules = Data.Map.empty, openGoalStack = [] }
+        S { subgoals = Data.Map.empty, outputs = ["Ready to begin!"], curTheoremName = "", curModuleName = mName, theorems = Data.Map.empty, loadedModules = Data.Map.empty, openGoalStack = [], cachedProofStateNames = S.empty, newSubgoalNameList = tail allSubgoalNames, cachedVarNames = namesInOrder }
 
 {-| Assumes the initial  subgoal has no assumptions in -}
 -- initializeState :: String -> Subgoal m -> ProofState m
@@ -945,7 +979,7 @@ theorem s n p =
         fnVars = Data.Map.keys . fnContext . sequent $ goal
         allVars = channelVar : (linearVars ++ unrestrictedVars ++ fnVars)
     in
-        s { subgoals = singleton "?a" goal, outputs = "New theorem started":outputs s, curTheoremName = n, openGoalStack = ["?a"] }
+        s { subgoals = singleton "?a" goal, outputs = "New theorem started":outputs s, curTheoremName = n, openGoalStack = ["?a"], cachedProofStateNames = S.empty, newSubgoalNameList = tail allSubgoalNames, cachedVarNames = namesInOrder }
 
 applyTactic :: ProofState Identity -> Tactic Identity -> Either String (ProofState Identity)
 applyTactic s t = runIdentity $ applyTacticGeneral s t
@@ -1017,6 +1051,7 @@ _Apply s t = case applyTacticM (Right s) t of
 {-| Tactic: Apply a tactic from the functional system to a functional subgoal. -}
 _FTac :: FT.FunctionalTactic Identity -> Tactic Identity
 _FTac t = do
+    invalidateNameCache
     s <- ST.get
     case Data.Map.lookup (curSubgoal s) (subgoals s) of
         Just sg -> case inProgressFunctionalProof sg of

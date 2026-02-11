@@ -19,7 +19,6 @@ done
 theorem Node: "forall int:Type 1.forall b:int.forall compute:(Pi m:int.Pi b:int.int). --!(forall sZero:stype . forall sOne:stype . $int -o (sZero + sOne)) -o
     (nu X. ((forall m:int.exists n:int.X) & (X + X) & 1)) -o (nu X. ((forall m:int.exists n:int.X) & (X + X) & 1))"
 apply Intros
-apply BangLA
 apply NuR N (x) (a)
 apply WithR
 apply NuLA
@@ -88,7 +87,3 @@ apply ExistsLA
 apply Weaken n
 apply TyVar COORD (a)
 done
-
-extract epsilon
-extract Node
-extract Counter

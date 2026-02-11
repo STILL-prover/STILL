@@ -11,13 +11,15 @@ import qualified Data.Map as Map
 import qualified Data.Set as S
 import Control.Monad.Identity (Identity, runIdentity)
 
-import SessionTypes.Tactics (ProofState(..), Theorem (proofObject, numberOfSubgoals)) -- Ensure you import necessary types
+import SessionTypes.Tactics (ProofState(..), Theorem (proofObject, numberOfSubgoals), allSubgoalNames) -- Ensure you import necessary types
 import SessionTypes.Kernel
 import STILLParser (parseFile, parseStringCommand)
 import DisplayUtil
 import Data.List (intercalate, transpose, foldl')
 import Data.Map (toList)
 import Data.Time (formatTime, defaultTimeLocale)
+import Numeric (showFFloat)
+import Util (namesInOrder)
 
 -- ==========================================
 -- 1. State Initialization
@@ -31,7 +33,10 @@ emptyState = S {
     curTheoremName = "",
     curModuleName = "Main",
     loadedModules = Map.empty,
-    openGoalStack = []
+    openGoalStack = [],
+    cachedProofStateNames = S.empty,
+    newSubgoalNameList = allSubgoalNames,
+    cachedVarNames = namesInOrder
 }
 
 -- ==========================================
@@ -124,19 +129,21 @@ main = do
 
         runDiagnostics :: [String] -> [DiagnosticInfo] -> IO ()
         runDiagnostics [] infos = printInfos (reverse infos)
-        runDiagnostics (fname:fnames) infos = runDiagnostic fname >>= (\d -> runDiagnostics fnames (d:infos))
+        runDiagnostics (fname:fnames) infos = runDiagnostic fname >>= (\d -> runDiagnostics fnames (averageDiagnostic d:infos))
 
-        runDiagnostic :: String -> IO DiagnosticInfo
-        runDiagnostic fname = do
+        runDiagnostic :: String -> IO [DiagnosticInfo]
+        runDiagnostic fname = (\_ -> do
             startTime <- getCurrentTime
             content <- readFileSafe fname
             result <- runProofScript fname content
             mainPrinter result
             endTime <- getCurrentTime
             case result of
-                Left e -> return $ DiagnosticInfo { moduleName = fname, executionTime = formatTime defaultTimeLocale "%Es" (diffUTCTime endTime startTime), didError = True, numTheorems = "N/A", maxSubgoals = "N/A", maxProofNodes = "N/A", totalSubgoals = "N/A", totalProofNodes = "N/A" }
-                Right fs -> return $ getDiagnostics startTime endTime fs
-        
+                Left e -> return $ DiagnosticInfo { moduleName = fname, executionTime = realToFrac (diffUTCTime endTime startTime), didError = True, numTheorems = "N/A", maxSubgoals = "N/A", maxProofNodes = "N/A", totalSubgoals = "N/A", totalProofNodes = "N/A" }
+                Right fs -> return $ getDiagnostics startTime endTime fs) `mapM` [1,2,3,4,5]
+
+        averageDiagnostic ds = (head ds) { executionTime = sum (executionTime <$> ds) / realToFrac (length ds) }
+
         printInfos :: [DiagnosticInfo] -> IO ()
         printInfos infos = do
             -- Define the headers for your columns
@@ -149,7 +156,7 @@ main = do
                         , totalProofNodes r
                         , maxSubgoals r
                         , maxProofNodes r
-                        , executionTime r]
+                        , showFFloat (Just 6) (executionTime r) ""]
 
             -- Convert all records to rows
             let rows = map toRow infos
@@ -180,7 +187,7 @@ main = do
 
 data DiagnosticInfo = DiagnosticInfo {
     moduleName :: String,
-    executionTime :: String,
+    executionTime :: Double,
     didError :: Bool,
     numTheorems :: String,
     maxSubgoals :: String,
@@ -192,7 +199,7 @@ data DiagnosticInfo = DiagnosticInfo {
 getDiagnostics :: UTCTime -> UTCTime -> ProofState m -> DiagnosticInfo
 getDiagnostics st et s = DiagnosticInfo {
     moduleName = curModuleName s,
-    executionTime = formatTime defaultTimeLocale "%Es" (diffUTCTime et st),
+    executionTime = realToFrac $ diffUTCTime et st,
     didError = False,
     numTheorems = show . length . Data.Map.toList $ theorems s,
     maxSubgoals = show $ Data.List.foldl' (\acc (n, i) -> max acc (numberOfSubgoals i)) 0 $ toList (theorems s),

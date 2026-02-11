@@ -1,0 +1,5 @@
+Module         | Theorems | Total Subgoals | Total Proof Nodes | Max Subgoals | Max Proof Nodes | Time (s)
+---------------+----------+----------------+-------------------+--------------+-----------------+---------
+TenTensor      | 1        | 37             | 29                | 37           | 29              | 0.001862
+HundredTensor  | 1        | 397            | 299               | 397          | 299             | 0.045363
+ThousandTensor | 1        | 3997           | 2999              | 3997         | 2999            | 4.700286
