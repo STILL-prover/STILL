@@ -15,7 +15,7 @@ import SessionTypes.Tactics (ProofState(..), Theorem (proofObject, numberOfSubgo
 import SessionTypes.Kernel
 import STILLParser (parseFile, parseStringCommand)
 import DisplayUtil
-import Data.List (intercalate)
+import Data.List (intercalate, transpose)
 import Data.Map (toList)
 import Data.Time (formatTime, defaultTimeLocale)
 
@@ -99,44 +99,117 @@ main = do
         ("watch":fileName:[]) -> startWatcher fileName
         ("watch":[])          -> startWatcher "Scratch.still"
         ("repl":fnames)       -> startRepl fnames
-        ("benchmark":fnames)  -> runScripts True fnames
-        (fname:fnames)        -> runScripts False (fname:fnames)
+        ("benchmark":fnames)  -> runDiagnostics fnames []
+        (fname:fnames)        -> runScripts (fname:fnames)
         []                    -> startRepl []
     where
-        runScripts :: Bool -> [String] -> IO ()
-        runScripts diag [] = return ()
-        runScripts diag (fname:fnames) = do
+        runScripts :: [String] -> IO ()
+        runScripts [] = return ()
+        runScripts (fname:fnames) = do
             putStrLn $ "Running: " ++ fname
-            runScript diag fname
+            runScript fname
             if null fnames then return () else putStrLn "" >> putStrLn ""
-            runScripts diag fnames
+            runScripts fnames
             return ()
 
-        runScript :: Bool -> String -> IO ()
-        runScript diagnostic fname = do
+        runScript :: String -> IO ()
+        runScript fname = do
             startTime <- getCurrentTime
             content <- readFileSafe fname
             afterReadTime <- getCurrentTime
             result <- runProofScript fname content
             case result of
                 Left e -> putStrLn e
-                Right fs -> if diagnostic
-                    then do
-                            mainPrinter result
-                            endTime <- getCurrentTime
-                            putStrLn (getDiagnostics startTime afterReadTime endTime fs)
-                    else putStrLn $ unlines (reverse (outputs fs))
+                Right fs -> putStrLn $ unlines (reverse (outputs fs))
 
-getDiagnostics :: UTCTime -> UTCTime -> UTCTime -> ProofState m -> [Char]
-getDiagnostics st at et s = intercalate "\n" (("Ran in " ++ formatTime defaultTimeLocale "%Es" totalDiffTime ++ " seconds total."):
-    (if modulePrint == "" then [localTs] else [modulePrint, localTs]) ++ [totalNodes, totalSubgoals])
-    where
-        totalDiffTime = diffUTCTime et st
-        runExecuteDiffTime = diffUTCTime et at
-        localTs = intercalate "\n" $ filter (/= "") $ (\(n, i) -> n ++ ": " ++ show (numberOfSubgoals i) ++ " subgoals in proof. " ++ show (proofSize (proofObject i)) ++ " nodes in the proof object. " ++ show (proofDepth (proofObject i)) ++ " depth of proof tree.") <$> toList (theorems s)
-        modulePrint = intercalate "\n" $ filter (/= "") $ (\(mName, moduleTheorems) -> intercalate "\n" $ filter (/= "") $ (\(n, i) -> mName ++ "." ++ n ++ ": " ++ show i ++ " subgoals in proof.") <$> Data.Map.toList (numberOfSubgoals <$> moduleTheorems)) <$> Data.Map.toList (loadedModules s)
-        totalNodes = show (sum $ (\(n, i) -> proofSize (proofObject i)) <$> toList (theorems s)) ++ " total proof nodes in the module."
-        totalSubgoals = show (sum $ (\(n, i) -> numberOfSubgoals i) <$> toList (theorems s)) ++ " total subgoals in the module."
+        runDiagnostics :: [String] -> [DiagnosticInfo] -> IO ()
+        runDiagnostics [] infos = printInfos (reverse infos)
+        runDiagnostics (fname:fnames) infos = runDiagnostic fname >>= (\d -> runDiagnostics fnames (d:infos))
+
+        runDiagnostic :: String -> IO DiagnosticInfo
+        runDiagnostic fname = do
+            startTime <- getCurrentTime
+            content <- readFileSafe fname
+            result <- runProofScript fname content
+            mainPrinter result
+            endTime <- getCurrentTime
+            case result of
+                Left e -> return $ DiagnosticInfo { moduleName = fname, executionTime = formatTime defaultTimeLocale "%Es" (diffUTCTime endTime startTime), didError = True, numTheorems = "N/A", maxSubgoals = "N/A", maxProofNodes = "N/A", totalSubgoals = "N/A", totalProofNodes = "N/A" }
+                Right fs -> return $ getDiagnostics startTime endTime fs
+        
+        printInfos :: [DiagnosticInfo] -> IO ()
+        printInfos infos = do
+            -- Define the headers for your columns
+            let headers = ["Module", "Theorems", "Total Subgoals", "Total Proof Nodes", "Max Subgoals", "Max Proof Nodes", "Time (s)"]
+
+            -- Define how to turn a record into a list of Strings (one for each column)
+            let toRow r = [ moduleName r
+                        , numTheorems r
+                        , totalSubgoals r
+                        , totalProofNodes r
+                        , maxSubgoals r
+                        , maxProofNodes r
+                        , executionTime r]
+
+            -- Convert all records to rows
+            let rows = map toRow infos
+
+            -- Calculate the maximum width required for each column
+            -- We include the headers in this calculation to ensure the title fits
+            let allRows = headers : rows
+            let columns = transpose allRows
+            let colWidths = map (maximum . map length) columns
+
+            -- Helper to pad a string with spaces to a specific width
+            let pad width s = s ++ replicate (width - length s) ' '
+
+            -- Helper to format a single row using the calculated widths
+            let formatRow row = intercalate " | " $ zipWith pad colWidths row
+
+            -- Create a separator line (e.g., "---+--------+...")
+            let separator = intercalate "-+-" $ map (\w -> replicate w '-') colWidths
+
+            -- 3. Printing
+            -- Print Header
+            putStr "\ESC[2J\ESC[H"
+            putStrLn $ formatRow headers
+            -- Print Separator
+            putStrLn separator
+            -- Print Data
+            mapM_ (putStrLn . formatRow) rows
+
+data DiagnosticInfo = DiagnosticInfo {
+    moduleName :: String,
+    executionTime :: String,
+    didError :: Bool,
+    numTheorems :: String,
+    maxSubgoals :: String,
+    maxProofNodes :: String,
+    totalSubgoals :: String,
+    totalProofNodes :: String
+}
+
+getDiagnostics :: UTCTime -> UTCTime -> ProofState m -> DiagnosticInfo
+getDiagnostics st et s = DiagnosticInfo {
+    moduleName = curModuleName s,
+    executionTime = formatTime defaultTimeLocale "%Es" (diffUTCTime et st),
+    didError = False,
+    numTheorems = show . length . Data.Map.toList $ theorems s,
+    maxSubgoals = show $ foldl' (\acc (n, i) -> max acc (numberOfSubgoals i)) 0 $ toList (theorems s),
+    maxProofNodes = show $ foldl' (\acc (n, i) -> max acc (proofSize (proofObject i))) 0 $ toList (theorems s),
+    totalProofNodes = show . sum $ (\(n, i) -> proofSize (proofObject i)) <$> toList (theorems s),
+    totalSubgoals = show . sum $ (\(n, i) -> numberOfSubgoals i) <$> toList (theorems s)
+}
+
+-- getDiagnostics :: UTCTime -> UTCTime -> ProofState m -> DiagnosticInfo
+-- getDiagnostics st et s = intercalate "\n" (("Ran in " ++ formatTime defaultTimeLocale "%Es" totalDiffTime ++ " seconds total."):
+--     (if modulePrint == "" then [localTs] else [modulePrint, localTs]) ++ [totalNodes, totalSubgoals])
+--     where
+--         totalDiffTime = diffUTCTime et st
+--         localTs = intercalate "\n" $ filter (/= "") $ (\(n, i) -> n ++ ": " ++ show (numberOfSubgoals i) ++ " subgoals in proof. " ++ show (proofSize (proofObject i)) ++ " nodes in the proof object. " ++ show (proofDepth (proofObject i)) ++ " depth of proof tree.") <$> toList (theorems s)
+--         modulePrint = intercalate "\n" $ filter (/= "") $ (\(mName, moduleTheorems) -> intercalate "\n" $ filter (/= "") $ (\(n, i) -> mName ++ "." ++ n ++ ": " ++ show i ++ " subgoals in proof.") <$> Data.Map.toList (numberOfSubgoals <$> moduleTheorems)) <$> Data.Map.toList (loadedModules s)
+--         totalNodes = show (sum $ (\(n, i) -> proofSize (proofObject i)) <$> toList (theorems s)) ++ " total proof nodes in the module."
+--         totalSubgoals = show (sum $ (\(n, i) -> numberOfSubgoals i) <$> toList (theorems s)) ++ " total subgoals in the module."
 
 -- ==========================================
 -- 4. REPL Implementation

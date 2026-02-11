@@ -27,15 +27,15 @@ parseFileStructure :: Parser ([String], [ProofState Identity -> ProofState Ident
 parseFileStructure = do
     whiteSpace
     -- Optional: "module Name where"
-    _ <- optionMaybe (reserved "module" >> identifier >> reserved "begin")
-
-    -- Imports: "imports A B C"
+    reserved "module"
+    moduleName <- identifier
     imps <- option [] parseImports
+    reserved "begin"
 
     -- Body: List of commands
     cmds <- many cmd
     eof
-    return (imps, cmds)
+    return (imps, (\s -> (s {curModuleName = moduleName })):cmds)
 
 -- Single command parser for REPL
 parseStringCommand :: String -> Either ParseError (ProofState Identity -> ProofState Identity)
