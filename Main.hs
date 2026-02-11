@@ -15,7 +15,7 @@ import SessionTypes.Tactics (ProofState(..), Theorem (proofObject, numberOfSubgo
 import SessionTypes.Kernel
 import STILLParser (parseFile, parseStringCommand)
 import DisplayUtil
-import Data.List (intercalate, transpose)
+import Data.List (intercalate, transpose, foldl')
 import Data.Map (toList)
 import Data.Time (formatTime, defaultTimeLocale)
 
@@ -195,8 +195,8 @@ getDiagnostics st et s = DiagnosticInfo {
     executionTime = formatTime defaultTimeLocale "%Es" (diffUTCTime et st),
     didError = False,
     numTheorems = show . length . Data.Map.toList $ theorems s,
-    maxSubgoals = show $ foldl' (\acc (n, i) -> max acc (numberOfSubgoals i)) 0 $ toList (theorems s),
-    maxProofNodes = show $ foldl' (\acc (n, i) -> max acc (proofSize (proofObject i))) 0 $ toList (theorems s),
+    maxSubgoals = show $ Data.List.foldl' (\acc (n, i) -> max acc (numberOfSubgoals i)) 0 $ toList (theorems s),
+    maxProofNodes = show $ Data.List.foldl' (\acc (n, i) -> max acc (proofSize (proofObject i))) 0 $ toList (theorems s),
     totalProofNodes = show . sum $ (\(n, i) -> proofSize (proofObject i)) <$> toList (theorems s),
     totalSubgoals = show . sum $ (\(n, i) -> numberOfSubgoals i) <$> toList (theorems s)
 }

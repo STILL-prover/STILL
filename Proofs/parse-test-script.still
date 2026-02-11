@@ -1,4 +1,4 @@
-module test begin
+module parseTest begin
 
 theorem testUnit: "1"
 apply UnitR
