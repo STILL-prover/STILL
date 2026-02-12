@@ -22,7 +22,7 @@ import Numeric (showFFloat)
 import Util (namesInOrder)
 
 -- ==========================================
--- 1. State Initialization
+-- State Initialization
 -- ==========================================
 
 emptyState :: ProofState Identity
@@ -37,6 +37,19 @@ emptyState = S {
     cachedProofStateNames = S.empty,
     newSubgoalNameList = allSubgoalNames,
     cachedVarNames = namesInOrder
+}
+
+data DiagnosticInfo = DiagnosticInfo {
+    moduleName :: String,
+    executionTime :: Double,
+    maxExecutionTime :: Double,
+    minExecutionTime :: Double,
+    didError :: Bool,
+    numTheorems :: String,
+    maxSubgoals :: String,
+    maxProofNodes :: String,
+    totalSubgoals :: String,
+    totalProofNodes :: String
 }
 
 -- ==========================================
@@ -93,7 +106,7 @@ loadImports (m:ms) s = do
                     loadImports ms (s' { subgoals = Map.empty, theorems = Map.empty, openGoalStack = [], loadedModules = newLoaded })
 
 -- ==========================================
--- 3. Main Entry Point
+-- Main Entry Point
 -- ==========================================
 
 main :: IO ()
@@ -138,16 +151,17 @@ main = do
             result <- runProofScript fname content
             mainPrinter result
             endTime <- getCurrentTime
+            let exTime = realToFrac (diffUTCTime endTime startTime)
             case result of
-                Left e -> return $ DiagnosticInfo { moduleName = fname, executionTime = realToFrac (diffUTCTime endTime startTime), didError = True, numTheorems = "N/A", maxSubgoals = "N/A", maxProofNodes = "N/A", totalSubgoals = "N/A", totalProofNodes = "N/A" }
+                Left e -> return $ DiagnosticInfo { moduleName = fname, executionTime = exTime, didError = True, numTheorems = "N/A", maxSubgoals = "N/A", maxProofNodes = "N/A", totalSubgoals = "N/A", totalProofNodes = "N/A", maxExecutionTime = exTime, minExecutionTime = exTime }
                 Right fs -> return $ getDiagnostics startTime endTime fs) `mapM` [1,2,3,4,5]
 
-        averageDiagnostic ds = (head ds) { executionTime = sum (executionTime <$> ds) / realToFrac (length ds) }
+        averageDiagnostic ds = (head ds) { executionTime = sum (executionTime <$> ds) / realToFrac (length ds), maxExecutionTime = Data.List.foldl' max 0 (executionTime <$> ds), minExecutionTime = Data.List.foldl' min (executionTime . head $ ds) (executionTime <$> ds) }
 
         printInfos :: [DiagnosticInfo] -> IO ()
         printInfos infos = do
             -- Define the headers for your columns
-            let headers = ["Module", "Theorems", "Total Subgoals", "Total Proof Nodes", "Max Subgoals", "Max Proof Nodes", "Time (s)"]
+            let headers = ["Module", "Theorems", "Total Subgoals", "Total Proof Nodes", "Max Subgoals", "Max Proof Nodes", "Avg. Time (s)", "Max Time (s)", "Min Time (s)"]
 
             -- Define how to turn a record into a list of Strings (one for each column)
             let toRow r = [ moduleName r
@@ -156,7 +170,9 @@ main = do
                         , totalProofNodes r
                         , maxSubgoals r
                         , maxProofNodes r
-                        , showFFloat (Just 6) (executionTime r) ""]
+                        , showFFloat (Just 6) (executionTime r) ""
+                        , showFFloat (Just 6) (maxExecutionTime r) ""
+                        , showFFloat (Just 6) (minExecutionTime r) ""]
 
             -- Convert all records to rows
             let rows = map toRow infos
@@ -185,21 +201,12 @@ main = do
             -- Print Data
             mapM_ (putStrLn . formatRow) rows
 
-data DiagnosticInfo = DiagnosticInfo {
-    moduleName :: String,
-    executionTime :: Double,
-    didError :: Bool,
-    numTheorems :: String,
-    maxSubgoals :: String,
-    maxProofNodes :: String,
-    totalSubgoals :: String,
-    totalProofNodes :: String
-}
-
 getDiagnostics :: UTCTime -> UTCTime -> ProofState m -> DiagnosticInfo
 getDiagnostics st et s = DiagnosticInfo {
     moduleName = curModuleName s,
     executionTime = realToFrac $ diffUTCTime et st,
+    maxExecutionTime = realToFrac $ diffUTCTime et st,
+    minExecutionTime = realToFrac $ diffUTCTime et st,
     didError = False,
     numTheorems = show . length . Data.Map.toList $ theorems s,
     maxSubgoals = show $ Data.List.foldl' (\acc (n, i) -> max acc (numberOfSubgoals i)) 0 $ toList (theorems s),
@@ -208,18 +215,8 @@ getDiagnostics st et s = DiagnosticInfo {
     totalSubgoals = show . sum $ (\(n, i) -> numberOfSubgoals i) <$> toList (theorems s)
 }
 
--- getDiagnostics :: UTCTime -> UTCTime -> ProofState m -> DiagnosticInfo
--- getDiagnostics st et s = intercalate "\n" (("Ran in " ++ formatTime defaultTimeLocale "%Es" totalDiffTime ++ " seconds total."):
---     (if modulePrint == "" then [localTs] else [modulePrint, localTs]) ++ [totalNodes, totalSubgoals])
---     where
---         totalDiffTime = diffUTCTime et st
---         localTs = intercalate "\n" $ filter (/= "") $ (\(n, i) -> n ++ ": " ++ show (numberOfSubgoals i) ++ " subgoals in proof. " ++ show (proofSize (proofObject i)) ++ " nodes in the proof object. " ++ show (proofDepth (proofObject i)) ++ " depth of proof tree.") <$> toList (theorems s)
---         modulePrint = intercalate "\n" $ filter (/= "") $ (\(mName, moduleTheorems) -> intercalate "\n" $ filter (/= "") $ (\(n, i) -> mName ++ "." ++ n ++ ": " ++ show i ++ " subgoals in proof.") <$> Data.Map.toList (numberOfSubgoals <$> moduleTheorems)) <$> Data.Map.toList (loadedModules s)
---         totalNodes = show (sum $ (\(n, i) -> proofSize (proofObject i)) <$> toList (theorems s)) ++ " total proof nodes in the module."
---         totalSubgoals = show (sum $ (\(n, i) -> numberOfSubgoals i) <$> toList (theorems s)) ++ " total subgoals in the module."
-
 -- ==========================================
--- 4. REPL Implementation
+-- REPL Implementation
 -- ==========================================
 
 startRepl :: [String] -> IO ()
