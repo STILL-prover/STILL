@@ -179,8 +179,12 @@ invalidateNameCache = ST.modify (\s -> s { cachedProofStateNames = S.empty })
 lookupVarName :: Monad m => String -> ProverStateT m String
 lookupVarName x = return x
 
-initializeSequent :: Proposition -> Sequent
-initializeSequent p = Sequent { tyVarContext = S.empty, fnContext = Data.Map.empty, unrestrictedContext = Data.Map.empty, linearContext = Data.Map.empty, recursiveBindings = Data.Map.empty, channel = "z", goalProposition = p }
+initializeSequent :: [Proposition] -> Proposition -> Sequent
+initializeSequent consumedProps p = let
+    currentAllNames = S.insert "z" $ S.unions (propNames <$> (p:consumedProps))
+    resourceNames = L.filter (\n -> S.member n currentAllNames) namesInOrder
+    linearProps = zip resourceNames consumedProps
+    in Sequent { tyVarContext = S.empty, fnContext = Data.Map.empty, unrestrictedContext = Data.Map.empty, linearContext = Data.Map.fromList linearProps, recursiveBindings = Data.Map.empty, channel = "z", goalProposition = p }
 
 initializeProof :: Monad m => Sequent -> Subgoal m
 initializeProof seq = Subgoal { sequent = seq, prevGoal = "", nextGoals = [], expanded = Nothing, subgoalJustification = tacError "No justification.", inProgressFunctionalProof = Nothing, reservedVars = S.empty }
@@ -966,13 +970,12 @@ applyTacticGeneral s t = do
         Right (notif, newState) -> return . Right $ newState { outputs = notif:outputs newState}
         Left e -> return . Left $ e
 
--- clear :: Monad m => String -> Proposition -> ProofState m
--- clear name = initializeState name . initializeProof . initializeSequent
-
-theorem :: Monad m => ProofState m -> String -> Proposition -> ProofState m
-theorem s n p =
+theorem :: Monad m => ProofState m -> [String] -> String -> Proposition -> ProofState m
+theorem s ts n p =
     let
-        goal = initializeProof . initializeSequent $ p
+        eitherSessionsToConsume = sequence $ fromMaybe [] (mapM (\tn -> concl . proofObject <$> Data.Map.lookup tn (theorems s)) ts)
+        sessionsToConsume = case eitherSessionsToConsume of Right res -> goalProposition <$> res; Left e -> []
+        goal = initializeProof (initializeSequent sessionsToConsume p)
         channelVar = (channel . sequent $ goal)
         linearVars = Data.Map.keys . linearContext . sequent $ goal
         unrestrictedVars = Data.Map.keys . unrestrictedContext . sequent $ goal
@@ -1016,7 +1019,7 @@ _Init = initCleanState
 -- _Clear :: String -> Proposition -> ProofState Identity
 -- _Clear = clear
 
-_Theorem :: ProofState Identity -> String -> Proposition -> ProofState Identity
+_Theorem :: Monad m => ProofState m -> [String] -> String -> Proposition -> ProofState m
 _Theorem = theorem
 
 _Done :: ProofState Identity -> ProofState Identity

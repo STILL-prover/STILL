@@ -98,3 +98,33 @@ apply Weaken firstValid
 apply TyVar AUC (a, c, h, i, firstB, newB, nextValid)
 done
 -- z(ItemType).z(bid).z(zeroB).z(validNewB).z(currency).z(a).z(c).z(firstB).z(firstValid).z(d).z(e).(corec AUC(item, ownerC, curB, winnerC, oldB, lastB, curValid).z.case(inl z(newB).z(nextValid).z(h).z(i).((ν j) winnerC[j].(j.inr;[curB <-> j] | AUC(item, ownerC, h, i, lastB, newB, nextValid))), inr ownerC[lastB].((ν f) ownerC[f].([curB <-> f] | (ν g) winnerC[g].(g.inl;[item <-> g] | 0))) )) (a, c, d, e, zeroB, firstB, firstValid)
+
+theorem encryptionService
+consumes english2:
+    "forall string:Type 1.
+    forall encryptedMsg:Type 1.
+    forall enc:(Pi s:string.encryptedMsg).
+    forall dec:(Pi e:encryptedMsg.string).
+    forall myBid:Type 1.
+    forall startPrice:myBid.
+    forall addedFifty:(Pi b1:myBid.Pi b2:myBid.Type 1).
+    forall usd:(Pi b:myBid.Type 1).(!(($encryptedMsg -o $string) & ($string -o encryptedMsg))) * 1"
+apply Intros
+apply Forall2L b "!(($encryptedMsg -o $string) & ($string -o $encryptedMsg))"
+apply ForallLA
+apply Exact "myBid"
+apply ForallLA
+apply Exact "startPrice"
+apply ForallLA
+apply Exact "addedFifty"
+apply ForallLA
+apply Exact "usd"
+apply ImpliesLA
+defer
+apply BangR
+apply WithR;ImpliesR;FTermLA;FTermR
+apply Exact "dec f"
+apply Exact "enc d"
+apply TensorR
+apply UnitR
+apply ImpliesR

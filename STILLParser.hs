@@ -78,9 +78,10 @@ parseTheorem :: Parser (ProofState Identity -> ProofState Identity)
 parseTheorem = do
     reserved "theorem"
     tName <- identifier
+    tNames <- option [] (reserved "consumes" >> sepBy identifier whiteSpace)
     reservedOp ":"
     p <- quotes proposition
-    return (\s -> _Theorem s tName p)
+    return (\s -> _Theorem s tNames tName p)
 
 parseProvingCommand :: Parser (ProofState Identity -> ProofState Identity)
 parseProvingCommand = parseApply
@@ -336,7 +337,7 @@ lexer :: Tok.TokenParser ()
 lexer = Tok.makeTokenParser style
   where
     ops = [":", "\"", ";", "+", "<|>"]
-    names = ["module", "imports", "begin", "end", "theorem", "done", "defer", "prefer", "apply", "help", "print_theorems"] ++ (fst <$> simpleTactics)
+    names = ["module", "imports", "begin", "end", "theorem", "done", "defer", "prefer", "apply", "help", "print_theorems", "consumes", "extract"] ++ (fst <$> simpleTactics)
     style = emptyDef
         { Tok.commentLine = "--"
         , Tok.commentStart = "{-"
