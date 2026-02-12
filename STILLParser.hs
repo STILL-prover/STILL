@@ -35,7 +35,7 @@ parseFileStructure = do
     -- Body: List of commands
     cmds <- many cmd
     eof
-    return (imps, (\s -> (s {curModuleName = moduleName })):cmds)
+    return (imps, (\s -> (s { curModuleName = moduleName })):cmds)
 
 -- Single command parser for REPL
 parseStringCommand :: String -> Either ParseError (ProofState Identity -> ProofState Identity)
@@ -47,6 +47,7 @@ parseStringCommand = parse (whiteSpace >> cmd <* eof) ""
 
 cmd :: Parser (ProofState Identity -> ProofState Identity)
 cmd = parseTheorem
+  <|> parseTypeDec
   <|> parseProvingCommand
   <|> parseDone
   <|> parseHelp
@@ -74,11 +75,19 @@ parseImports = do
     reserved "imports"
     sepBy identifier whiteSpace
 
+parseTypeDec :: Parser (ProofState Identity -> ProofState Identity)
+parseTypeDec = do
+    reserved "stype"
+    i <- identifier
+    reservedOp "="
+    ty <- quotes proposition
+    return (_STypeDecl i ty)
+
 parseTheorem :: Parser (ProofState Identity -> ProofState Identity)
 parseTheorem = do
     reserved "theorem"
     tName <- identifier
-    tNames <- option [] (reserved "consumes" >> sepBy identifier whiteSpace)
+    tNames <- option [] (reserved "consumes" >> many (quotes proposition))
     reservedOp ":"
     p <- quotes proposition
     return (\s -> _Theorem s tNames tName p)

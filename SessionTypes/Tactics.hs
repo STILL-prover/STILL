@@ -76,8 +76,13 @@ data ProofState m = S {
     openGoalStack :: [String],
     cachedProofStateNames :: S.Set String,
     newSubgoalNameList :: [String],
-    cachedVarNames :: [String]
+    cachedVarNames :: [String],
+    typeDecls :: [(String, Proposition)]
 } deriving ()
+
+substTyDecls :: [(String, Proposition)] -> Proposition -> Proposition
+substTyDecls [] p = p
+substTyDecls ((n,ty):rest) p = substTyDecls rest (substVarType p ty n)
 
 curSubgoal :: ProofState m -> String
 curSubgoal s = if L.null (openGoalStack s) then "" else head (openGoalStack s)
@@ -946,7 +951,17 @@ initCleanState mName =
         fnVars = []
         allVars = []
     in
-        S { subgoals = Data.Map.empty, outputs = ["Ready to begin!"], curTheoremName = "", curModuleName = mName, theorems = Data.Map.empty, loadedModules = Data.Map.empty, openGoalStack = [], cachedProofStateNames = S.empty, newSubgoalNameList = tail allSubgoalNames, cachedVarNames = namesInOrder }
+        S { subgoals = Data.Map.empty
+        , outputs = ["Ready to begin!"]
+        , curTheoremName = ""
+        , curModuleName = mName
+        , theorems = Data.Map.empty
+        , loadedModules = Data.Map.empty
+        , openGoalStack = []
+        , cachedProofStateNames = S.empty
+        , newSubgoalNameList = tail allSubgoalNames
+        , cachedVarNames = namesInOrder
+        , typeDecls = [] }
 
 {-| Assumes the initial  subgoal has no assumptions in -}
 -- initializeState :: String -> Subgoal m -> ProofState m
@@ -970,19 +985,25 @@ applyTacticGeneral s t = do
         Right (notif, newState) -> return . Right $ newState { outputs = notif:outputs newState}
         Left e -> return . Left $ e
 
-theorem :: Monad m => ProofState m -> [String] -> String -> Proposition -> ProofState m
+theorem :: Monad m => ProofState m -> [Proposition] -> String -> Proposition -> ProofState m
 theorem s ts n p =
     let
-        eitherSessionsToConsume = sequence $ fromMaybe [] (mapM (\tn -> concl . proofObject <$> Data.Map.lookup tn (theorems s)) ts)
-        sessionsToConsume = case eitherSessionsToConsume of Right res -> goalProposition <$> res; Left e -> []
-        goal = initializeProof (initializeSequent sessionsToConsume p)
+        typeSynonyms = typeDecls s
+        sessionsToConsume = substTyDecls typeSynonyms <$> ts
+        goal = initializeProof (initializeSequent sessionsToConsume (substTyDecls typeSynonyms p))
         channelVar = (channel . sequent $ goal)
         linearVars = Data.Map.keys . linearContext . sequent $ goal
         unrestrictedVars = Data.Map.keys . unrestrictedContext . sequent $ goal
         fnVars = Data.Map.keys . fnContext . sequent $ goal
         allVars = channelVar : (linearVars ++ unrestrictedVars ++ fnVars)
     in
-        s { subgoals = singleton "?a" goal, outputs = "New theorem started":outputs s, curTheoremName = n, openGoalStack = ["?a"], cachedProofStateNames = S.empty, newSubgoalNameList = tail allSubgoalNames, cachedVarNames = namesInOrder }
+        s { subgoals = singleton "?a" goal
+        , outputs = "New theorem started":outputs s
+        , curTheoremName = n
+        , openGoalStack = ["?a"]
+        , cachedProofStateNames = S.empty
+        , newSubgoalNameList = tail allSubgoalNames
+        , cachedVarNames = namesInOrder }
 
 applyTactic :: ProofState Identity -> Tactic Identity -> Either String (ProofState Identity)
 applyTactic s t = runIdentity $ applyTacticGeneral s t
@@ -1019,7 +1040,7 @@ _Init = initCleanState
 -- _Clear :: String -> Proposition -> ProofState Identity
 -- _Clear = clear
 
-_Theorem :: Monad m => ProofState m -> [String] -> String -> Proposition -> ProofState m
+_Theorem :: Monad m => ProofState m -> [Proposition] -> String -> Proposition -> ProofState m
 _Theorem = theorem
 
 _Done :: ProofState Identity -> ProofState Identity
@@ -1042,6 +1063,9 @@ _Extract s tName =
                   s {outputs = "Could not find the supplied theorem." : outputs s}
                   extractor (proofObject <$> (Data.Map.lookup (L.tail $ L.dropWhile (/= '.') tName) m))
             Just p -> extractor (proofObject p)
+
+_STypeDecl :: String -> Proposition -> ProofState Identity -> ProofState Identity
+_STypeDecl n ty s = s { typeDecls = (n, ty):(typeDecls s) }
 
 _PushMessage :: ProofState Identity -> String -> ProofState Identity
 _PushMessage s m = s { outputs = m:outputs s }

@@ -36,7 +36,8 @@ emptyState = S {
     openGoalStack = [],
     cachedProofStateNames = S.empty,
     newSubgoalNameList = allSubgoalNames,
-    cachedVarNames = namesInOrder
+    cachedVarNames = namesInOrder,
+    typeDecls = []
 }
 
 data DiagnosticInfo = DiagnosticInfo {
@@ -63,13 +64,13 @@ runProofScript fname content = do
     case res of
         Left err -> return . Left $ "--------------------------------\nParse Error:\n" ++ show err
         Right (imports, commands) -> do
-            -- 1. Load Imports (IO Action)
+            -- Load Imports (IO Action)
             stateWithImports <- loadImports imports emptyState
 
-            -- 2. Run Commands (Pure Fold)
+            -- Run Commands (Pure Fold)
             let finalState = foldl (\s f -> f s) stateWithImports commands
 
-            -- 3. Return Output Log (Reversed because logs act like a stack)
+            -- Return Output Log (Reversed because logs act like a stack)
             return . Right $ finalState -- unlines (reverse (outputs finalState))
 
 -- Recursively load imported modules
@@ -92,17 +93,17 @@ loadImports (m:ms) s = do
                     putStrLn $ "[Error] Failed to parse import " ++ m ++ ": " ++ show err
                     loadImports ms s
                 Right (subImports, subCmds) -> do
-                    -- 1. Load recursive imports for this module
+                    -- Load recursive imports for this module
                     s' <- loadImports subImports s
 
-                    -- 2. Run module commands on a clean slate (inheriting only loadedModules)
+                    -- Run module commands on a clean slate (inheriting only loadedModules)
                     let modState = s' { subgoals = Map.empty, theorems = Map.empty, curModuleName = m, openGoalStack = [] }
                     let modResult = foldl (\st f -> f st) modState subCmds
 
-                    -- 3. Store the resulting theorems in the global loadedModules map
+                    -- Store the resulting theorems in the global loadedModules map
                     let newLoaded = Map.insert m (theorems modResult) (loadedModules s')
 
-                    -- 4. Continue
+                    -- Continue
                     loadImports ms (s' { subgoals = Map.empty, theorems = Map.empty, openGoalStack = [], loadedModules = newLoaded })
 
 -- ==========================================
