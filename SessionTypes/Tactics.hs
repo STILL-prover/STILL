@@ -77,7 +77,8 @@ data ProofState m = S {
     cachedProofStateNames :: S.Set String,
     newSubgoalNameList :: [String],
     cachedVarNames :: [String],
-    typeDecls :: [(String, Proposition)]
+    stypeDecls :: [(String, Proposition)],
+    fnAssumptions :: [(String, FunctionalTerm)]
 } deriving ()
 
 substTyDecls :: [(String, Proposition)] -> Proposition -> Proposition
@@ -184,12 +185,13 @@ invalidateNameCache = ST.modify (\s -> s { cachedProofStateNames = S.empty })
 lookupVarName :: Monad m => String -> ProverStateT m String
 lookupVarName x = return x
 
-initializeSequent :: [Proposition] -> Proposition -> Sequent
-initializeSequent consumedProps p = let
-    currentAllNames = S.insert "z" $ S.unions (propNames <$> (p:consumedProps))
-    resourceNames = L.filter (\n -> S.member n currentAllNames) namesInOrder
+initializeSequent :: [(String, FunctionalTerm)] -> [Proposition] -> Proposition -> Sequent
+initializeSequent assumedTerms consumedProps p = let
+    termNames = S.fromList (fst <$> assumedTerms) `S.union` S.unions (functionalNames . snd <$> assumedTerms)
+    currentAllNames = S.insert "z" $ termNames `S.union` S.unions (propNames <$> (p:consumedProps))
+    resourceNames = L.filter (\n -> not $ n `S.member` currentAllNames) namesInOrder
     linearProps = zip resourceNames consumedProps
-    in Sequent { tyVarContext = S.empty, fnContext = Data.Map.empty, unrestrictedContext = Data.Map.empty, linearContext = Data.Map.fromList linearProps, recursiveBindings = Data.Map.empty, channel = "z", goalProposition = p }
+    in Sequent { tyVarContext = S.empty, fnContext = Data.Map.fromList assumedTerms, unrestrictedContext = Data.Map.empty, linearContext = Data.Map.fromList linearProps, recursiveBindings = Data.Map.empty, channel = "z", goalProposition = p }
 
 initializeProof :: Monad m => Sequent -> Subgoal m
 initializeProof seq = Subgoal { sequent = seq, prevGoal = "", nextGoals = [], expanded = Nothing, subgoalJustification = tacError "No justification.", inProgressFunctionalProof = Nothing, reservedVars = S.empty }
@@ -684,7 +686,7 @@ existsLeftTac x = do
             reserveVars [x]
             xName <- lookupVarName x
             freshY <- getFreshVarAttempt y
-            let newP = substVarProp p x freshY
+            let newP = substVarProp p freshY y
             newGoal <- createNewSubgoal $ seq { fnContext = Data.Map.insert freshY t $ fnContext seq, linearContext = Data.Map.insert x newP $ linearContext seq }
             useCurrentSubgoal Trunk . buildJustification1 newGoal $ ExistsLeftRule xName freshY
             return "Exists left side tactic applied."
@@ -961,7 +963,8 @@ initCleanState mName =
         , cachedProofStateNames = S.empty
         , newSubgoalNameList = tail allSubgoalNames
         , cachedVarNames = namesInOrder
-        , typeDecls = [] }
+        , stypeDecls = []
+        , fnAssumptions = [] }
 
 {-| Assumes the initial  subgoal has no assumptions in -}
 -- initializeState :: String -> Subgoal m -> ProofState m
@@ -988,14 +991,9 @@ applyTacticGeneral s t = do
 theorem :: Monad m => ProofState m -> [Proposition] -> String -> Proposition -> ProofState m
 theorem s ts n p =
     let
-        typeSynonyms = typeDecls s
+        typeSynonyms = stypeDecls s
         sessionsToConsume = substTyDecls typeSynonyms <$> ts
-        goal = initializeProof (initializeSequent sessionsToConsume (substTyDecls typeSynonyms p))
-        channelVar = (channel . sequent $ goal)
-        linearVars = Data.Map.keys . linearContext . sequent $ goal
-        unrestrictedVars = Data.Map.keys . unrestrictedContext . sequent $ goal
-        fnVars = Data.Map.keys . fnContext . sequent $ goal
-        allVars = channelVar : (linearVars ++ unrestrictedVars ++ fnVars)
+        goal = initializeProof (initializeSequent (fnAssumptions s) sessionsToConsume (substTyDecls typeSynonyms p))
     in
         s { subgoals = singleton "?a" goal
         , outputs = "New theorem started":outputs s
@@ -1065,7 +1063,10 @@ _Extract s tName =
             Just p -> extractor (proofObject p)
 
 _STypeDecl :: String -> Proposition -> ProofState Identity -> ProofState Identity
-_STypeDecl n ty s = s { typeDecls = (n, ty):(typeDecls s) }
+_STypeDecl n ty s = s { stypeDecls = (n, ty):(stypeDecls s) }
+
+_FAssumption :: String -> FunctionalTerm -> ProofState Identity -> ProofState Identity
+_FAssumption n ty s = s { fnAssumptions = (n, ty):(fnAssumptions s) }
 
 _PushMessage :: ProofState Identity -> String -> ProofState Identity
 _PushMessage s m = s { outputs = m:outputs s }

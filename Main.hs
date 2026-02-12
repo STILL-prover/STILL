@@ -37,7 +37,8 @@ emptyState = S {
     cachedProofStateNames = S.empty,
     newSubgoalNameList = allSubgoalNames,
     cachedVarNames = namesInOrder,
-    typeDecls = []
+    stypeDecls = [],
+    fnAssumptions = []
 }
 
 data DiagnosticInfo = DiagnosticInfo {

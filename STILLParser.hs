@@ -48,6 +48,7 @@ parseStringCommand = parse (whiteSpace >> cmd <* eof) ""
 cmd :: Parser (ProofState Identity -> ProofState Identity)
 cmd = parseTheorem
   <|> parseTypeDec
+  <|> parseAssumption
   <|> parseProvingCommand
   <|> parseDone
   <|> parseHelp
@@ -83,14 +84,22 @@ parseTypeDec = do
     ty <- quotes proposition
     return (_STypeDecl i ty)
 
+parseAssumption :: Parser (ProofState Identity -> ProofState Identity)
+parseAssumption = do
+    reserved "assume"
+    resI <- identifier
+    reserved "is"
+    resTy <- quotes fTerm
+    return (_FAssumption resI resTy)
+
 parseTheorem :: Parser (ProofState Identity -> ProofState Identity)
 parseTheorem = do
     reserved "theorem"
     tName <- identifier
-    tNames <- option [] (reserved "consumes" >> many (quotes proposition))
+    props <- option [] (reserved "consumes" >> sepBy (quotes proposition) whiteSpace)
     reservedOp ":"
     p <- quotes proposition
-    return (\s -> _Theorem s tNames tName p)
+    return (\s -> _Theorem s props tName p)
 
 parseProvingCommand :: Parser (ProofState Identity -> ProofState Identity)
 parseProvingCommand = parseApply

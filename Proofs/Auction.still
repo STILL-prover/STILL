@@ -84,32 +84,78 @@ apply TyVar AUC (a, c, h, i, firstB, newB, nextValid)
 done
 -- z(ItemType).z(bid).z(zeroB).z(validNewB).z(currency).z(a).z(c).z(firstB).z(firstValid).z(d).z(e).(corec AUC(item, ownerC, curB, winnerC, oldB, lastB, curValid).z.case(inl z(newB).z(nextValid).z(h).z(i).((ν j) winnerC[j].(j.inr;[curB <-> j] | AUC(item, ownerC, h, i, lastB, newB, nextValid))), inr ownerC[lastB].((ν f) ownerC[f].([curB <-> f] | (ν g) winnerC[g].(g.inl;[item <-> g] | 0))) )) (a, c, d, e, zeroB, firstB, firstValid)
 
-theorem encryptionService
-consumes "englishSession":
-    "forall string:Type 1.
-    forall encryptedMsg:Type 1.
-    forall enc:(Pi s:string.encryptedMsg).
-    forall dec:(Pi e:encryptedMsg.string).
-    forall myBid:Type 1.
-    forall startPrice:myBid.
-    forall addedFifty:(Pi b1:myBid.Pi b2:myBid.Type 1).
-    forall usd:(Pi b:myBid.Type 1).(!(($encryptedMsg -o $string) & ($string -o encryptedMsg))) * 1"
-apply Intros
-apply Forall2L b "!(($encryptedMsg -o $string) & ($string -o $encryptedMsg))"
-apply ForallLA
-apply Exact "myBid"
-apply ForallLA
+assume delivery is "Pi itemType:Type 1.Pi item:itemType.Type 1"
+
+stype postOfficeSession = "forall itemObjectType:Type 1.
+    forall item:itemObjectType.$delivery itemObjectType item"
+
+assume book is "Type 1"
+assume int is "Type 1"
+assume usd is "Pi b:int.Type 1"
+
+stype bookOwnerSession = "exists startPrice:int.exists bidVal:(Pi b1:int. Pi b2:int. Type 1).exists bookForSale:book.(forall b:int.$usd b -o 1)"
+stype bookBuyerSession = "forall sellerVal:(Pi b1:int. Pi b2:int. Type 1).
+    (exists buyerAmount:int.
+        forall curPrice:int.
+        exists buyerValid:sellerVal curPrice buyerAmount.
+        $(usd buyerAmount) * (forall bookBought:book.($usd buyerAmount + $delivery book bookBought) -o 1))"
+
+theorem bookAuction consumes "bookOwnerSession" "bookBuyerSession" "englishSession" "postOfficeSession": "1"
+apply ExistsLA+
+apply Forall2L d "$delivery book bookForSale"
+apply TensorL a
+apply FTermL f
+apply ForallL d
+apply Exact "int"
+apply ExistsL a
+apply ForallL d
 apply Exact "startPrice"
-apply ForallLA
-apply Exact "addedFifty"
-apply ForallLA
+apply ExistsL a
+apply ForallL d
+apply Exact "bidVal"
+apply ForallL d
 apply Exact "usd"
-apply ImpliesLA
+apply ForallL e
+apply Exact "book"
+apply ForallL e
+apply Exact "bookForSale"
+apply ImpliesL d
 defer
-apply BangR
-apply WithR;ImpliesR;FTermLA;FTermR
-apply Exact "dec f"
-apply Exact "enc d"
-apply TensorR
-apply UnitR
+apply IdA
+apply ImpliesL d
+defer
+apply IdA
+apply ForallL c
+apply Exact "bidVal"
+apply ExistsLA
+apply ForallL d
+apply Exact "buyerAmount"
+apply ForallL c
+apply Exact "startPrice"
+apply ExistsLA
+apply ForallL d
+apply Exact "buyerValid"
+apply TensorL c
+apply ImpliesL d
+defer
+apply IdA
+apply ForallL c
+apply Exact "bookForSale"
+apply ImpliesL d
+defer
 apply ImpliesR
+apply ImpliesL c
+defer
+apply PlusLA
+apply PlusR1
+apply Id k
+apply PlusR2
+apply Id k
+defer
+apply UnitL c
+apply UnitR
+apply NuL d
+apply WithL2 d
+apply UnitL d
+apply UnitR
+done
