@@ -38,7 +38,8 @@ emptyState = S {
     newSubgoalNameList = allSubgoalNames,
     cachedVarNames = namesInOrder,
     stypeDecls = [],
-    fnAssumptions = []
+    fnAssumptions = [],
+    procAssumptions = []
 }
 
 data DiagnosticInfo = DiagnosticInfo {

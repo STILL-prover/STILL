@@ -1,0 +1,140 @@
+module Auction begin
+
+stype englishSession = "forall ItemType:stype.
+    forall bid:Type 1.
+    forall zeroB:bid.
+    forall validNewB:(Pi b1:bid. Pi b2:bid. Type 1).
+    forall currency:(Pi b:bid.Type 1).
+    ItemType -o
+    (forall b:bid. $currency b -o 1) -o
+    forall firstB:bid.
+    forall firstValid:validNewB zeroB firstB.
+    $currency firstB -o
+    (ItemType + $currency firstB -o 1) -o
+    nu Y. (forall newB:bid.
+        forall nextValid:validNewB firstB newB.
+        $currency newB -o
+        (ItemType + $currency newB -o 1) -o Y) & 1"
+
+-- Demonstrate a different proof and extraction of the english auction.
+-- It receives the new bid before returning the old one. Original english returns then receives the new one.
+theorem english2: "englishSession"
+apply Intros
+apply NuR AUC
+    (item, ownerC, curB, winnerC, oldB, lastB, curValid)
+    (a, c, d, e, zeroB, firstB, firstValid)
+apply WithR
+apply ForallLA
+apply Exact "firstB"
+apply ImpliesLA
+apply UnitLA
+apply ImpliesLA
+apply UnitLA
+apply UnitR
+apply PlusR1
+apply IdA
+apply IdA
+apply Intros
+apply ImpliesLA
+apply UnitLA
+defer
+apply PlusR2
+apply IdA
+apply Weaken zeroB
+apply Weaken firstValid
+apply TyVar AUC (a, c, h, i, firstB, newB, nextValid)
+done
+-- z(ItemType).z(bid).z(zeroB).z(validNewB).z(currency).z(a).z(c).z(firstB).z(firstValid).z(d).z(e).(corec AUC(item, ownerC, curB, winnerC, oldB, lastB, curValid).z.case(inl z(newB).z(nextValid).z(h).z(i).((ν j) winnerC[j].(j.inr;[curB <-> j] | AUC(item, ownerC, h, i, lastB, newB, nextValid))), inr ownerC[lastB].((ν f) ownerC[f].([curB <-> f] | (ν g) winnerC[g].(g.inl;[item <-> g] | 0))) )) (a, c, d, e, zeroB, firstB, firstValid)
+
+-- Implementation
+assume book is "Type 1"
+assume int is "Type 1"
+assume usd is "Pi b:int.Type 1"
+assume delivery is "Pi itemType:Type 1.Pi item:itemType.Type 1"
+
+assume process postOffice is "forall itemObjectType:Type 1. forall item:itemObjectType.$delivery itemObjectType item"
+assume process bookOwner is "exists startPrice:int.exists bidVal:(Pi b1:int. Pi b2:int. Type 1).exists bookForSale:book.(forall b:int.$usd b -o 1)"
+assume process bookBuyer is "forall sellerVal:(Pi b1:int. Pi b2:int. Type 1).
+    exists buyerAmount:int.
+    forall curPrice:int.
+    exists buyerValid:sellerVal curPrice buyerAmount.
+    $(usd buyerAmount) * (forall bookBought:book.($usd buyerAmount + $delivery book bookBought) -o 1)"
+-- "bookOwnerSession" "bookBuyerSession" "englishSession" "postOfficeSession"
+theorem bookAuction: "1"
+apply CutProc bookOwner
+apply CutProc bookBuyer
+apply CutTheorem english2
+apply CutProc postOffice
+apply ExistsLA+
+apply Forall2L k "$delivery book bookForSale"
+-- apply TensorLA
+-- apply FTermL f
+apply ForallL k
+apply Exact "int"
+-- apply ExistsL a
+apply ForallL k
+apply Exact "startPrice"
+-- apply ExistsL a
+apply ForallL k
+apply Exact "bidVal"
+apply ForallL k
+apply Exact "usd"
+apply ForallL d
+apply Exact "book"
+apply ForallL d
+apply Exact "bookForSale"
+apply ImpliesL k
+defer
+apply IdA
+apply ImpliesL k
+defer
+apply IdA
+apply ForallL c
+apply Exact "bidVal"
+apply ExistsLA
+apply ForallL k
+apply Exact "buyerAmount"
+apply ForallL c
+apply Exact "startPrice"
+apply ExistsLA
+apply ForallL k
+apply Exact "buyerValid"
+apply TensorL c
+apply ImpliesL k
+defer
+apply IdA
+apply ForallL c
+apply Exact "bookForSale"
+apply ImpliesL k
+defer
+apply ImpliesR
+apply ImpliesL c
+defer
+apply PlusLA
+apply PlusR1
+apply Id j
+apply PlusR2
+apply Id j
+defer
+apply UnitL c
+apply UnitR
+apply NuL k
+apply WithL2 k
+apply UnitL k
+apply UnitR
+done
+
+extract bookAuction
+
+
+{-theorem testPost: "forall myBook:book . $delivery book myBook"
+apply CutProc postOffice
+apply ForallR
+apply ForallLA
+apply Exact "book"
+apply ForallLA
+apply Exact "myBook"
+apply IdA
+done
+
+extract testPost-}

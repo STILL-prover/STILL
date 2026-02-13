@@ -48,6 +48,7 @@ parseStringCommand = parse (whiteSpace >> cmd <* eof) ""
 cmd :: Parser (ProofState Identity -> ProofState Identity)
 cmd = parseTheorem
   <|> parseTypeDec
+  <|> try (parseProcessAssumption)
   <|> parseAssumption
   <|> parseProvingCommand
   <|> parseDone
@@ -91,6 +92,15 @@ parseAssumption = do
     reserved "is"
     resTy <- quotes fTerm
     return (_FAssumption resI resTy)
+
+parseProcessAssumption :: Parser (ProofState Identity -> ProofState Identity)
+parseProcessAssumption = do
+    reserved "assume"
+    reserved "process"
+    resI <- identifier
+    reserved "is"
+    resTy <- quotes proposition
+    return (_PAssumption resI resTy)
 
 parseTheorem :: Parser (ProofState Identity -> ProofState Identity)
 parseTheorem = do
@@ -226,6 +236,7 @@ singleStringArgTactics =
     , ("FTermL", _FTermL)
     , ("Weaken", _Weaken)
     , ("CutTheorem", cutLinearTheoremTac)
+    , ("CutProc", cutProcessAssumptionTac)
     ]
 
 simpleFunctionalTactics :: [(String, FunctionalTactic Identity)]
@@ -355,7 +366,7 @@ lexer :: Tok.TokenParser ()
 lexer = Tok.makeTokenParser style
   where
     ops = [":", "\"", ";", "+", "<|>"]
-    names = ["module", "imports", "begin", "end", "theorem", "done", "defer", "prefer", "apply", "help", "print_theorems", "consumes", "extract"] ++ (fst <$> simpleTactics)
+    names = ["module", "imports", "begin", "end", "theorem", "done", "defer", "prefer", "apply", "help", "print_theorems", "consumes", "extract", "assume", "process"] ++ (fst <$> simpleTactics)
     style = emptyDef
         { Tok.commentLine = "--"
         , Tok.commentStart = "{-"

@@ -4,7 +4,7 @@ import Data.Map
 import qualified Data.Set as S
 import qualified Control.Monad.State.Lazy as ST
 import qualified Data.List as L
-import Control.Monad (when)
+import Control.Monad (when, unless)
 import Text.Read (readMaybe)
 import Data.Maybe (isJust, fromMaybe)
 import ECC.Kernel
@@ -470,11 +470,36 @@ data Sequent = Sequent {
 } deriving (Eq)
 
 seqToS :: Sequent -> String
-seqToS seq = L.intercalate ", " (S.toList . tyVarContext $ seq) ++ "; " ++
-    L.intercalate ", " ((\(k,v) -> k ++ ":" ++ ftToS v) <$> Data.Map.toList (fnContext seq)) ++
-    "; " ++ L.intercalate ", " ((\(k, v) -> k ++ ":" ++ propToS v) <$> Data.Map.toList (unrestrictedContext seq)) ++
-    "; " ++ L.intercalate ", " ((\(k, v) -> k ++ ":" ++ propToS v) <$> Data.Map.toList (linearContext seq)) ++
-    " |- " ++ channel seq ++ ":" ++ propToS (goalProposition seq)
+seqToS seq =
+    if length singleLine > 80
+    then multiLine
+    else singleLine
+  where
+    -- 1. Extract and format the raw components into lists of strings
+    tyVars = S.toList (tyVarContext seq)
+    fns    = [k ++ ":" ++ ftToS v   | (k,v) <- Data.Map.toList (fnContext seq)]
+    unres  = [k ++ ":" ++ propToS v | (k,v) <- Data.Map.toList (unrestrictedContext seq)]
+    lin    = [k ++ ":" ++ propToS v | (k,v) <- Data.Map.toList (linearContext seq)]
+    goal   = channel seq ++ ":" ++ propToS (goalProposition seq)
+
+    -- 2. Define the single-line representation (Original logic)
+    -- We join the internal lists with comma-space, and the sections with semicolons.
+    parts = [tyVars, fns, unres, lin]
+    joinedParts = L.map (L.intercalate ", ") parts
+    singleLine = L.intercalate "; " joinedParts ++ " |- " ++ goal
+
+    -- 3. Define the multi-line representation
+    -- If a specific context list is empty, we keep it empty. 
+    -- Otherwise, we join items with newlines and indentation.
+    formatBlock [] = ""
+    formatBlock items = "\n    " ++ L.intercalate ",\n    " items
+
+    multiLine =
+        "\n  Ω: " ++ (if L.null tyVars then "" else formatBlock tyVars) ++ ";" ++
+        "\n  Ψ:  " ++ (if L.null fns then "" else formatBlock fns) ++ ";" ++
+        "\n  Γ:  " ++ (if L.null unres then "" else formatBlock unres) ++ ";" ++
+        "\n  Δ: " ++ (if L.null lin then "" else formatBlock lin) ++
+        "\n  |- " ++ goal
 
 getSequentNames :: Sequent -> S.Set String
 getSequentNames (Sequent tv fc uc lc eta ch goalProp) = S.insert ch $ tv `S.union` getFunctionalContextNames fc `S.union` getContextNames uc `S.union` getContextNames lc `S.union` propNames goalProp `S.union` getRecursiveBindingsNames eta
@@ -541,6 +566,7 @@ data Proof = IdRule String String (S.Set String) FunctionalContext Context Recur
     | FnWeakening String FunctionalTerm Proof
     | TyVarWeakening String Proof
     | RecBindingWeakening String ([String], BindingSequent) Proof
+    | ProcessFiatRule String String Proposition Proof -- ProcessName:x::Prop
     | HoleRule (S.Set String) FunctionalContext Context Context RecursiveBindings String Proposition
     deriving (Eq, Show, Read)
 
@@ -584,6 +610,7 @@ subProofs rule = case rule of
     FnWeakening _ _ p                  -> [Right p] -- Assuming FunctionalTerm is not traversed
     TyVarWeakening _ p                 -> [Right p]
     RecBindingWeakening _ _ p          -> [Right p]
+    ProcessFiatRule _ _ _ p            -> [Right p]
 
     -- Leaf cases
     IdRule{}                           -> []
@@ -646,6 +673,7 @@ getProofNames (FnWeakening a fterm proof) = S.insert a $ functionalNames fterm `
 getProofNames (TyVarWeakening a proof) = S.insert a $ getProofNames proof
 getProofNames (RecBindingWeakening a (ps, bs) proof) = S.fromList (a:ps) `S.union` getBindingSequentNames bs `S.union` getProofNames proof
 getProofNames (HoleRule tv fc uc lc eta z p) = tv `S.union` getFunctionalContextNames fc `S.union` getContextNames uc `S.union` getContextNames lc `S.union` propNames p `S.union` S.singleton z `S.union` getRecursiveBindingsNames eta
+getProofNames (ProcessFiatRule procName chanName prop p) = S.fromList [procName, chanName] `S.union` propNames prop `S.union` getProofNames p
 
 isFreshInProof :: String -> Proof -> Bool
 isFreshInProof x p = not $ x `S.member` getProofNames p
@@ -724,6 +752,7 @@ renameVarInProof p x y {-| DBG.trace "Renaming" True-} = if isFreshInProof x p
         go (TyVarWeakening a proof) = TyVarWeakening (swap a) (go proof)
         go (RecBindingWeakening a (ps, bs) p) = RecBindingWeakening (swap a) ((swap <$> ps), (swapBinding bs)) (go p)
         go (HoleRule tv fc uc lc eta z p) = HoleRule (swapSet tv) (swapFn fc) (swapCtx uc) (swapCtx lc) (swapRec eta) (swap z) (swapProp p)
+        go (ProcessFiatRule procName chanName prop p) = ProcessFiatRule (swap procName) (swap chanName) (swapProp prop) (go p)
 
 {-| A{y/N} replace N with y in A. -}
 abstTerm :: Proposition -> String -> FunctionalTerm -> Proposition
@@ -986,6 +1015,9 @@ concl (RecBindingWeakening a (ps, bs) p) = do
     j <- concl p
     return $ j { recursiveBindings = Data.Map.insert a (ps, bs) $ recursiveBindings j }
 concl (HoleRule tv fc uc lc eta z p) = return $ Sequent { tyVarContext = tv, fnContext = fc, unrestrictedContext = uc, linearContext = lc, recursiveBindings = eta, channel = z, goalProposition = p }
+concl (ProcessFiatRule procName chanName prop p) = do
+    j <- concl p
+    return $ j { linearContext = Data.Map.insert chanName prop (linearContext j) }
 
 validBindingSequent :: BindingSequent -> Bool
 validBindingSequent (BindingSequent tv fc uc lc z p) = L.null (Data.Map.keys fc `L.intersect` Data.Map.keys uc `L.intersect` Data.Map.keys lc) && not (Data.Map.member z fc || Data.Map.member z uc || Data.Map.member z lc)
@@ -1238,6 +1270,12 @@ verifyProofM (RecBindingWeakening a (ps, bs) proof) = do
     seq <- concl proof
     return . not . Data.Map.member a $ recursiveBindings seq
 verifyProofM (HoleRule tv fc uc lc z p eta) = return False
+verifyProofM (ProcessFiatRule procName chanName prop p) = do
+    _ <- justTrue <$> verifyProofM p
+    seq <- concl p
+    unless (Data.Map.member chanName (linearContext seq)) $ Left (chanName ++ " is already in the linear context.")
+    unless ((Data.Map.!) (linearContext seq) chanName == prop) $ Left (chanName ++ ":" ++ propToS ((Data.Map.!) (linearContext seq) chanName) ++ " doesn't match expected type: " ++ propToS prop)
+    return True
 
 {-|
 >>> verifyProof (HoleRule Data.Map.empty Data.Map.empty Data.Map.empty "z" Unit)
@@ -1387,6 +1425,10 @@ extractProcess rule@(RecBindingWeakening x _ proof) = extractProcess proof
 extractProcess rule@(HoleRule tv fc uc lc eta z p) = do
     seq <- concl rule
     return (HoleTerm, seq)
+extractProcess rule@(ProcessFiatRule procName chanName prop p) = do
+    (q,_) <- extractProcess p
+    seq <- concl rule
+    return (Nu chanName prop (ParallelComposition (Call procName [chanName]) q), seq)
 
 --data Process = Halt
     -- | ParallelComposition Process Process
@@ -1408,42 +1450,139 @@ extractProcess rule@(HoleRule tv fc uc lc eta z p) = do
 
 checkNamesMatch z1 z2 = when (z1 /= z2) $ Left $ "Expected matching channels do not match: " ++ z1 ++ ", " ++ z2
 
-{-| Does not check linear context requirements!
+{-|
     Must be checked after proof is derived.
-    Pass functional context, unrestricted context, linear context, active channel name, and process. -}
+    Pass functional context, unrestricted context, linear context, active channel name, and process.
+-}
 extractProofFromProcessUnderCtx :: S.Set String -> FunctionalContext -> Context -> Context -> RecursiveBindings -> String -> Process -> Either String Proof
-extractProofFromProcessUnderCtx tv fctx uctx lctx eta z Halt | Data.Map.empty == lctx = return $ UnitRightRule z tv fctx uctx eta
-extractProofFromProcessUnderCtx tv fctx uctx lctx eta z Halt = do -- Try to use all variables in linear context.
-        let
-            unitProps = L.filter (\(k, v) -> v == Unit) $ Data.Map.toList lctx
-            replProps = L.filter (\(k, v) -> case v of Replication p -> True; _ -> False) $ Data.Map.toList lctx
-            fnProps = L.filter (\(k, v) -> case v of Lift p -> True; _ -> False) $ Data.Map.toList lctx
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z prc
+    | any (\(k, v) -> case v of Unit -> True; _ -> False) (Data.Map.toList lctx) = do
+        let props = L.filter (\(k, v) -> case v of Unit -> True; _ -> False) (Data.Map.toList lctx)
             freshName = getFreshName (S.insert z $ tv `S.union` getFunctionalContextNames fctx `S.union` getContextNames uctx `S.union` getContextNames lctx `S.union` getRecursiveBindingsNames eta)
-        varRem <- case (unitProps, replProps, fnProps) of
-            ((u, _):_, _, _) -> return (u, UnitLeftRule u)
-            ([], (u, _):_, _) -> return (u, ReplicationLeftRule freshName u)
-            ([], [], (u, _):_) -> return (u, FunctionalTermLeftRule u)
-        newP <- extractProofFromProcessUnderCtx tv fctx uctx (Data.Map.delete (fst varRem) lctx) eta z Halt
-        return $ (snd varRem) newP
-extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (Link x z2) = if z1 /= z2
+            u = fst . head $ props
+        newP <- extractProofFromProcessUnderCtx tv fctx uctx (Data.Map.delete u lctx) eta z prc
+        return $ UnitLeftRule u newP
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z prc
+    | any (\(k, v) -> case v of Replication p -> True; _ -> False) (Data.Map.toList lctx) = do
+        let props = L.filter (\(k, v) -> case v of Replication p -> True; _ -> False) (Data.Map.toList lctx)
+            freshName = getFreshName (S.insert z $ tv `S.union` getFunctionalContextNames fctx `S.union` getContextNames uctx `S.union` getContextNames lctx `S.union` getRecursiveBindingsNames eta)
+            x = fst . head $ props
+        replProp <- case snd . head $ props of Replication p -> return p; _ -> Left "Not a replication prop!"
+        newP <- extractProofFromProcessUnderCtx tv fctx (Data.Map.insert freshName replProp uctx) (Data.Map.delete x lctx) eta z (substVar prc x freshName)
+        return $ ReplicationLeftRule freshName x newP
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z prop
+    | any (\(k, v) -> case v of Lift p -> True; _ -> False) (Data.Map.toList lctx) = do
+        let props = L.filter (\(k, v) -> case v of Lift p -> True; _ -> False) (Data.Map.toList lctx)
+            x = fst . head $ props
+        replProp <- case snd . head $ props of Lift p -> return p; _ -> Left "Not a lifted prop!"
+        newP <- extractProofFromProcessUnderCtx tv (Data.Map.insert x replProp fctx) uctx (Data.Map.delete x lctx) eta z Halt
+        return $ FunctionalTermLeftRule x newP
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z Halt | Data.Map.empty == lctx = return $ UnitRightRule z tv fctx uctx eta
+-- extractProofFromProcessUnderCtx tv fctx uctx lctx eta z Halt = do -- Try to use all variables in linear context.
+--         let
+--             unitProps = L.filter (\(k, v) -> v == Unit) $ Data.Map.toList lctx
+--             replProps = L.filter (\(k, v) -> case v of Replication p -> True; _ -> False) $ Data.Map.toList lctx
+--             fnProps = L.filter (\(k, v) -> case v of Lift p -> True; _ -> False) $ Data.Map.toList lctx
+--             freshName = getFreshName (S.insert z $ tv `S.union` getFunctionalContextNames fctx `S.union` getContextNames uctx `S.union` getContextNames lctx `S.union` getRecursiveBindingsNames eta)
+--         varRem <- case (unitProps, replProps, fnProps) of
+--             ((u, _):_, _, _) -> return (u, UnitLeftRule u)
+--             ([], (u, _):_, _) -> return (u, ReplicationLeftRule freshName u)
+--             ([], [], (u, _):_) -> return (u, FunctionalTermLeftRule u)
+--         newP <- extractProofFromProcessUnderCtx tv fctx uctx (Data.Map.delete (fst varRem) lctx) eta z Halt
+--         return $ (snd varRem) newP
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (Link x z2) | L.length (Data.Map.toList lctx) == 1 = if z1 /= z2
     then Left $ "Active channel " ++ z1 ++ "not on right side of " ++ show (Link x z2)
     else case Data.Map.lookup x lctx of
         Just prop -> return $ IdRule x z1 tv fctx uctx eta prop
-extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (LiftTerm z2 t) = do
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (LiftTerm z2 t) | Data.Map.empty == lctx = do
     checkNamesMatch z1 z2
     p1 <- extractProofFromTermUnderCtx fctx t
     return $ FunctionalTermRightRule z1 p1 tv uctx eta
-extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (Nu y1 prop (Send z2 y2 (ParallelComposition p q))) | z1 == z2 && y1 == y2 = do
-    p1 <- extractProofFromProcessUnderCtx tv fctx uctx lctx eta y1 p
-    p2 <- extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 q
-    return $ TensorRightRule p1 p2
-extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (Nu y1 prop (Send u (y2) p)) = do
-    _ <- (if y1 == y2 then Right () else Left $ y1 ++ " must match " ++ y2)
-    return $ UnitRightRule z tv fctx uctx eta
-extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (Nu u1 prop (ParallelComposition (ReplicateReceive u2 x p) q)) = if u1 /= u2
-    then Left $ "Nu " ++ u1 ++ " is not the same as receiving " ++ u2
-    else do
-        p1 <- extractProofFromProcessUnderCtx tv fctx uctx Data.Map.empty eta x p
-        p1Concl <- concl p1
-        p2 <- extractProofFromProcessUnderCtx tv fctx (Data.Map.insert u1 (goalProposition p1Concl) uctx) lctx eta z q
-        return (CutReplicationRule u1 p1 p2)
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (ReplicateReceive z y p) | Data.Map.empty == lctx = do
+    p1 <- extractProofFromProcessUnderCtx tv fctx uctx lctx eta y p
+    return $ ReplicationRightRule z p1
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (Nu y1 prop (Send u y2 p))
+    | Data.Map.member u uctx && y1 == y2 && uctx ! u == prop = do
+        proof1 <- extractProofFromProcessUnderCtx tv fctx uctx (Data.Map.insert y1 prop lctx) eta z p
+        return $ CopyRule u y1 proof1
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (Case z2 proc1 proc2) | z1 == z2 = do
+        proof1 <- extractProofFromProcessUnderCtx tv fctx uctx lctx eta z2 proc1
+        proof2 <- extractProofFromProcessUnderCtx tv fctx uctx lctx eta z2 proc2
+        return $ WithRightRule proof1 proof2
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (Case x proc1 proc2)
+    | Data.Map.member x lctx && case lctx ! x of Plus _ _ -> True; _ -> False  = do
+        (a, b) <- case lctx ! x of Plus a b -> return (a, b); _ -> Left "Not a plus proposition!"
+        proof1 <- extractProofFromProcessUnderCtx tv fctx uctx (Data.Map.insert x a lctx) eta z proc1
+        proof2 <- extractProofFromProcessUnderCtx tv fctx uctx (Data.Map.insert x b lctx) eta z proc2
+        return $ PlusLeftRule x proof1 proof2
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (SendInl x p)
+    | Data.Map.member x lctx && case lctx ! x of With _ _ -> True; _ -> False  = do
+        (a, b) <- case lctx ! x of With a b -> return (a, b); _ -> Left "Not a with proposition!"
+        proof <- extractProofFromProcessUnderCtx tv fctx uctx (Data.Map.insert x a lctx) eta z p
+        return $ WithLeft1Rule x b proof
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (SendInr x p)
+    | Data.Map.member x lctx && case lctx ! x of With _ _ -> True; _ -> False  = do
+        (a, b) <- case lctx ! x of With a b -> return (a, b); _ -> Left "Not a with proposition!"
+        proof <- extractProofFromProcessUnderCtx tv fctx uctx (Data.Map.insert x b lctx) eta z p
+        return $ WithLeft2Rule x a proof
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (Nu y1 prop (Send z2 y2 (ParallelComposition p1 p2))) | z1 == z2 && y1 == y2 = do
+    proof1 <- extractProofFromProcessUnderCtx tv fctx uctx lctx eta y1 p1
+    seq <- concl proof1
+    proof2 <- extractProofFromProcessUnderCtx tv fctx uctx (Data.Map.difference lctx (linearContext seq)) eta z1 p2
+    return $ TensorRightRule proof1 proof2
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (Receive x y p)
+    | Data.Map.member x lctx && case lctx ! x of Tensor _ _ -> True; _ -> False = do
+        (a, b) <- case lctx ! x of Tensor a b -> return (a, b); _ -> Left "Not a tensor proposition!"
+        proof <- extractProofFromProcessUnderCtx tv fctx uctx (Data.Map.insert y a (Data.Map.insert x b lctx)) eta z p
+        return $ TensorLeftRule x y proof
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (SendInl z2 p) | z1 == z2 = do
+    proof <- extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 p
+    return $ PlusRight1Rule Unit proof
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (SendInr z2 p) | z1 == z2 = do
+    proof <- extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 p
+    return $ PlusRight2Rule Unit proof
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (SendTerm x n p)
+    | Data.Map.member x fctx && case lctx ! x of Forall{} -> True; _ -> False = do
+        (y, t, a) <- case lctx ! x of Forall y t a -> return (y, t, a); _ -> Left "Not a forall proposition!"
+        termProof <- extractProofFromTermUnderCtx fctx n
+        termConcl <- functionalConcl termProof
+        unless (goalType termConcl == t) $ Left "Term and stored types don't match!"
+        proof <- extractProofFromProcessUnderCtx tv (Data.Map.insert y t fctx) uctx (Data.Map.insert x (substVarTerm a n y) lctx) eta z p
+        return $ ForallLeftRule x y termProof proof
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (SendTerm z2 n p) | z1 == z2 = do
+        termProof <- extractProofFromTermUnderCtx fctx n
+        termConcl <- functionalConcl termProof
+        let freshName = getFreshName (S.insert z1 $ tv `S.union` getFunctionalContextNames fctx `S.union` getContextNames uctx `S.union` getContextNames lctx `S.union` getRecursiveBindingsNames eta `S.union` functionalNames n)
+        proof <- extractProofFromProcessUnderCtx tv (Data.Map.insert freshName (goalType termConcl) fctx) uctx lctx eta z1 p
+        return $ ExistsRightRule freshName termProof proof
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (Receive x y p)
+    | Data.Map.member x fctx && case lctx ! x of Exists y2 t a -> y == y2; _ -> False = do
+        (y, t, a) <- case lctx ! x of Exists y t a -> return (y, t, a); _ -> Left "Not an exists proposition!"
+        proof <- extractProofFromProcessUnderCtx tv (Data.Map.insert y t fctx) uctx (Data.Map.insert x a lctx) eta z p
+        return $ ExistsLeftRule x y proof
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (Nu u1 prop (ParallelComposition (ReplicateReceive u2 x p1) p2)) | u1 == u2 = do
+    proof1 <- extractProofFromProcessUnderCtx tv fctx uctx Data.Map.empty eta x p1
+    proof1Concl <- concl proof1
+    unless (prop == goalProposition proof1Concl) $ Left "Type extracted doesn't match expected."
+    proof2 <- extractProofFromProcessUnderCtx tv fctx (Data.Map.insert u1 prop uctx) lctx eta z p2
+    return $ CutReplicationRule u1 proof1 proof2
+extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (Nu x prop (ParallelComposition p1 p2)) = do
+    proof1 <- extractProofFromProcessUnderCtx tv fctx uctx lctx eta x p1
+    proof1Concl <- concl proof1
+    unless (prop == goalProposition proof1Concl) $ Left "Type extracted doesn't match expected."
+    proof2 <- extractProofFromProcessUnderCtx tv fctx uctx (Data.Map.insert x prop $ Data.Map.difference lctx (linearContext proof1Concl)) eta z p2
+    return $ CutRule proof1 proof2
+-- extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 (Nu y1 prop (Send z2 y2 (ParallelComposition p q))) | z1 == z2 && y1 == y2 = do
+--     p1 <- extractProofFromProcessUnderCtx tv fctx uctx lctx eta y1 p
+--     p2 <- extractProofFromProcessUnderCtx tv fctx uctx lctx eta z1 q
+--     return $ TensorRightRule p1 p2
+-- extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (Nu y1 prop (Send u (y2) p)) = do
+--     _ <- (if y1 == y2 then Right () else Left $ y1 ++ " must match " ++ y2)
+--     return $ UnitRightRule z tv fctx uctx eta
+-- extractProofFromProcessUnderCtx tv fctx uctx lctx eta z (Nu u1 prop (ParallelComposition (ReplicateReceive u2 x p) q)) = if u1 /= u2
+--     then Left $ "Nu " ++ u1 ++ " is not the same as receiving " ++ u2
+--     else do
+--         p1 <- extractProofFromProcessUnderCtx tv fctx uctx Data.Map.empty eta x p
+--         p1Concl <- concl p1
+--         p2 <- extractProofFromProcessUnderCtx tv fctx (Data.Map.insert u1 (goalProposition p1Concl) uctx) lctx eta z q
+--         return (CutReplicationRule u1 p1 p2)

@@ -78,7 +78,8 @@ data ProofState m = S {
     newSubgoalNameList :: [String],
     cachedVarNames :: [String],
     stypeDecls :: [(String, Proposition)],
-    fnAssumptions :: [(String, FunctionalTerm)]
+    fnAssumptions :: [(String, FunctionalTerm)],
+    procAssumptions :: [(String, Proposition)]
 } deriving ()
 
 substTyDecls :: [(String, Proposition)] -> Proposition -> Proposition
@@ -902,9 +903,26 @@ cutLinearTheoremTac theoremName = do
         weakenedTyVarProof = L.foldl' (\proof (k) -> TyVarWeakening k proof) weakenedFnProof (S.toList (tyVarContext seq)) -- Add everything needed for the type variable context.
         weakenedRecBindProof = L.foldl' (\proof (k, b) -> RecBindingWeakening k b proof) weakenedTyVarProof (Data.Map.toList (recursiveBindings seq)) -- Add everything needed for the recursive binding context.
     newConclusion <- case concl weakenedRecBindProof of Left e -> tacError ("Could not get conclusion of the renamed variable theorem: " ++ e); Right c -> return c
-    freshGoal <- DBG.trace "NewGoal" $ createNewSubgoal (seq { linearContext = Data.Map.insert newChan (goalProposition newConclusion) (linearContext seq) })
-    DBG.trace "Use" $ useCurrentSubgoal Multiplicative . buildJustification1 freshGoal $ CutRule newRenamedProof
+    freshGoal <- createNewSubgoal (seq { linearContext = Data.Map.insert newChan (goalProposition newConclusion) (linearContext seq) })
+    useCurrentSubgoal Multiplicative . buildJustification1 freshGoal $ CutRule newRenamedProof
+    invalidateNameCache
     return $ "Linear theorem cut tactic applied: " ++ propToS (goalProposition conclusion)
+
+cutProcessAssumptionTac :: Monad m => String -> Tactic m
+cutProcessAssumptionTac n = do
+    seq <- getCurrentSequent
+    processAssumptions <- ST.gets procAssumptions
+    assumption <- case L.dropWhile (\pa -> fst pa /= n) processAssumptions of [] -> tacError "Could not find the assumed process"; (h:_) -> return h
+    curNames <- getProofStateNames
+    when (n `S.member` curNames) $ tacError ("Name clash for " ++ n)
+    let otherNames = propNames (snd assumption)
+        allNames = S.union otherNames curNames
+        freshName = getFreshName allNames
+    newChan <- getFreshVarAttempt freshName
+    freshGoal <- createNewSubgoal (seq { linearContext = Data.Map.insert newChan (snd assumption) (linearContext seq) })
+    useCurrentSubgoal Multiplicative . buildJustification1 freshGoal $ ProcessFiatRule n newChan (snd assumption)
+    invalidateNameCache
+    return "Assumed process cut in."
 
 weakenTac :: Monad m => String -> Tactic m
 weakenTac t = altTactical (replWeakenTac t) (fnWeakenTac t)
@@ -964,7 +982,8 @@ initCleanState mName =
         , newSubgoalNameList = tail allSubgoalNames
         , cachedVarNames = namesInOrder
         , stypeDecls = []
-        , fnAssumptions = [] }
+        , fnAssumptions = []
+        , procAssumptions = [] }
 
 {-| Assumes the initial  subgoal has no assumptions in -}
 -- initializeState :: String -> Subgoal m -> ProofState m
@@ -1067,6 +1086,9 @@ _STypeDecl n ty s = s { stypeDecls = (n, ty):(stypeDecls s) }
 
 _FAssumption :: String -> FunctionalTerm -> ProofState Identity -> ProofState Identity
 _FAssumption n ty s = s { fnAssumptions = (n, ty):(fnAssumptions s) }
+
+_PAssumption :: String -> Proposition -> ProofState Identity -> ProofState Identity
+_PAssumption n ty s = s { procAssumptions = (n, ty):(procAssumptions s) }
 
 _PushMessage :: ProofState Identity -> String -> ProofState Identity
 _PushMessage s m = s { outputs = m:outputs s }
