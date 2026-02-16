@@ -79,7 +79,8 @@ data ProofState m = S {
     cachedVarNames :: [String],
     stypeDecls :: [(String, Proposition)],
     fnAssumptions :: [(String, FunctionalTerm)],
-    procAssumptions :: [(String, Proposition)]
+    procAssumptions :: [(String, Proposition)],
+    errors :: [String]
 } deriving ()
 
 substTyDecls :: [(String, Proposition)] -> Proposition -> Proposition
@@ -996,7 +997,8 @@ initCleanState mName =
         , cachedVarNames = namesInOrder
         , stypeDecls = []
         , fnAssumptions = []
-        , procAssumptions = [] }
+        , procAssumptions = []
+        , errors = [] }
 
 {-| Assumes the initial  subgoal has no assumptions in -}
 -- initializeState :: String -> Subgoal m -> ProofState m
@@ -1060,7 +1062,7 @@ extractFromJustification s = do
 done :: ProofState Identity -> ProofState Identity
 done res = case runIdentity (verifyGeneral res) of
     Right (p, s) -> s { theorems = Data.Map.insert (curTheoremName s) (Theorem p (fromIntegral . L.length . Data.Map.keys $ subgoals s)) (theorems s),  outputs = ("Theorem complete: " ++ curTheoremName s):outputs res}
-    Left err -> res { outputs = ("Could not verify proof: " ++ err):outputs res }
+    Left err -> res { outputs = ("Could not verify proof: " ++ err):outputs res, errors = ("Could not verify proof: " ++ err):errors res }
 
 -- DSL
 
@@ -1109,7 +1111,7 @@ _PushMessage s m = s { outputs = m:outputs s }
 _Apply :: ProofState Identity -> Tactic Identity -> ProofState Identity
 _Apply s t = case applyTacticM (Right s) t of
     Right newS -> newS
-    Left err -> s { outputs = ("ERROR: " ++ err):outputs s}
+    Left err -> s { outputs = ("ERROR: " ++ err):outputs s, errors = err:(errors s) }
 
 {-| Tactic: Apply a tactic from the functional system to a functional subgoal. -}
 _FTac :: FT.FunctionalTactic Identity -> Tactic Identity
@@ -1138,12 +1140,12 @@ _FApply s t = case Data.Map.lookup (curSubgoal s) (subgoals s) of
                 then case FT._FGetProof newFs of
                     Right fp -> case applyTactic s (p fp) of
                         Right newS -> newS
-                        Left err -> s { outputs = ("ERROR applying tactic after functional proof: " ++ err):outputs s }
-                    Left e -> s { outputs = ("Proof completed, but justification has errors: " ++ e):outputs s }
+                        Left err -> s { outputs = ("ERROR applying tactic after functional proof: " ++ err):outputs s, errors = ("ERROR applying tactic after functional proof: " ++ err):errors s }
+                    Left e -> s { outputs = ("Proof completed, but justification has errors: " ++ e):outputs s, errors = ("Proof completed, but justification has errors: " ++ e):errors s }
                 else s { subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (newFs, p) }) (subgoals s), outputs = "Functional tactic applied.":outputs s }
-            Left e -> s { outputs = e:outputs s }
-        Nothing -> s { outputs = "No in progress functional proof to apply to in current subgoal.":outputs s }
-    Nothing -> s { outputs = ("Could not find current subgoal name: " ++ curSubgoal s ++ " in subgoals."):outputs s }
+            Left e -> s { outputs = e:outputs s, errors = e:errors s }
+        Nothing -> s { outputs = "No in progress functional proof to apply to in current subgoal.":outputs s, errors = "No in progress functional proof to apply to in current subgoal.":errors s }
+    Nothing -> s { outputs = ("Could not find current subgoal name: " ++ curSubgoal s ++ " in subgoals."):outputs s, errors = ("Could not find current subgoal name: " ++ curSubgoal s ++ " in subgoals."):errors s }
 
 -- Identity
 {-| Tactic: Apply the Id tactic linking an explicitly provided resource with an offered resource. -}
@@ -1399,27 +1401,6 @@ _Repeat = repeatTactical
 _Intros :: Monad m => Tactic m
 _Intros = _Repeat (_ImpliesR `_Alt` _ForallR `_Alt` _Forall2R)
 
--- _Switch :: Monad m => String -> Tactic m
--- _Switch newSg = do
---     validSwitch <- Data.Map.member newSg <$> ST.gets subgoals
---     if validSwitch
---     then (do
---         --ST.modify (\s -> s{curSubgoal = newSg})
---         return $ "Switched subgoal to " ++ newSg)
---     else (do
---         curState <- ST.get
---         let sgName = L.takeWhile (/= '.') newSg
---             fgName = L.tail . L.dropWhile (/= '.') $ newSg
---         newSgData <- case Data.Map.lookup sgName (subgoals curState) of
---             Nothing -> tacError "No valid switch."
---             Just res -> return res
---         (fs, tac) <- case inProgressFunctionalProof newSgData of
---             Nothing -> tacError "No valid switch."
---             Just res -> return res
---         _ <- (if Data.Map.member fgName (FT.subgoals fs) then return () else tacError "No valid switch.")
---         ST.modify (\s -> s { curSubgoal = sgName, subgoals = Data.Map.insert sgName (newSgData { inProgressFunctionalProof = Just (fs { FT.curSubgoal = fgName }, tac) }) (subgoals s) })
---         return $ "Switched subgoal to " ++ newSg)
-
 _Defer :: Monad m => ProofState m -> ProofState m
 _Defer curS =
     let
@@ -1446,19 +1427,6 @@ _PrintTheorems s = let
     --localTs = printTs "" "" (theorems s)
     --fullMessage = Data.Map.foldrWithKey (\k v acc -> acc ++ )
     in s { outputs = (L.intercalate "\n" [modulePrint, localTs]):outputs s }
-
-_LoadModule :: Monad m => ProofState m -> ProofState m -> ProofState m
-_LoadModule curState moduleData = curState {
-        loadedModules = Data.Map.insert (curModuleName moduleData) (theorems moduleData) (loadedModules curState),
-        outputs = ("Loaded module: " ++ curModuleName moduleData):outputs curState
-    }
-
-_SaveModule :: Monad m => ProofState m -> String -> ProofState m
-_SaveModule curState mName = curState {
-    theorems = Data.Map.empty,
-    loadedModules = Data.Map.insert mName (theorems curState) (loadedModules curState),
-    outputs = ("Saved theorems as module: " ++ mName):outputs curState
-}
 
 _TestDisallowedVars :: Monad m => Tactic m
 _TestDisallowedVars = do

@@ -20,6 +20,7 @@ import Data.Map (toList)
 import Data.Time (formatTime, defaultTimeLocale)
 import Numeric (showFFloat)
 import Util (namesInOrder)
+import Control.Monad (unless)
 
 -- ==========================================
 -- State Initialization
@@ -39,7 +40,8 @@ emptyState = S {
     cachedVarNames = namesInOrder,
     stypeDecls = [],
     fnAssumptions = [],
-    procAssumptions = []
+    procAssumptions = [],
+    errors = []
 }
 
 data DiagnosticInfo = DiagnosticInfo {
@@ -141,7 +143,7 @@ main = do
             result <- runProofScript fname content
             case result of
                 Left e -> putStrLn e
-                Right fs -> putStrLn $ unlines (reverse (outputs fs))
+                Right fs -> putStrLn (unlines (reverse (outputs fs))) >> unless (null (errors fs)) (putStrLn "Errors:" >> putStrLn (unlines (reverse (errors fs))))
 
         runDiagnostics :: [String] -> [DiagnosticInfo] -> IO ()
         runDiagnostics [] infos = printInfos (reverse infos)

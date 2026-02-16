@@ -103,14 +103,10 @@ stype bookBuyerSession = "forall sellerVal:(Pi b1:int. Pi b2:int. Type 1).
 theorem bookAuction consumes "bookOwnerSession" "bookBuyerSession" "englishSession" "postOfficeSession": "1"
 apply ExistsLA+
 apply Forall2L d "$delivery book bookForSale"
-apply TensorL a
-apply FTermL f
 apply ForallL d
 apply Exact "int"
-apply ExistsL a
 apply ForallL d
 apply Exact "startPrice"
-apply ExistsL a
 apply ForallL d
 apply Exact "bidVal"
 apply ForallL d
