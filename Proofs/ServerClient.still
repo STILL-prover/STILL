@@ -41,5 +41,3 @@ apply CutTheorem bclient
 apply UnitLA+
 apply UnitR
 done
-
-print_theorems
