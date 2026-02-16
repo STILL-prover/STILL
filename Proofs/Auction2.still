@@ -125,16 +125,10 @@ apply UnitR
 done
 
 extract bookAuction
-
-
-{-theorem testPost: "forall myBook:book . $delivery book myBook"
-apply CutProc postOffice
-apply ForallR
-apply ForallLA
-apply Exact "book"
-apply ForallLA
-apply Exact "myBook"
-apply IdA
-done
-
-extract testPost-}
+ {-
+ (ν a) (bookOwner(a) |
+    (ν c) (bookBuyer(c) |
+        (ν k) (k(ItemType).k(bid).k(zeroB).k(validNewB).k(currency).k(a).k(c).k(firstB).k(firstValid).k(d).k(e).(corec AUC(item, ownerC, curB, winnerC, oldB, lastB, curValid).k.case(inl: k(newB).k(nextValid).k(h).k(i).((ν j) winnerC[j].(j.inr;[curB <-> j] | AUC(item, ownerC, h, i, lastB, newB, nextValid))), inr: ownerC[lastB].((ν f) ownerC[f].([curB <-> f] | (ν g) winnerC[g].(g.inl;[item <-> g] | 0))) )) (a, c, d, e, zeroB, firstB, firstValid) |
+            (ν d) (postOffice(d) |
+                a(startPrice).a(bidVal).a(bookForSale).k[$((delivery book) bookForSale)].k[int].k[startPrice].k[bidVal].k[usd].d[book].d[bookForSale].((ν e) k[e].([d <-> e] | (ν f) k[f].([a <-> f] | c[bidVal].c(buyerAmount).k[buyerAmount].c[startPrice].c(buyerValid).k[buyerValid].c(g).((ν h) k[h].([g <-> h] | c[bookForSale].((ν i) k[i].(i(j).((ν l) c[l].(j.case(inl: l.inr;[j <-> l], inr: l.inl;[j <-> l] ) | 0)) | k.inr;0)))))))))))
+ -}

@@ -927,8 +927,21 @@ cutProcessAssumptionTac n = do
 weakenTac :: Monad m => String -> Tactic m
 weakenTac t = altTactical (replWeakenTac t) (fnWeakenTac t)
 
-exactTac :: Monad m => Process -> Tactic m
-exactTac p = return ""
+byProcessTac :: Monad m => Process -> Tactic m
+byProcessTac p = do
+    seq <- getCurrentSequent
+    curSg <- ST.gets curSubgoal
+    curS <- ST.get
+    let
+        unavailableVars = getUnavailableVarsForSubgoal curSg curS
+        typeCheckSeq = seq { linearContext = S.foldl (flip Data.Map.delete) (linearContext seq) unavailableVars}
+    procProof <- case typeCheckProcessUnderSequent seq p of Right res -> return res; Left e -> tacError e
+    case verifyProofM procProof of Right True -> return (); Left e -> tacError ("Could not verify proof derived from process: " ++ e); _ -> tacError "Error verifying type derivation."
+    newSeq <- case concl procProof of Right newSeq -> return newSeq; Left e -> tacError ("Error getting conclusion of type derivation: " ++ e)
+    unless (newSeq == seq) $ tacError ("Sequents are not the same in subgoal and derivation: " ++ seqToS seq ++ "\n\n" ++ seqToS newSeq) -- TODO allow subset of linear context.
+    useCurrentSubgoal Trunk . buildJustification0 $ procProof
+    return "Process is the correct type."
+
 
 holeTac :: Monad m => Tactic m
 holeTac = do

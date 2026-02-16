@@ -6,5 +6,8 @@
         "args": ["-NoExit", "/c", "chcp 65001"]
         }
     },
-    "terminal.integrated.defaultProfile.windows": "PowerShell (UTF-8)"
+    "terminal.integrated.defaultProfile.windows": "PowerShell (UTF-8)",
+    "files.watcherExclude": {
+        "**/target": true
+    }
 }

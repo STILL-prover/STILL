@@ -10,13 +10,13 @@ import SessionTypes.Tactics
 import Data.List
 import Data.Map (Map)
 import qualified Data.Map as Map
-import PropParser (proposition, fTerm)
+import PropParser (proposition, fTerm, process)
 import Data.Functor ((<&>))
 import ECC.Tactics (FunctionalTactic, _FAx, _FVarA, _FVar, _FRepeat, _FAlt, _FThen, _FPi, _FLambda, _FApp, _FSigma, _FPair, _FProj1, _FProj2, _FCumulativity, _FSimp, _FExactKnown, _FExact, _FSkip)
 import DisplayUtil (printCommands)
 
 -- ==========================================
--- 1. Parser Entry Points
+-- Parser Entry Points
 -- ==========================================
 
 -- Parses a full file: Optional Module Header -> Imports -> Commands
@@ -152,6 +152,7 @@ parseTacticAtom = parens parseTacticExpression
     <|> parseCutRepl
     <|> parseNuR
     <|> parseTyVar
+    <|> parseByProc
     <|> (_FTac <$> parseFunctionalTacticsExpression)
 
 parseFunctionalTacticsExpression :: Parser (FunctionalTactic Identity)
@@ -285,16 +286,20 @@ parseNuR :: Parser (Tactic Identity)
 parseNuR = do
     reserved "NuR"
     a <- identifier
-    bs <- parens $ sepBy identifier (reservedOp ",")
-    cs <- parens $ sepBy identifier (reservedOp ",")
+    bs <- parens $ commaSep identifier
+    cs <- parens $ commaSep identifier
     return (_NuR a bs cs)
 
 parseTyVar :: Parser (Tactic Identity)
 parseTyVar = do
     reserved "TyVar"
     a <- identifier
-    bs <- parens $ sepBy identifier (reservedOp ",")
+    bs <- parens $ commaSep identifier
     return (_TyVar a bs)
+
+parseByProc = do
+    reserved "ExactPi"
+    byProcessTac <$> quotes process
 
 -- ==========================================
 -- Complex functional tactics
@@ -386,3 +391,4 @@ reservedOp = Tok.reservedOp lexer
 whiteSpace = Tok.whiteSpace lexer
 braces     = Tok.braces lexer
 quotes     = between (reservedOp "\"") (reservedOp "\"")
+commaSep   = Tok.commaSep lexer
