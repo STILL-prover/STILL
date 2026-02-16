@@ -11,7 +11,7 @@ import qualified Data.Map as Map
 import qualified Data.Set as S
 import Control.Monad.Identity (Identity, runIdentity)
 
-import SessionTypes.Tactics (ProofState(..), Theorem (proofObject, numberOfSubgoals), allSubgoalNames) -- Ensure you import necessary types
+import SessionTypes.Tactics (ProofState(..), Theorem (proofObject, numberOfSubgoals), allSubgoalNames)
 import SessionTypes.Kernel
 import STILLParser (parseFile, parseStringCommand)
 import DisplayUtil

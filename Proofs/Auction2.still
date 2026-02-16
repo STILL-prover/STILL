@@ -67,14 +67,10 @@ apply CutTheorem english2
 apply CutProc postOffice
 apply ExistsLA+
 apply Forall2L k "$delivery book bookForSale"
--- apply TensorLA
--- apply FTermL f
 apply ForallL k
 apply Exact "int"
--- apply ExistsL a
 apply ForallL k
 apply Exact "startPrice"
--- apply ExistsL a
 apply ForallL k
 apply Exact "bidVal"
 apply ForallL k
