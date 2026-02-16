@@ -20,17 +20,17 @@ fcToS = M.foldlWithKey (\acc k t -> acc ++ k ++ ":" ++ ftToS t) ""
 ftseqToS :: FT.FunctionalTacticsSequent -> String
 ftseqToS = ftseqToSHelper
 
-fsgToS :: FT.Subgoal m -> String
+fsgToS :: FT.Subgoal -> String
 fsgToS sg = ftseqToS (FT.sequent sg)
 
-sgToS :: Subgoal m -> String
+sgToS :: Subgoal -> String
 sgToS sg = seqToS (sequent sg)
 
-sgsToS :: [Subgoal m] -> String
+sgsToS :: [Subgoal] -> String
 sgsToS (sg:sgs) = sgToS sg ++ "\n" ++ sgsToS sgs
 sgsToS [] = ""
 
-showFiltered :: S.Set String -> Subgoal m -> String
+showFiltered :: S.Set String -> Subgoal -> String
 showFiltered reservedVars sg =
     let
         actualSequent = (sequent sg) {
@@ -66,16 +66,6 @@ mainPrinter (Right s) =
         in
             putStrLn $ messagePrinter ++ L.foldl' (\acc kvp -> acc ++ "\n" ++ uncurry subgoalPrinter kvp) "" orderedSubgoals
 mainPrinter (Left e) = putStrLn $ "Error occured: " ++ e
-
-instance {-# OVERLAPPING #-} GhciPrint (Either String (ProofState m)) where
-    ghciPrint = mainPrinter
-
-instance {-# OVERLAPPING #-} GhciPrint (Either String Process) where
-    ghciPrint (Right p) = putStrLn . pToS $ p
-    ghciPrint (Left e) = putStrLn $ "Error occured: " ++ e
-
-instance {-# OVERLAPPING #-} GhciPrint (ProofState m) where
-    ghciPrint s = mainPrinter (Right s)
 
 getGoodLines :: [(String, String, String)] -> [String] -> [(String, String, String)]
 getGoodLines acc (h1:h2:h3:rest) = if L.take 10 h1 == "{-| Tactic" then getGoodLines ((h1,h2,h3):acc) rest else getGoodLines acc (h2:h3:rest)

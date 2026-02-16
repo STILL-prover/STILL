@@ -26,7 +26,7 @@ import Control.Monad (unless)
 -- State Initialization
 -- ==========================================
 
-emptyState :: ProofState Identity
+emptyState :: ProofState
 emptyState = S {
     subgoals = Map.empty,
     outputs = ["STILL Prover Initialized."],
@@ -62,7 +62,7 @@ data DiagnosticInfo = DiagnosticInfo {
 -- ==========================================
 
 -- Parses and runs a file, handling imports recursively
-runProofScript :: FilePath -> String -> IO (Either String (ProofState Identity))
+runProofScript :: FilePath -> String -> IO (Either String ProofState)
 runProofScript fname content = do
     let res = parseFile fname content
     case res of
@@ -78,7 +78,7 @@ runProofScript fname content = do
             return . Right $ finalState -- unlines (reverse (outputs finalState))
 
 -- Recursively load imported modules
-loadImports :: [String] -> ProofState Identity -> IO (ProofState Identity)
+loadImports :: [String] -> ProofState -> IO ProofState
 loadImports [] s = return s
 loadImports (m:ms) s = do
     if Map.member m (loadedModules s)
@@ -206,7 +206,7 @@ main = do
             -- Print Data
             mapM_ (putStrLn . formatRow) rows
 
-getDiagnostics :: UTCTime -> UTCTime -> ProofState m -> DiagnosticInfo
+getDiagnostics :: UTCTime -> UTCTime -> ProofState -> DiagnosticInfo
 getDiagnostics st et s = DiagnosticInfo {
     moduleName = curModuleName s,
     executionTime = realToFrac $ diffUTCTime et st,
@@ -230,7 +230,7 @@ startRepl fnames = do
     putStrLn "--- STILL Interactive Mode (Type :q to quit) ---"
     replLoop initState
 
-replLoop :: ProofState Identity -> IO ()
+replLoop :: ProofState -> IO ()
 replLoop currentState = do
     putStr "π> "
     done <- isEOF

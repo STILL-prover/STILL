@@ -20,10 +20,10 @@ import DisplayUtil (printCommands)
 -- ==========================================
 
 -- Parses a full file: Optional Module Header -> Imports -> Commands
-parseFile :: String -> String -> Either ParseError ([String], [ProofState Identity -> ProofState Identity])
+parseFile :: String -> String -> Either ParseError ([String], [ProofState -> ProofState])
 parseFile fileName content = parse parseFileStructure fileName content
 
-parseFileStructure :: Parser ([String], [ProofState Identity -> ProofState Identity])
+parseFileStructure :: Parser ([String], [ProofState -> ProofState])
 parseFileStructure = do
     whiteSpace
     -- Optional: "module Name where"
@@ -38,14 +38,14 @@ parseFileStructure = do
     return (imps, (\s -> (s { curModuleName = moduleName })):cmds)
 
 -- Single command parser for REPL
-parseStringCommand :: String -> Either ParseError (ProofState Identity -> ProofState Identity)
+parseStringCommand :: String -> Either ParseError (ProofState -> ProofState)
 parseStringCommand = parse (whiteSpace >> cmd <* eof) ""
 
 -- ==========================================
 -- 2. Command Parsers
 -- ==========================================
 
-cmd :: Parser (ProofState Identity -> ProofState Identity)
+cmd :: Parser (ProofState -> ProofState)
 cmd = parseTheorem
   <|> parseTypeDec
   <|> try (parseProcessAssumption)
@@ -56,17 +56,17 @@ cmd = parseTheorem
   <|> parsePrintTheorems
   <|> parseExtract
 
-parseHelp :: Parser (ProofState Identity -> ProofState Identity)
+parseHelp :: Parser (ProofState -> ProofState)
 parseHelp = do
     reserved "help"
     return (\s -> s { outputs = printCommands:outputs s})
 
-parsePrintTheorems :: Parser (ProofState Identity -> ProofState Identity)
+parsePrintTheorems :: Parser (ProofState -> ProofState)
 parsePrintTheorems = do
     reserved "print_theorems"
     return _PrintTheorems
 
-parseExtract :: Parser (ProofState Identity -> ProofState Identity)
+parseExtract :: Parser (ProofState -> ProofState)
 parseExtract = do
     reserved "extract"
     tName <- identifier
@@ -77,7 +77,7 @@ parseImports = do
     reserved "imports"
     sepBy identifier whiteSpace
 
-parseTypeDec :: Parser (ProofState Identity -> ProofState Identity)
+parseTypeDec :: Parser (ProofState -> ProofState)
 parseTypeDec = do
     reserved "stype"
     i <- identifier
@@ -85,7 +85,7 @@ parseTypeDec = do
     ty <- quotes proposition
     return (_STypeDecl i ty)
 
-parseAssumption :: Parser (ProofState Identity -> ProofState Identity)
+parseAssumption :: Parser (ProofState -> ProofState)
 parseAssumption = do
     reserved "assume"
     resI <- identifier
@@ -93,7 +93,7 @@ parseAssumption = do
     resTy <- quotes fTerm
     return (_FAssumption resI resTy)
 
-parseProcessAssumption :: Parser (ProofState Identity -> ProofState Identity)
+parseProcessAssumption :: Parser (ProofState -> ProofState)
 parseProcessAssumption = do
     reserved "assume"
     reserved "process"
@@ -102,7 +102,7 @@ parseProcessAssumption = do
     resTy <- quotes proposition
     return (_PAssumption resI resTy)
 
-parseTheorem :: Parser (ProofState Identity -> ProofState Identity)
+parseTheorem :: Parser (ProofState -> ProofState)
 parseTheorem = do
     reserved "theorem"
     tName <- identifier
@@ -111,11 +111,11 @@ parseTheorem = do
     p <- quotes proposition
     return (\s -> _Theorem s props tName p)
 
-parseProvingCommand :: Parser (ProofState Identity -> ProofState Identity)
+parseProvingCommand :: Parser (ProofState -> ProofState)
 parseProvingCommand = parseApply
     <|> parseDefer
 
-parseApply :: Parser (ProofState Identity -> ProofState Identity)
+parseApply :: Parser (ProofState -> ProofState)
 parseApply = do
     reserved "apply"
     t <- parseTacticExpression
@@ -125,7 +125,7 @@ parseDefer = do
     reserved "defer"
     return _Defer
 
-parseDone :: Parser (ProofState Identity -> ProofState Identity)
+parseDone :: Parser (ProofState -> ProofState)
 parseDone = do
     reserved "done"
     return _Done
@@ -134,14 +134,14 @@ parseDone = do
 -- 3. Tactic Parsers
 -- ==========================================
 
-parseTacticExpression :: Parser (Tactic Identity)
+parseTacticExpression :: Parser (Tactic)
 parseTacticExpression = Ex.buildExpressionParser table parseTacticAtom
   where
     table = [[Ex.Postfix (do { reservedOp "+"; return _Repeat})],
         [Ex.Infix (do {reservedOp "<|>"; return _Alt}) Ex.AssocLeft],
         [Ex.Infix (do { reservedOp ";"; return _Then }) Ex.AssocLeft]]
 
-parseTacticAtom :: Parser (Tactic Identity)
+parseTacticAtom :: Parser (Tactic)
 parseTacticAtom = parens parseTacticExpression
     <|> parseSimpleTactics
     <|> parseSingleStringArgTactics
@@ -155,14 +155,14 @@ parseTacticAtom = parens parseTacticExpression
     <|> parseByProc
     <|> (_FTac <$> parseFunctionalTacticsExpression)
 
-parseFunctionalTacticsExpression :: Parser (FunctionalTactic Identity)
+parseFunctionalTacticsExpression :: Parser (FunctionalTactic)
 parseFunctionalTacticsExpression = Ex.buildExpressionParser table parseFunctionalTacticAtom
   where
     table = [[Ex.Postfix (do { reservedOp "+"; return _FRepeat})],
         [Ex.Infix (do {reservedOp "<|>"; return _FAlt}) Ex.AssocLeft],
         [Ex.Infix (do { reservedOp ";"; return _FThen }) Ex.AssocLeft]]
 
-parseFunctionalTacticAtom :: Parser (FunctionalTactic Identity)
+parseFunctionalTacticAtom :: Parser (FunctionalTactic)
 parseFunctionalTacticAtom = parens parseFunctionalTacticsExpression
     <|> parseSimpleFunctionalTactics
     <|> parseSingleStringArgFunctionalTactics
@@ -176,19 +176,19 @@ parseFunctionalTacticAtom = parens parseFunctionalTacticsExpression
     <|> parseSimp
     <|> parseExact
 
-parseSimpleTactics :: Parser (Tactic Identity)
+parseSimpleTactics :: Parser (Tactic)
 parseSimpleTactics = choice $ (\(name, func) -> reserved name >> return func) <$> simpleTactics
 
-parseSimpleFunctionalTactics :: Parser (FunctionalTactic Identity)
+parseSimpleFunctionalTactics :: Parser (FunctionalTactic)
 parseSimpleFunctionalTactics = choice $ (\(name, func) -> reserved name >> return func) <$> simpleFunctionalTactics
 
-parseSingleStringArgTactics :: Parser (Tactic Identity)
+parseSingleStringArgTactics :: Parser (Tactic)
 parseSingleStringArgTactics = choice $ (\(name, f) -> (reserved name >> identifier) <&> f) <$> singleStringArgTactics
 
-parseSingleStringArgFunctionalTactics :: Parser (FunctionalTactic Identity)
+parseSingleStringArgFunctionalTactics :: Parser (FunctionalTactic)
 parseSingleStringArgFunctionalTactics = choice $ (\(name, f) -> (reserved name >> identifier) <&> f) <$> singleStringArgFunctionalTactics
 
-simpleTactics :: [(String, Tactic Identity)]
+simpleTactics :: [(String, Tactic)]
 simpleTactics =
     [ ("IdA", idATac)
     , ("LiftLA", functionalTermLeftTacA)
@@ -219,7 +219,7 @@ simpleTactics =
     , ("Skip", _Skip)
     ]
 
-singleStringArgTactics :: [(String, String -> Tactic Identity)]
+singleStringArgTactics :: [(String, String -> Tactic)]
 singleStringArgTactics =
     [ ("Id", _Id)
     , ("TensorL", tensorLeftTac)
@@ -240,49 +240,49 @@ singleStringArgTactics =
     , ("CutProc", cutProcessAssumptionTac)
     ]
 
-simpleFunctionalTactics :: [(String, FunctionalTactic Identity)]
+simpleFunctionalTactics :: [(String, FunctionalTactic)]
 simpleFunctionalTactics = [("Ax", _FAx)
     --, ("WF", _FWF)
     , ("VarA", _FVarA)
     , ("Lambda", _FLambda)
     , ("FSkip", _FSkip)]
 
-singleStringArgFunctionalTactics :: [(String, String -> FunctionalTactic Identity)]
+singleStringArgFunctionalTactics :: [(String, String -> FunctionalTactic)]
 singleStringArgFunctionalTactics = [("Var", _FVar)]
 
-parseCopyTac :: Parser (Tactic Identity)
+parseCopyTac :: Parser (Tactic)
 parseCopyTac = do
     reserved "Copy"
     a <- identifier
     b <- optionMaybe identifier
     return (_Copy a b)
 
-parseForall2L :: Parser (Tactic Identity)
+parseForall2L :: Parser (Tactic)
 parseForall2L = do
     reserved "Forall2L"
     a <- identifier
     b <- quotes proposition
     return (_Forall2L a b)
 
-parseExists2R :: Parser (Tactic Identity)
+parseExists2R :: Parser (Tactic)
 parseExists2R = do
     reserved "Exists2R"
     b <- quotes proposition
     return (_Exists2R b)
 
-parseCut :: Parser (Tactic Identity)
+parseCut :: Parser (Tactic)
 parseCut = do
     reserved "Cut"
     b <- quotes proposition
     return (_Cut b)
 
-parseCutRepl :: Parser (Tactic Identity)
+parseCutRepl :: Parser (Tactic)
 parseCutRepl = do
     reserved "CutRepl"
     b <- quotes proposition
     return (_CutRepl b)
 
-parseNuR :: Parser (Tactic Identity)
+parseNuR :: Parser (Tactic)
 parseNuR = do
     reserved "NuR"
     a <- identifier
@@ -290,7 +290,7 @@ parseNuR = do
     cs <- parens $ commaSep identifier
     return (_NuR a bs cs)
 
-parseTyVar :: Parser (Tactic Identity)
+parseTyVar :: Parser (Tactic)
 parseTyVar = do
     reserved "TyVar"
     a <- identifier
@@ -305,13 +305,13 @@ parseByProc = do
 -- Complex functional tactics
 -- ==========================================
 
-parsePi :: Parser (FunctionalTactic Identity)
+parsePi :: Parser (FunctionalTactic)
 parsePi = do
     reserved "Pi"
     a <- optionMaybe $ quotes fTerm
     return (_FPi a)
 
-parseApp :: Parser (FunctionalTactic Identity)
+parseApp :: Parser (FunctionalTactic)
 parseApp = do
     reserved "App"
     a <- identifier
@@ -319,45 +319,45 @@ parseApp = do
     c <- optionMaybe $ quotes fTerm
     return (_FApp a b c)
 
-parseSigma :: Parser (FunctionalTactic Identity)
+parseSigma :: Parser (FunctionalTactic)
 parseSigma = do
     reserved "Sigma"
     a <- optionMaybe $ quotes fTerm
     return (_FSigma a)
 
-parsePair :: Parser (FunctionalTactic Identity)
+parsePair :: Parser (FunctionalTactic)
 parsePair = do
     reserved "Pair"
     a <- optionMaybe $ quotes fTerm
     b <- optionMaybe $ quotes fTerm
     _FPair a b <$> integer
 
-parseProj1 :: Parser (FunctionalTactic Identity)
+parseProj1 :: Parser (FunctionalTactic)
 parseProj1 = do
     reserved "Proj1"
     a <- identifier
     _FProj1 a <$> quotes fTerm
 
-parseProj2 :: Parser (FunctionalTactic Identity)
+parseProj2 :: Parser (FunctionalTactic)
 parseProj2 = do
     reserved "Proj2"
     a <- identifier
     b <- quotes fTerm
     _FProj2 a b <$> optionMaybe (quotes fTerm)
 
-parseCummulativity :: Parser (FunctionalTactic Identity)
+parseCummulativity :: Parser (FunctionalTactic)
 parseCummulativity = do
     reserved "Cummulativity"
     a <- quotes fTerm
     _FCumulativity a <$> integer
 
-parseSimp :: Parser (FunctionalTactic Identity)
+parseSimp :: Parser (FunctionalTactic)
 parseSimp = do
     reserved "Simp"
     i <- optionMaybe integer
     return $ case i of Nothing -> _FSimp 100; Just n -> _FSimp n
 
-parseExact :: Parser (FunctionalTactic Identity)
+parseExact :: Parser (FunctionalTactic)
 parseExact = do
     reserved "Exact"
     a <- optionMaybe $ quotes fTerm
