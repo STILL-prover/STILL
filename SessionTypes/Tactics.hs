@@ -86,6 +86,9 @@ substTyDecls :: [(String, Proposition)] -> Proposition -> Proposition
 substTyDecls [] p = p
 substTyDecls ((n,ty):rest) p = substTyDecls rest (substVarType p ty n)
 
+substTyDeclsM :: Proposition -> ProverState Proposition
+substTyDeclsM p = (`substTyDecls` p) <$> ST.gets stypeDecls
+
 curSubgoal :: ProofState -> String
 curSubgoal s = if L.null (openGoalStack s) then "" else head (openGoalStack s)
 
@@ -710,9 +713,10 @@ forallRight2Tac = do
         _ -> tacError "Cannot apply to non-forall second order proposition."
 
 forallLeft2Tac :: String -> Proposition -> Tactic
-forallLeft2Tac x b = do
+forallLeft2Tac x bWithDecls = do
     seq <- getCurrentSequent
-    _ <- case wellFormedType (((tyVarContext seq) `S.union` (S.fromList ((\v -> bindingTyVar v) . snd . snd <$> Data.Map.toList (recursiveBindings seq))))) b of Left e ->tacError (propToS b ++ " is not a well-formed type: " ++ e) ; Right () -> return ()
+    b <- substTyDeclsM bWithDecls
+    _ <- case wellFormedType ((tyVarContext seq) `S.union` (S.fromList ((\v -> bindingTyVar v) . snd . snd <$> Data.Map.toList (recursiveBindings seq)))) b of Left e ->tacError (propToS b ++ " is not a well-formed type: " ++ e) ; Right () -> return ()
     case Data.Map.lookup x $ linearContext seq of
         Just (Forall2 y p) -> do
             reserveVars [x]
@@ -725,8 +729,9 @@ forallLeft2Tac x b = do
         _ -> tacError $ "Could not find " ++ x ++ " in the linear context."
 
 existsRight2Tac :: Proposition -> Tactic
-existsRight2Tac b = do
+existsRight2Tac bWithDecls = do
     seq <- getCurrentSequent
+    b <- substTyDeclsM bWithDecls
     _ <- case wellFormedType (((tyVarContext seq) `S.union` (S.fromList ((\v -> bindingTyVar v) . snd . snd <$> Data.Map.toList (recursiveBindings seq))))) b of Left e ->tacError (propToS b ++ " is not a well-formed type: " ++ e) ; Right () -> return ()
     case goalProposition seq of
         Exists2 y p -> do
@@ -755,8 +760,9 @@ existsLeft2TacA :: Tactic
 existsLeft2TacA = leftTacA existsLeft2Tac (\case Exists2 {} -> True; _ -> False)
 
 cutTac :: Proposition -> Tactic
-cutTac p = do
+cutTac pWithDecls = do
     seq <- getCurrentSequent
+    p <- substTyDeclsM pWithDecls
     --reserveVars [channel seq]
     x <- getFreshVar
     zName <- lookupVarName $ channel seq
@@ -767,8 +773,9 @@ cutTac p = do
     return "Cut tactic applied."
 
 cutReplicationTac :: Proposition -> Tactic
-cutReplicationTac p = do
+cutReplicationTac pWithDecls = do
     seq <- getCurrentSequent
+    p <- substTyDeclsM pWithDecls
     --reserveVars [channel seq]
     x <- getFreshVar
     u <- getFreshVar
@@ -999,18 +1006,6 @@ initCleanState mName =
         , procAssumptions = []
         , errors = [] }
 
-{-| Assumes the initial  subgoal has no assumptions in -}
--- initializeState :: String -> Subgoal -> ProofState
--- initializeState name goal =
---     let
---         channelVar = (channel . sequent $ goal)
---         linearVars = Data.Map.keys . linearContext . sequent $ goal
---         unrestrictedVars = Data.Map.keys . unrestrictedContext . sequent $ goal
---         fnVars = Data.Map.keys . fnContext . sequent $ goal
---         allVars = channelVar : (linearVars ++ unrestrictedVars ++ fnVars)
---     in
---         S { subgoals = singleton "?a" goal, curSubgoal = "?a", uniqueNameVars = Data.Map.fromList $ (\x -> (x, x)) <$> allVars, usedSubgoalNames = S.singleton "?a", outputs = [], curTheoremName = name, theorems = Data.Map.empty, loadedModules = Data.Map.empty }
-
 runProofState :: ProverState a -> ProofState -> (Either String (a, ProofState))
 runProofState a s = runIdentity $ E.runExceptT $ ST.runStateT a s
 
@@ -1088,7 +1083,7 @@ _FAssumption :: String -> FunctionalTerm -> ProofState -> ProofState
 _FAssumption n ty s = s { fnAssumptions = (n, ty):(fnAssumptions s) }
 
 _PAssumption :: String -> Proposition -> ProofState -> ProofState
-_PAssumption n ty s = s { procAssumptions = (n, ty):(procAssumptions s) }
+_PAssumption n ty s = s { procAssumptions = (n, substTyDecls (stypeDecls s) ty):(procAssumptions s) }
 
 _PushMessage :: ProofState -> String -> ProofState
 _PushMessage s m = s { outputs = m:outputs s }
