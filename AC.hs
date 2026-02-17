@@ -40,7 +40,7 @@ axiomOfChoiceTermProp aTy bTy = FS.Pi "A" aTy
                             (FS.App (FS.App (FS.Var "P") (FS.Var "x")) (FS.App (FS.Var "f") (FS.Var "x"))))))))
 
 axiomOfChoiceProof = let
-    t = _Theorem (_Init "AC") "axiomOfChoice" AC.axiomOfChoice
+    t = _Theorem (_Init "AC") [] "axiomOfChoice" AC.axiomOfChoice
     s1 = _Apply t (_Repeat (_ForallR `_Alt` _ImpliesR `_Alt` _FTermL "a"))
     s2 = _Apply s1 _ExistsR
     f = Lambda "__4" (Var "A") (Proj1 (App (Var "a") (Var "__4")))
@@ -52,7 +52,7 @@ axiomOfChoiceProof = let
     in _Done s7
 
 axiomOfChoiceInOnlyECC = let
-    t = _Theorem (_Init "ACF") "axiomOfChoiceFunctional" $ AC.axiomOfChoiceFunctional (Type 1) (Type 1)
+    t = _Theorem (_Init "ACF") [] "axiomOfChoiceFunctional" $ AC.axiomOfChoiceFunctional (Type 1) (Type 1)
     s1 = _Apply t _FTermR
     s2 = _FApply s1 (FT._FRepeat FT._FLambda)
     f = Lambda "__4" (Var "A") (Proj1 (App (Var "__3") (Var "__4")))
@@ -66,7 +66,7 @@ axiomOfChoiceInOnlyECC = let
 
 axiomOfChoiceTermProof :: Bool
 axiomOfChoiceTermProof = let
-    t = Right $ FT._FTheorem Data.Map.empty (AC.axiomOfChoiceTermProp (Type 1) (Type 1)) S.empty :: Either String (FT.ProofState Identity)
+    t = Right $ FT._FTheorem Data.Map.empty (AC.axiomOfChoiceTermProp (Type 1) (Type 1)) S.empty :: Either String (FT.ProofState)
     s2 = FT._FApply t (FT._FRepeat FT._FLambda)
     f = Lambda "__4" (Var "A") (Proj1 (App (Var "__3") (Var "__4")))
     f2 = Lambda "x" (Var "A") (Proj2 (App (Var "__3") (Var "x")))

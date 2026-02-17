@@ -1,4 +1,4 @@
-module PropParser where
+module Parser.TermParsers where
 
 import Text.Parsec
 import Text.Parsec.String (Parser)

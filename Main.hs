@@ -13,7 +13,7 @@ import Control.Monad.Identity (Identity, runIdentity)
 
 import SessionTypes.Tactics (ProofState(..), Theorem (proofObject, numberOfSubgoals), allSubgoalNames)
 import SessionTypes.Kernel
-import STILLParser (parseFile, parseStringCommand)
+import Parser.CmdParsers (parseFile, parseStringCommand)
 import DisplayUtil
 import Data.List (intercalate, transpose, foldl')
 import Data.Map (toList)

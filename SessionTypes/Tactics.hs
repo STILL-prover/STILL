@@ -172,17 +172,6 @@ getFreshSubgoalName = do
     ST.modify (\s -> s { newSubgoalNameList = tail (newSubgoalNameList s)})
     return (head newNames)
 
--- getFreshSubgoalName :: ProverState String
--- getFreshSubgoalName = do
---     newNamesList <- ST.gets newSubgoalNameList
---     if newNamesList == []
---     then (do
---         ST.modify (\s -> s { newSubgoalNameList = (\a -> a ++ show (1 + newlyCreatedSubgoalNameLists s)) <$> allSubgoalNames, newlyCreatedSubgoalNameLists = (1 + newlyCreatedSubgoalNameLists s) })
---         getFreshSubgoalName)
---     else (do
---         ST.modify (\s -> s { newSubgoalNameList = L.drop 1 (newSubgoalNameList s)})
---         return (head newNamesList))
-
 invalidateNameCache :: ProverState ()
 invalidateNameCache = ST.modify (\s -> s { cachedProofStateNames = S.empty })
 
@@ -613,16 +602,8 @@ plusLeftTac x = do
     case Data.Map.lookup x $ linearContext seq of
         Just (Plus p1 p2) -> do
             xName <- lookupVarName x
-            --freshXRight <- getFreshVarNamed xName
             reserveVars [x]
-            --let restLC = Data.Map.delete x $ linearContext seq
-            -- copiedLinearContext <- Data.Map.fromList <$> mapM (\(k, v) -> case Data.Map.lookup k allUniqueNameVars of
-            --     Just n -> (do
-            --         newName <- getFreshVarNamed n
-            --         return (newName, v))
-            --     Nothing -> tacError $ "Could not find variable name for " ++ k) (Data.Map.toList restLC)
             zName <- lookupVarName $ channel seq
-            --freshZRight <- getFreshVarNamed zName
             leftGoal <- createNewSubgoal $ seq { linearContext = Data.Map.insert x p1 (linearContext seq) }
             rightGoal <- createNewSubgoal $ seq { linearContext = Data.Map.insert x p2 (linearContext seq) }
             useCurrentSubgoal Additive $ buildJustification2 leftGoal rightGoal $ PlusLeftRule xName
@@ -638,11 +619,7 @@ forallRightTac = do
     seq <- getCurrentSequent
     case goalProposition seq of
         Forall x t p -> do
-            --reserveVars [channel seq]
             zName <- lookupVarName $ channel seq
-            --freshZ <- getFreshVarNamed zName
-            -- freshX <- getFreshVarAttempt x -- TODO do we need this actually?
-            -- let newP = substVarProp p freshX x
             newGoal <- createNewSubgoal $ seq { fnContext = Data.Map.insert x t $ fnContext seq, goalProposition = p }
             useCurrentSubgoal Trunk . buildJustification1 newGoal $ ForallRightRule x
             return "Forall right side tactic applied."
@@ -670,9 +647,7 @@ existsRightTac fp = if verifyFunctionalProof fp then (do
     fpConcl <- liftEither $ functionalConcl fp
     case goalProposition seq of
         Exists x t p -> if t == goalType fpConcl then (do
-            --reserveVars [channel seq]
             zName <- lookupVarName $ channel seq
-            --newChannel <- getFreshVarNamed zName
             freshGoal <- createNewSubgoal $ seq { goalProposition = substVarTerm p (goalTerm fpConcl) x }
             useCurrentSubgoal Trunk . buildJustification1 freshGoal $ ExistsRightRule x fp
             return "Exists right side tactic applied.")
@@ -763,7 +738,6 @@ cutTac :: Proposition -> Tactic
 cutTac pWithDecls = do
     seq <- getCurrentSequent
     p <- substTyDeclsM pWithDecls
-    --reserveVars [channel seq]
     x <- getFreshVar
     zName <- lookupVarName $ channel seq
     invalidateNameCache
@@ -776,7 +750,6 @@ cutReplicationTac :: Proposition -> Tactic
 cutReplicationTac pWithDecls = do
     seq <- getCurrentSequent
     p <- substTyDeclsM pWithDecls
-    --reserveVars [channel seq]
     x <- getFreshVar
     u <- getFreshVar
     zName <- lookupVarName $ channel seq
@@ -894,11 +867,6 @@ cutLinearTheoremTac theoremName = do
         maybeTheorem = if '.' `L.elem` theoremName then (proofObject <$> (Data.Map.lookup mName ms >>= Data.Map.lookup tName)) else (Data.Map.lookup theoremName (proofObject <$> ts))
     theorem <- case maybeTheorem of Nothing -> tacError "Could not find the theorem."; Just t -> return t
     conclusion <- case concl theorem of Left e -> tacError ("Could not get conclusion of theorem: " ++ e); Right c -> return c
-    -- unless (Data.Map.null $ linearContext conclusion) $ tacError "Only theorems with empty linear contexts are supported right now."
-    -- unless (Data.Map.null $ unrestrictedContext conclusion) $ tacError "Only theorems with empty unrestricted contexts are supported right now."
-    -- unless (Data.Map.null $ fnContext conclusion) $ tacError "Only theorems with empty functional contexts are supported right now."
-    -- unless (S.null $ tyVarContext conclusion) $ tacError "Only theorems with empty type variable contexts are supported right now."
-    -- unless (Data.Map.null $ recursiveBindings conclusion) $ tacError "Only theorems with empty recursive binding information are supported right now."
     curNames <- getProofStateNames
     let otherNames = getProofNames theorem
         allNames = S.union otherNames curNames
@@ -1049,9 +1017,6 @@ done res = case runAndVerifyJustification res of
 _Init :: String -> ProofState
 _Init = initCleanState
 
--- _Clear :: String -> Proposition -> ProofState
--- _Clear = clear
-
 _Theorem :: ProofState -> [Proposition] -> String -> Proposition -> ProofState
 _Theorem = theorem
 
@@ -1132,8 +1097,6 @@ _IdA :: Tactic
 _IdA = idATac
 
 -- Functional terms
--- _FTermR :: FunctionalProof -> Tactic
--- _FTermR = functionalTermRightTac
 {-| Tactic: Refine a functional term session type to a term in the functional system. -}
 _FTermR :: Tactic
 _FTermR = do
@@ -1325,7 +1288,7 @@ _CutTheorem :: String -> Tactic
 _CutTheorem = cutLinearTheoremTac
 
 _CutReplTheorem :: String -> Tactic
-_CutReplTheorem = (\s -> return "Not implemented!")
+_CutReplTheorem = (\s -> tacError "Not implemented!")
 
 {-| Tactic: Refine a corecursive proposition. Provide the binding name, parameter names, and initial arguments. -}
 _NuR :: String -> [String] -> [String] -> Tactic
@@ -1395,11 +1358,8 @@ _Prefer curS i =
 
 _PrintTheorems :: ProofState -> ProofState
 _PrintTheorems s = let
-    --printTs curMessage prefix ts = Data.Map.foldrWithKey (\k v acc -> case concl v of Right seq -> k ++ ": " ++ seqToS seq ++ "\n" ++ acc; Left e -> acc) curMessage ts
     localTs = L.intercalate "\n" $ L.filter (/= "") $ (\(n, p) -> case concl p of Right seq -> n ++ ": " ++ seqToS seq; Left e -> "") <$> Data.Map.toList (proofObject <$> theorems s)
     modulePrint = L.intercalate "\n" $ L.filter (/= "") $ (\(mName, moduleTheorems) -> L.intercalate "\n" $ L.filter (/= "") $ (\(n, p) -> case concl p of Right seq -> mName ++ "." ++ n ++ ": " ++ seqToS seq; Left e -> "") <$> Data.Map.toList (proofObject <$> moduleTheorems)) <$> Data.Map.toList (loadedModules s)
-    --localTs = printTs "" "" (theorems s)
-    --fullMessage = Data.Map.foldrWithKey (\k v acc -> acc ++ )
     in s { outputs = (L.intercalate "\n" [modulePrint, localTs]):outputs s }
 
 _TestDisallowedVars :: Tactic

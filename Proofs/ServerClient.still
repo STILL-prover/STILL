@@ -1,6 +1,9 @@
 module ServerClient begin
 
-stype serverProto = "((1 -o 1 -o (1 * 1)) & (1 -o (1 * 1)))" -- ((N -o I -o (N * 1)) & (N -o (I * 1)))
+stype N = "1"
+stype I = "1"
+
+stype serverProto = "((N -o I -o (N * 1)) & (N -o (I * 1)))"
 
 theorem qclientbody consumes "serverProto": "1"
 apply ExactPi "a.inr;(nu tea:1) a[tea].(0 | a(pr).0)"
