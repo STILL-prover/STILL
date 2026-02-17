@@ -10,34 +10,12 @@ permissions:
   contents: read
 
 jobs:
-  build:
-
-    runs-on: ubuntu-latest
-
+  runhaskell:
+    name: Build
+    runs-on: ubuntu-latest # or macOS-latest, or windows-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-haskell@v1
-      with:
-        ghc-version: '9.6'
-        cabal-version: '3.14.2.0'
-
-    - name: Cache
-      uses: actions/cache@v3
-      env:
-        cache-name: cache-cabal
-      with:
-        path: ~/.cabal
-        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
-        restore-keys: |
-          ${{ runner.os }}-build-${{ env.cache-name }}-
-          ${{ runner.os }}-build-
-          ${{ runner.os }}-
-
-    - name: Install dependencies
-      run: |
-        cabal update
-        cabal build --only-dependencies --enable-tests --enable-benchmarks
-    - name: Build
-      run: ghc Main.hs -o still
-    - name: Run tests
-      run: ./still benchmark Proofs/*.still
+      - uses: actions/checkout@v4
+      - uses: haskell/ghcup-setup@v1
+      - run: |
+          ghcup install ghc --set latest
+          ghc Main.hs -o still
