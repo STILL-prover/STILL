@@ -16,7 +16,6 @@ import Util
 import SessionTypes.Kernel
 import Debug.Trace
 import Control.Monad.Identity (Identity (runIdentity))
-import Control.Monad.Trans (MonadIO(liftIO))
 import qualified Debug.Trace as DBG
 
 data BranchType = Additive
@@ -25,25 +24,25 @@ data BranchType = Additive
     | Trunk
     deriving (Eq, Show, Read)
 
-data Subgoal m = Subgoal {
+data Subgoal = Subgoal {
     sequent :: Sequent,
     prevGoal :: String,
     nextGoals :: [String],
     reservedVars :: S.Set String,
-    subgoalJustification :: ProverStateT m Proof,
+    subgoalJustification :: ProverState Proof,
     expanded :: Maybe BranchType,
-    inProgressFunctionalProof :: Maybe (FT.ProofState m, FunctionalProof -> Tactic m)
+    inProgressFunctionalProof :: Maybe (FT.ProofState, FunctionalProof -> Tactic)
 } deriving ()
 
-isUsed :: Subgoal m -> Bool
+isUsed :: Subgoal -> Bool
 isUsed = isJust . expanded
 
-getVarsReservedInSubgoalBranches :: ProofState m -> String -> S.Set String
+getVarsReservedInSubgoalBranches :: ProofState -> String -> S.Set String
 getVarsReservedInSubgoalBranches s sgName = case Data.Map.lookup sgName (subgoals s) of
     Just curSg -> S.unions (getVarsReservedInSubgoalBranches s <$> nextGoals curSg) `S.union` reservedVars curSg
     Nothing -> S.empty
 
-getUnavailableVarsForSubgoal :: String -> ProofState m -> S.Set String
+getUnavailableVarsForSubgoal :: String -> ProofState -> S.Set String
 getUnavailableVarsForSubgoal sgName s = case Data.Map.lookup sgName (subgoals s) of
     Just curSg -> (if prevGoal curSg == ""
         then S.empty
@@ -66,8 +65,8 @@ data Theorem = Theorem {
     numberOfSubgoals :: Integer
 }
 
-data ProofState m = S {
-    subgoals :: Map String (Subgoal m),
+data ProofState = S {
+    subgoals :: Map String Subgoal,
     outputs :: [String],
     theorems :: Map String Theorem,
     curTheoremName :: String,
@@ -76,29 +75,40 @@ data ProofState m = S {
     openGoalStack :: [String],
     cachedProofStateNames :: S.Set String,
     newSubgoalNameList :: [String],
-    cachedVarNames :: [String]
+    cachedVarNames :: [String],
+    stypeDecls :: [(String, Proposition)],
+    fnAssumptions :: [(String, FunctionalTerm)],
+    procAssumptions :: [(String, Proposition)],
+    errors :: [String]
 } deriving ()
 
-curSubgoal :: ProofState m -> String
+substTyDecls :: [(String, Proposition)] -> Proposition -> Proposition
+substTyDecls [] p = p
+substTyDecls ((n,ty):rest) p = substTyDecls rest (substVarType p ty n)
+
+substTyDeclsM :: Proposition -> ProverState Proposition
+substTyDeclsM p = (`substTyDecls` p) <$> ST.gets stypeDecls
+
+curSubgoal :: ProofState -> String
 curSubgoal s = if L.null (openGoalStack s) then "" else head (openGoalStack s)
 
-usedSubgoalNames :: ProofState m -> S.Set String
+usedSubgoalNames :: ProofState -> S.Set String
 usedSubgoalNames s = S.fromList $ Data.Map.keys $ subgoals s
 
-getStateReservedVars :: Monad m => ProofState m -> S.Set String
+getStateReservedVars :: ProofState -> S.Set String
 getStateReservedVars s = Data.Map.foldl' (\acc sg -> S.union acc (reservedVars sg)) S.empty (subgoals s)
 
-type ProverStateT m a = ST.StateT (ProofState m) (E.ExceptT String m) a
+type ProverStateT m a = ST.StateT ProofState (E.ExceptT String m) a
 
-type ProverStateIO a = ProverStateT IO a
+type ProverState a = ProverStateT Identity a
 
-type Justification m = ProverStateT m Proof
+type Justification = ProverState Proof
 
 -- -- data TacticRes = TacSuccess {
 -- --     justification :: Justification
 -- -- } deriving (Show)
 
-type Tactic m = ProverStateT m String
+type Tactic = ProverState String
 
 -- letters :: [String]
 -- letters = (\c -> [c]) <$> ['a'..'z']
@@ -121,13 +131,13 @@ allSubgoalNames = ('?' :) <$> namesInOrder
 -- >>>L.take 10 allSubgoalNames
 -- ["?a","?b","?c","?d","?e","?f","?g","?h","?i","?j"]
 
-getSubgoalNames :: Monad m => Subgoal m -> S.Set String
+getSubgoalNames :: Subgoal -> S.Set String
 getSubgoalNames sg = let
     vars = getSequentNames . sequent $ sg
     fVars = maybe S.empty (FT.reservedVars . fst) (inProgressFunctionalProof sg)
     in S.union vars fVars
 
-getProofStateNames :: Monad m => ProverStateT m (S.Set String)
+getProofStateNames :: ProverState (S.Set String)
 getProofStateNames = do
     cachedNames <- ST.gets cachedProofStateNames
     if S.null cachedNames
@@ -138,7 +148,7 @@ getProofStateNames = do
         return vars)
     else return cachedNames
 
-getFreshVar :: Monad m => ProverStateT m String
+getFreshVar :: ProverState String
 getFreshVar = do
     vars <- getProofStateNames
     vNames <- ST.gets cachedVarNames
@@ -147,7 +157,7 @@ getFreshVar = do
     ST.modify (\s -> s { cachedProofStateNames = S.insert newVar (cachedProofStateNames s), cachedVarNames = newVNames })
     return newVar
 
-getFreshVarAttempt :: Monad m => String -> ProverStateT m String
+getFreshVarAttempt :: String -> ProverState String
 getFreshVarAttempt z = do
     seq <- getCurrentSequent
     let vars = getSequentFreeNames seq
@@ -156,81 +166,75 @@ getFreshVarAttempt z = do
     ST.modify (\s -> s { cachedProofStateNames = S.insert newVar (cachedProofStateNames s) })
     return newVar
 
-getFreshSubgoalName :: Monad m => ProverStateT m String
+getFreshSubgoalName :: ProverState String
 getFreshSubgoalName = do
     newNames <- ST.gets newSubgoalNameList
     ST.modify (\s -> s { newSubgoalNameList = tail (newSubgoalNameList s)})
     return (head newNames)
 
--- getFreshSubgoalName :: Monad m => ProverStateT m String
--- getFreshSubgoalName = do
---     newNamesList <- ST.gets newSubgoalNameList
---     if newNamesList == []
---     then (do
---         ST.modify (\s -> s { newSubgoalNameList = (\a -> a ++ show (1 + newlyCreatedSubgoalNameLists s)) <$> allSubgoalNames, newlyCreatedSubgoalNameLists = (1 + newlyCreatedSubgoalNameLists s) })
---         getFreshSubgoalName)
---     else (do
---         ST.modify (\s -> s { newSubgoalNameList = L.drop 1 (newSubgoalNameList s)})
---         return (head newNamesList))
-
-invalidateNameCache :: Monad m => ProverStateT m ()
+invalidateNameCache :: ProverState ()
 invalidateNameCache = ST.modify (\s -> s { cachedProofStateNames = S.empty })
 
-lookupVarName :: Monad m => String -> ProverStateT m String
+lookupVarName :: String -> ProverState String
 lookupVarName x = return x
 
-initializeSequent :: Proposition -> Sequent
-initializeSequent p = Sequent { tyVarContext = S.empty, fnContext = Data.Map.empty, unrestrictedContext = Data.Map.empty, linearContext = Data.Map.empty, recursiveBindings = Data.Map.empty, channel = "z", goalProposition = p }
+initializeSequent :: [(String, FunctionalTerm)] -> [Proposition] -> Proposition -> Sequent
+initializeSequent assumedTerms consumedProps p = let
+    termNames = S.fromList (fst <$> assumedTerms) `S.union` S.unions (functionalNames . snd <$> assumedTerms)
+    currentAllNames = S.insert "z" $ termNames `S.union` S.unions (propNames <$> (p:consumedProps))
+    resourceNames = L.filter (\n -> not $ n `S.member` currentAllNames) namesInOrder
+    linearProps = zip resourceNames consumedProps
+    in Sequent { tyVarContext = S.empty, fnContext = Data.Map.fromList assumedTerms, unrestrictedContext = Data.Map.empty, linearContext = Data.Map.fromList linearProps, recursiveBindings = Data.Map.empty, channel = "z", goalProposition = p }
 
-initializeProof :: Monad m => Sequent -> Subgoal m
+initializeProof :: Sequent -> Subgoal
 initializeProof seq = Subgoal { sequent = seq, prevGoal = "", nextGoals = [], expanded = Nothing, subgoalJustification = tacError "No justification.", inProgressFunctionalProof = Nothing, reservedVars = S.empty }
 
-tacError :: Monad m => String -> ST.StateT (ProofState m) (E.ExceptT String m) a2
+tacError :: String -> ST.StateT ProofState (E.ExceptT String Identity) a2
 tacError = ST.lift . E.throwE
 
-liftMaybeWithError :: Monad m => String -> Maybe a -> ProverStateT m a
+liftMaybeWithError :: String -> Maybe a -> ProverState a
 liftMaybeWithError err res = case res of
     Nothing -> tacError err
     Just x -> return x
 
-liftEither :: Monad m => Either String a -> ProverStateT m a
+liftEither :: Either String a -> ProverState a
 liftEither res = case res of
     Left err -> tacError err
     Right x -> return x
 
-getGoal :: Monad m => String -> ProverStateT m (Subgoal m)
+getGoal :: String -> ProverState (Subgoal)
 getGoal goalName = do
     curState <- ST.get
     case Data.Map.lookup goalName (subgoals curState) of
         Just goal -> return goal
         _ -> tacError "Invalid subgoal name."
 
--- -- getDisallowedVars :: String -> ProverStateT m (S.Set String)
+-- -- getDisallowedVars :: String -> ProverState (S.Set String)
 -- -- getDisallowedVars goalName = do
 -- --     curDisjointGoals <- disjointSubgoals <$> getGoal goalName
 -- --     curSubgoals <- subgoals <$> ST.get
 -- --     -- Get the subgoals and their reserved variables if the subgoal exists. Then union all reserved variables.
 -- --     return $ L.foldl' S.union S.empty (maybe S.empty reservedVars . (`Data.Map.lookup` curSubgoals) <$> curDisjointGoals)
 
-updateGoal :: Monad m => String -> Subgoal m -> ProverStateT m ()
+updateGoal :: String -> Subgoal -> ProverState ()
 updateGoal goalName newGoalState = do
     curState <- ST.get
     ST.put (curState { subgoals = Data.Map.insert goalName newGoalState (subgoals curState) })
 
-removeVarsFromSequent :: Monad m => [String] -> Sequent -> ProverStateT m Sequent
+removeVarsFromSequent :: [String] -> Sequent -> ProverState Sequent
 removeVarsFromSequent varsToRem seq =
     if channel seq `L.elem` varsToRem
     then tacError $ "Cannot reserve the channel of the sequent: " ++ seqToS seq
     else return $ seq { linearContext = L.foldl (flip Data.Map.delete) (linearContext seq) (S.fromList varsToRem) }
 
-removeVarsFromSubgoal :: Monad m => [String] -> (String, Subgoal m) -> ProverStateT m (String, Subgoal m)
+removeVarsFromSubgoal :: [String] -> (String, Subgoal) -> ProverState (String, Subgoal)
 removeVarsFromSubgoal varsToRem (x, sg) = if isUsed sg
     then return (x, sg)
     else (do
         newSeq <- removeVarsFromSequent varsToRem (sequent sg)
         return (x, sg { sequent = newSeq }))
 
-reserveVars :: Monad m => [String] -> ProverStateT m ()
+reserveVars :: [String] -> ProverState ()
 reserveVars varsToRes = do
     curSubgoalData <- getCurrentSubgoal
     curSubgoalName <- ST.gets curSubgoal
@@ -240,10 +244,10 @@ reserveVars varsToRes = do
     then tacError "Variables already reserved, and should not be available to use."
     else ST.modify (\s -> s { subgoals = Data.Map.insert curSubgoalName newSgData (subgoals s) })
 
-buildJustification0 :: Monad m => Proof -> Justification m
+buildJustification0 :: Proof -> Justification
 buildJustification0 = return
 
-buildJustification1 :: Monad m => String -> (Proof -> Proof) -> Justification m
+buildJustification1 :: String -> (Proof -> Proof) -> Justification
 buildJustification1 sg p = do
     curSubgoals <- ST.gets subgoals
     case Data.Map.lookup sg curSubgoals of
@@ -252,7 +256,7 @@ buildJustification1 sg p = do
             return $ p jst
         _ -> tacError $ "Child subgoal lost " ++ sg
 
-buildJustification2 :: Monad m => String -> String -> (Proof -> Proof -> Proof) -> Justification m
+buildJustification2 :: String -> String -> (Proof -> Proof -> Proof) -> Justification
 buildJustification2 sg1 sg2 p = do
     curSubgoals <- ST.gets subgoals
     case Data.Map.lookup sg1 curSubgoals of
@@ -266,7 +270,7 @@ buildJustification2 sg1 sg2 p = do
     pops the current open goal off the stack, and updates the goal with its
     justification. Call createNewSubgoal before this.
 -}
-useCurrentSubgoal :: Monad m => BranchType -> Justification m -> ProverStateT m ()
+useCurrentSubgoal :: BranchType -> Justification -> ProverState ()
 useCurrentSubgoal bt j = do
     curState <- ST.get
     let curSubgoals = subgoals curState
@@ -276,13 +280,13 @@ useCurrentSubgoal bt j = do
         subgoals = Data.Map.insert (curSubgoal curState) (curSubgoalObj { subgoalJustification = j, expanded = Just bt }) (subgoals s),
         openGoalStack = L.drop 1 (openGoalStack curState) }) -- subgoal is expanded and popped off.
 
-getCurrentSubgoal :: Monad m => ProverStateT m (Subgoal m)
+getCurrentSubgoal :: ProverState (Subgoal)
 getCurrentSubgoal = do
     curSubgoalName <- ST.gets curSubgoal
     curSubgoalMaybe <- Data.Map.lookup curSubgoalName <$> ST.gets subgoals
     liftMaybeWithError ("Cannot find current subgoal " ++ curSubgoalName) curSubgoalMaybe
 
-getCurrentSequent :: Monad m => ProverStateT m Sequent
+getCurrentSequent :: ProverState Sequent
 getCurrentSequent = sequent <$> getCurrentSubgoal
 
 {-|
@@ -290,7 +294,7 @@ getCurrentSequent = sequent <$> getCurrentSubgoal
     previous. Puts the new goal just below the current open goal. Call
     useCurrentSubgoal after this.
 -}
-createNewSubgoal :: Monad m => Sequent -> ProverStateT m String
+createNewSubgoal :: Sequent -> ProverState String
 createNewSubgoal seq = do
     freshGoal <- getFreshSubgoalName
     curSubgoalName <- ST.gets curSubgoal
@@ -300,7 +304,7 @@ createNewSubgoal seq = do
     ST.modify (\s -> s { subgoals = Data.Map.insert curSubgoalName newCurSubgoalData (Data.Map.insert freshGoal newSubgoal (subgoals s)), openGoalStack = (head (openGoalStack s)):(freshGoal:tail (openGoalStack s)) })
     return freshGoal
 
-idTac :: Monad m => String -> Tactic m
+idTac :: String -> Tactic
 idTac x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x (linearContext seq) of
@@ -320,7 +324,7 @@ idTac x = do
             else tacError $ "The propositions " ++ x ++ " and " ++ channel seq ++ " are not the same."
         _ -> tacError $ "Could not find " ++ x ++ " in the linear context."
 
-idATac :: Monad m => Tactic m
+idATac :: Tactic
 idATac = do
     seq <- getCurrentSequent
     case L.filter (\(_, p) -> p == goalProposition seq) . Data.Map.toList $ linearContext seq of
@@ -333,7 +337,7 @@ idATac = do
             return "IdA tactic applied."
         [] -> tacError $ "Could not find " ++ show (goalProposition seq) ++ " in the linear context."
 
-functionalTermRightTac :: Monad m => FunctionalProof -> Tactic m
+functionalTermRightTac :: FunctionalProof -> Tactic
 functionalTermRightTac fp = if verifyFunctionalProof fp
     then (do
         seq <- getCurrentSequent
@@ -347,7 +351,7 @@ functionalTermRightTac fp = if verifyFunctionalProof fp
             _ -> tacError "Cannot apply tactic to goal.")
     else tacError "Invalid proof."
 
-functionalTermLeftTac :: Monad m => String -> Tactic m
+functionalTermLeftTac :: String -> Tactic
 functionalTermLeftTac x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x (linearContext seq) of
@@ -365,10 +369,10 @@ functionalTermLeftTac x = do
         Just _ -> tacError "Not a functional term."
         _ -> tacError $ "Could not find " ++ x ++ " in the linear context."
 
-functionalTermLeftTacA :: Monad m => Tactic m
+functionalTermLeftTacA :: Tactic
 functionalTermLeftTacA = leftTacA functionalTermLeftTac (\case Lift _ -> True; _ -> False)
 
-impliesRightTac :: Monad m => Tactic m
+impliesRightTac :: Tactic
 impliesRightTac = do
     seq <- getCurrentSequent
     case goalProposition seq of
@@ -379,7 +383,7 @@ impliesRightTac = do
             return "Implies right side tactic applied"
         _ -> tacError "Not an implication"
 
-impliesLeftTac :: Monad m => String -> Tactic m
+impliesLeftTac :: String -> Tactic
 impliesLeftTac x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x (linearContext seq) of
@@ -394,7 +398,7 @@ impliesLeftTac x = do
         Just _ -> tacError "Cannot apply to non-implication proposition."
         Nothing -> tacError $ "Cannot find " ++ x ++ " in linear context."
 
-leftTacA :: Monad m => (String -> Tactic m) -> (Proposition -> Bool) -> Tactic m
+leftTacA :: (String -> Tactic) -> (Proposition -> Bool) -> Tactic
 leftTacA tac test = do
     seq <- getCurrentSequent
     sgName <- ST.gets curSubgoal
@@ -402,10 +406,10 @@ leftTacA tac test = do
     let candidateProps = Data.Map.keys (Data.Map.filterWithKey (\k v -> not . S.member k $ unavailableVars) (Data.Map.filter test (linearContext seq)))
     if L.null candidateProps then tacError "No propositions in the linear context of the correct form!" else tac (head candidateProps)
 
-impliesLeftTacA :: Monad m => Tactic m
+impliesLeftTacA :: Tactic
 impliesLeftTacA = leftTacA impliesLeftTac (\case Implication _ _ -> True; _ -> False)
 
-unitRightTac :: Monad m => Tactic m
+unitRightTac :: Tactic
 unitRightTac = do
     seq <- getCurrentSequent
     case goalProposition seq of
@@ -416,7 +420,7 @@ unitRightTac = do
             return "Unit right side tactic applied.")
         _ -> tacError "Cannot apply to non-implication proposition."
 
-unitLeftTac :: Monad m => String -> Tactic m
+unitLeftTac :: String -> Tactic
 unitLeftTac x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x (linearContext seq) of
@@ -434,10 +438,10 @@ unitLeftTac x = do
         Just _ -> tacError "Not a Unit proposition."
         _ -> tacError $ "Could not find " ++ x ++ " in the linear context."
 
-unitLeftTacA :: Monad m => Tactic m
+unitLeftTacA :: Tactic
 unitLeftTacA = leftTacA unitLeftTac (\case Unit -> True; _ -> False)
 
-replicationRightTac :: Monad m => Tactic m
+replicationRightTac :: Tactic
 replicationRightTac = do
     seq <- getCurrentSequent
     case goalProposition seq of
@@ -455,7 +459,7 @@ replicationRightTac = do
             return "Replication right side tactic applied."
         _ -> tacError "Not a Replication proposition."
 
-replicationLeftTac :: Monad m => String -> Tactic m
+replicationLeftTac :: String -> Tactic
 replicationLeftTac x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x $ linearContext seq of
@@ -474,10 +478,10 @@ replicationLeftTac x = do
         Just _ -> tacError "Not a Replication proposition."
         _ -> tacError $ "Cannot find " ++ x ++ " in linear context."
 
-replicationLeftTacA :: Monad m => Tactic m
+replicationLeftTacA :: Tactic
 replicationLeftTacA = leftTacA replicationLeftTac (\case Replication _ -> True; _ -> False)
 
-copyTac :: Monad m => String -> Maybe String -> Tactic m
+copyTac :: String -> Maybe String -> Tactic
 copyTac u yMaybe = do
     seq <- getCurrentSequent
     case Data.Map.lookup u $ unrestrictedContext seq of
@@ -494,7 +498,7 @@ copyTac u yMaybe = do
             return "Unit left side tactic applied."
         _ -> tacError $ "Cannot find " ++ u ++ " in unrestricted context."
 
-withRightTac :: Monad m => Tactic m
+withRightTac :: Tactic
 withRightTac = do
     seq <- getCurrentSequent
     case goalProposition seq of
@@ -507,7 +511,7 @@ withRightTac = do
             return "With right side tactic applied."
         _ -> tacError "Cannot apply tactic to non-with proposition."
 
-withLeft1Tac :: Monad m => String -> Tactic m
+withLeft1Tac :: String -> Tactic
 withLeft1Tac x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x $ linearContext seq of
@@ -519,10 +523,10 @@ withLeft1Tac x = do
             return "With left side 1 tactic applied."
         _ -> tacError "Cannot apply tactic to non-with proposition."
 
-withLeft1TacA :: Monad m => Tactic m
+withLeft1TacA :: Tactic
 withLeft1TacA = leftTacA withLeft1Tac (\case With _ _ -> True; _ -> False)
 
-withLeft2Tac :: Monad m => String -> Tactic m
+withLeft2Tac :: String -> Tactic
 withLeft2Tac x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x $ linearContext seq of
@@ -534,10 +538,10 @@ withLeft2Tac x = do
             return "With left side 2 tactic applied."
         _ -> tacError "Cannot apply to non-with proposition."
 
-withLeft2TacA :: Monad m => Tactic m
+withLeft2TacA :: Tactic
 withLeft2TacA = leftTacA withLeft2Tac (\case With _ _ -> True; _ -> False)
 
-tensorRightTac :: Monad m => Tactic m
+tensorRightTac :: Tactic
 tensorRightTac = do
     seq <- getCurrentSequent
     case goalProposition seq of
@@ -551,7 +555,7 @@ tensorRightTac = do
             return "Tensor right side tactic applied.")
         _ -> tacError "Cannot apply to non-tensor proposition."
 
-tensorLeftTac :: Monad m => String -> Tactic m
+tensorLeftTac :: String -> Tactic
 tensorLeftTac x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x $ linearContext seq of
@@ -565,10 +569,10 @@ tensorLeftTac x = do
         Just _ -> tacError "Not a tensor"
         _ -> tacError $ "Could not find " ++ x ++ "in the linear context"
 
-tensorLeftTacA :: Monad m => Tactic m
+tensorLeftTacA :: Tactic
 tensorLeftTacA = leftTacA tensorLeftTac (\case Tensor _ _ -> True; _ -> False)
 
-plusRight1Tac :: Monad m => Tactic m
+plusRight1Tac :: Tactic
 plusRight1Tac = do
     seq <- getCurrentSequent
     case goalProposition seq of
@@ -580,7 +584,7 @@ plusRight1Tac = do
             return "Plus right side 1 tactic applied.")
         _ -> tacError "Cannot apply to non-plus proposition."
 
-plusRight2Tac :: Monad m => Tactic m
+plusRight2Tac :: Tactic
 plusRight2Tac = do
     seq <- getCurrentSequent
     case goalProposition seq of
@@ -592,22 +596,14 @@ plusRight2Tac = do
             return "Plus right side 2 tactic applied.")
         _ -> tacError "Cannot apply to non-plus proposition."
 
-plusLeftTac :: Monad m => String -> Tactic m
+plusLeftTac :: String -> Tactic
 plusLeftTac x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x $ linearContext seq of
         Just (Plus p1 p2) -> do
             xName <- lookupVarName x
-            --freshXRight <- getFreshVarNamed xName
             reserveVars [x]
-            --let restLC = Data.Map.delete x $ linearContext seq
-            -- copiedLinearContext <- Data.Map.fromList <$> mapM (\(k, v) -> case Data.Map.lookup k allUniqueNameVars of
-            --     Just n -> (do
-            --         newName <- getFreshVarNamed n
-            --         return (newName, v))
-            --     Nothing -> tacError $ "Could not find variable name for " ++ k) (Data.Map.toList restLC)
             zName <- lookupVarName $ channel seq
-            --freshZRight <- getFreshVarNamed zName
             leftGoal <- createNewSubgoal $ seq { linearContext = Data.Map.insert x p1 (linearContext seq) }
             rightGoal <- createNewSubgoal $ seq { linearContext = Data.Map.insert x p2 (linearContext seq) }
             useCurrentSubgoal Additive $ buildJustification2 leftGoal rightGoal $ PlusLeftRule xName
@@ -615,25 +611,21 @@ plusLeftTac x = do
         Just _ -> tacError "Cannot apply to non-plus proposition"
         Nothing -> tacError $ "Could not find " ++ x ++ " in linear context."
 
-plusLeftTacA :: Monad m => Tactic m
+plusLeftTacA :: Tactic
 plusLeftTacA = leftTacA plusLeftTac (\case Plus _ _ -> True; _ -> False)
 
-forallRightTac :: Monad m => Tactic m
+forallRightTac :: Tactic
 forallRightTac = do
     seq <- getCurrentSequent
     case goalProposition seq of
         Forall x t p -> do
-            --reserveVars [channel seq]
             zName <- lookupVarName $ channel seq
-            --freshZ <- getFreshVarNamed zName
-            -- freshX <- getFreshVarAttempt x -- TODO do we need this actually?
-            -- let newP = substVarProp p freshX x
             newGoal <- createNewSubgoal $ seq { fnContext = Data.Map.insert x t $ fnContext seq, goalProposition = p }
             useCurrentSubgoal Trunk . buildJustification1 newGoal $ ForallRightRule x
             return "Forall right side tactic applied."
         _ -> tacError "Cannot apply to non-forall proposition."
 
-forallLeftTac :: Monad m => String -> FunctionalProof -> Tactic m
+forallLeftTac :: String -> FunctionalProof -> Tactic
 forallLeftTac x fp = if verifyFunctionalProof fp then (do
     seq <- getCurrentSequent
     fpConcl <- liftEither $ functionalConcl fp
@@ -649,15 +641,13 @@ forallLeftTac x fp = if verifyFunctionalProof fp then (do
         _ -> tacError $ "Could not find " ++ x ++ " in the linear context.")
     else tacError "Invalid proof."
 
-existsRightTac :: Monad m => FunctionalProof -> Tactic m
+existsRightTac :: FunctionalProof -> Tactic
 existsRightTac fp = if verifyFunctionalProof fp then (do
     seq <- getCurrentSequent
     fpConcl <- liftEither $ functionalConcl fp
     case goalProposition seq of
         Exists x t p -> if t == goalType fpConcl then (do
-            --reserveVars [channel seq]
             zName <- lookupVarName $ channel seq
-            --newChannel <- getFreshVarNamed zName
             freshGoal <- createNewSubgoal $ seq { goalProposition = substVarTerm p (goalTerm fpConcl) x }
             useCurrentSubgoal Trunk . buildJustification1 freshGoal $ ExistsRightRule x fp
             return "Exists right side tactic applied.")
@@ -667,7 +657,7 @@ existsRightTac fp = if verifyFunctionalProof fp then (do
         Right res -> tacError "Should not happen at all."
         Left e -> tacError $ "Invalid proof: " ++ e)
 
-existsLeftTac :: Monad m => String -> Tactic m
+existsLeftTac :: String -> Tactic
 existsLeftTac x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x $ linearContext seq of
@@ -675,17 +665,17 @@ existsLeftTac x = do
             reserveVars [x]
             xName <- lookupVarName x
             freshY <- getFreshVarAttempt y
-            let newP = substVarProp p x freshY
+            let newP = substVarProp p freshY y
             newGoal <- createNewSubgoal $ seq { fnContext = Data.Map.insert freshY t $ fnContext seq, linearContext = Data.Map.insert x newP $ linearContext seq }
             useCurrentSubgoal Trunk . buildJustification1 newGoal $ ExistsLeftRule xName freshY
             return "Exists left side tactic applied."
         Just _ -> tacError "Cannot apply to non-exists proposition."
         _ -> tacError "Variable doesn't exist"
 
-existsLeftTacA :: Monad m => Tactic m
+existsLeftTacA :: Tactic
 existsLeftTacA = leftTacA existsLeftTac (\case Exists {} -> True; _ -> False)
 
-forallRight2Tac :: Monad m => Tactic m
+forallRight2Tac :: Tactic
 forallRight2Tac = do
     seq <- getCurrentSequent
     case goalProposition seq of
@@ -697,10 +687,11 @@ forallRight2Tac = do
             return "Forall second order right side tactic applied."
         _ -> tacError "Cannot apply to non-forall second order proposition."
 
-forallLeft2Tac :: Monad m => String -> Proposition -> Tactic m
-forallLeft2Tac x b = do
+forallLeft2Tac :: String -> Proposition -> Tactic
+forallLeft2Tac x bWithDecls = do
     seq <- getCurrentSequent
-    _ <- case wellFormedType (((tyVarContext seq) `S.union` (S.fromList ((\v -> bindingTyVar v) . snd . snd <$> Data.Map.toList (recursiveBindings seq))))) b of Left e ->tacError (propToS b ++ " is not a well-formed type: " ++ e) ; Right () -> return ()
+    b <- substTyDeclsM bWithDecls
+    _ <- case wellFormedType ((tyVarContext seq) `S.union` (S.fromList ((\v -> bindingTyVar v) . snd . snd <$> Data.Map.toList (recursiveBindings seq)))) b of Left e ->tacError (propToS b ++ " is not a well-formed type: " ++ e) ; Right () -> return ()
     case Data.Map.lookup x $ linearContext seq of
         Just (Forall2 y p) -> do
             reserveVars [x]
@@ -712,9 +703,10 @@ forallLeft2Tac x b = do
         Just _ -> tacError "Cannot apply to non-forall second order proposition."
         _ -> tacError $ "Could not find " ++ x ++ " in the linear context."
 
-existsRight2Tac :: Monad m => Proposition -> Tactic m
-existsRight2Tac b = do
+existsRight2Tac :: Proposition -> Tactic
+existsRight2Tac bWithDecls = do
     seq <- getCurrentSequent
+    b <- substTyDeclsM bWithDecls
     _ <- case wellFormedType (((tyVarContext seq) `S.union` (S.fromList ((\v -> bindingTyVar v) . snd . snd <$> Data.Map.toList (recursiveBindings seq))))) b of Left e ->tacError (propToS b ++ " is not a well-formed type: " ++ e) ; Right () -> return ()
     case goalProposition seq of
         Exists2 y p -> do
@@ -726,7 +718,7 @@ existsRight2Tac b = do
             return "Exists second order right side tactic applied."
         _ -> tacError "Cannot apply to non-forall second order proposition."
 
-existsLeft2Tac :: Monad m => String -> Tactic m
+existsLeft2Tac :: String -> Tactic
 existsLeft2Tac x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x $ linearContext seq of
@@ -739,13 +731,13 @@ existsLeft2Tac x = do
         Just _ -> tacError "Cannot apply to non-forall second order proposition."
         _ -> tacError $ "Could not find " ++ x ++ " in the linear context."
 
-existsLeft2TacA :: Monad m => Tactic m
+existsLeft2TacA :: Tactic
 existsLeft2TacA = leftTacA existsLeft2Tac (\case Exists2 {} -> True; _ -> False)
 
-cutTac :: Monad m => Proposition -> Tactic m
-cutTac p = do
+cutTac :: Proposition -> Tactic
+cutTac pWithDecls = do
     seq <- getCurrentSequent
-    --reserveVars [channel seq]
+    p <- substTyDeclsM pWithDecls
     x <- getFreshVar
     zName <- lookupVarName $ channel seq
     invalidateNameCache
@@ -754,10 +746,10 @@ cutTac p = do
     useCurrentSubgoal Cut . buildJustification2 freshGoalY freshGoalZ $ CutRule
     return "Cut tactic applied."
 
-cutReplicationTac :: Monad m => Proposition -> Tactic m
-cutReplicationTac p = do
+cutReplicationTac :: Proposition -> Tactic
+cutReplicationTac pWithDecls = do
     seq <- getCurrentSequent
-    --reserveVars [channel seq]
+    p <- substTyDeclsM pWithDecls
     x <- getFreshVar
     u <- getFreshVar
     zName <- lookupVarName $ channel seq
@@ -767,7 +759,7 @@ cutReplicationTac p = do
     useCurrentSubgoal Multiplicative . buildJustification2 freshGoalY freshGoalZ $ CutRule
     return "Cut replication tactic applied."
 
-nuRightTac :: Monad m => String -> [String] -> [String] -> Tactic m
+nuRightTac :: String -> [String] -> [String] -> Tactic
 nuRightTac x ys zs = do
     seq <- getCurrentSequent
     case goalProposition seq of
@@ -784,7 +776,7 @@ nuRightTac x ys zs = do
             return "Nu right tactic applied.")
         _ -> tacError "Cannot apply to non-Nu proposition."
 
-nuLeftTac :: Monad m => String -> Tactic m
+nuLeftTac :: String -> Tactic
 nuLeftTac c = do
     seq <- getCurrentSequent
     case Data.Map.lookup c (linearContext seq) of
@@ -796,10 +788,10 @@ nuLeftTac c = do
         Just _ -> tacError "Cannot apply to non-Nu proposition."
         Nothing -> tacError $ "Cannot find " ++ c ++ " in linear context."
 
-nuLeftTacA :: Monad m => Tactic m
+nuLeftTacA :: Tactic
 nuLeftTacA = leftTacA nuLeftTac (\case TyNu {} -> True; _ -> False)
 
-tyVarTac :: Monad m => String -> [String] -> Tactic m
+tyVarTac :: String -> [String] -> Tactic
 tyVarTac x zs = do
     seq <- getCurrentSequent
     curSgName <- ST.gets curSubgoal
@@ -822,7 +814,7 @@ tyVarTac x zs = do
             return "Type variable tactic applied.")
         Nothing -> tacError $ "Cannot find " ++ x ++ " in recursive bindings."
 
-replWeakenTac :: Monad m => String -> Tactic m
+replWeakenTac :: String -> Tactic
 replWeakenTac u = do
     seq <- getCurrentSequent
     _ <- (if Data.Map.member u (unrestrictedContext seq) then return () else tacError $ u ++ " is not a member of the unrestricted context.")
@@ -830,7 +822,7 @@ replWeakenTac u = do
     useCurrentSubgoal Trunk . buildJustification1 newSgName $ ReplWeakening u (unrestrictedContext seq Data.Map.! u)
     return "Replication weakening tactic applied."
 
-fnWeakenTac :: Monad m => String -> Tactic m
+fnWeakenTac :: String -> Tactic
 fnWeakenTac t = do
     seq <- getCurrentSequent
     _ <- (if Data.Map.member t (fnContext seq) then return () else tacError $ t ++ " is not a member of the functional context.")
@@ -838,7 +830,7 @@ fnWeakenTac t = do
     useCurrentSubgoal Trunk . buildJustification1 newSgName $ FnWeakening t (fnContext seq Data.Map.! t)
     return "Functional weakening tactic applied."
 
-useProofTac :: Monad m => String -> Tactic m
+useProofTac :: String -> Tactic
 useProofTac tName = do
     seq <- getCurrentSequent
     ts <- Data.Map.map proofObject <$> ST.gets theorems
@@ -851,7 +843,7 @@ useProofTac tName = do
             else tacError ("Conclusion of the theorem does not match the current goal:\nExpected: " ++ seqToS seq ++ "\nFound: " ++ seqToS conclusion)
             return $ "Applied theorem " ++ tName)
 
-useModuleProofTac :: Monad m => String -> String -> Tactic m
+useModuleProofTac :: String -> String -> Tactic
 useModuleProofTac mName tName = do
     seq <- getCurrentSequent
     ms <- ST.gets loadedModules
@@ -865,7 +857,7 @@ useModuleProofTac mName tName = do
             else tacError ("Conclusion of the theorem does not match the current goal:\nExpected: " ++ seqToS seq ++ "\nFound: " ++ seqToS conclusion)
             return $ "Applied theorem " ++ mName ++ "." ++ tName)
 
-cutLinearTheoremTac :: Monad m => String -> Tactic m
+cutLinearTheoremTac :: String -> Tactic
 cutLinearTheoremTac theoremName = do
     seq <- getCurrentSequent
     ms <- ST.gets loadedModules
@@ -875,11 +867,6 @@ cutLinearTheoremTac theoremName = do
         maybeTheorem = if '.' `L.elem` theoremName then (proofObject <$> (Data.Map.lookup mName ms >>= Data.Map.lookup tName)) else (Data.Map.lookup theoremName (proofObject <$> ts))
     theorem <- case maybeTheorem of Nothing -> tacError "Could not find the theorem."; Just t -> return t
     conclusion <- case concl theorem of Left e -> tacError ("Could not get conclusion of theorem: " ++ e); Right c -> return c
-    -- unless (Data.Map.null $ linearContext conclusion) $ tacError "Only theorems with empty linear contexts are supported right now."
-    -- unless (Data.Map.null $ unrestrictedContext conclusion) $ tacError "Only theorems with empty unrestricted contexts are supported right now."
-    -- unless (Data.Map.null $ fnContext conclusion) $ tacError "Only theorems with empty functional contexts are supported right now."
-    -- unless (S.null $ tyVarContext conclusion) $ tacError "Only theorems with empty type variable contexts are supported right now."
-    -- unless (Data.Map.null $ recursiveBindings conclusion) $ tacError "Only theorems with empty recursive binding information are supported right now."
     curNames <- getProofStateNames
     let otherNames = getProofNames theorem
         allNames = S.union otherNames curNames
@@ -891,23 +878,53 @@ cutLinearTheoremTac theoremName = do
         weakenedTyVarProof = L.foldl' (\proof (k) -> TyVarWeakening k proof) weakenedFnProof (S.toList (tyVarContext seq)) -- Add everything needed for the type variable context.
         weakenedRecBindProof = L.foldl' (\proof (k, b) -> RecBindingWeakening k b proof) weakenedTyVarProof (Data.Map.toList (recursiveBindings seq)) -- Add everything needed for the recursive binding context.
     newConclusion <- case concl weakenedRecBindProof of Left e -> tacError ("Could not get conclusion of the renamed variable theorem: " ++ e); Right c -> return c
-    freshGoal <- DBG.trace "NewGoal" $ createNewSubgoal (seq { linearContext = Data.Map.insert newChan (goalProposition newConclusion) (linearContext seq) })
-    DBG.trace "Use" $ useCurrentSubgoal Multiplicative . buildJustification1 freshGoal $ CutRule newRenamedProof
+    freshGoal <- createNewSubgoal (seq { linearContext = Data.Map.insert newChan (goalProposition newConclusion) (linearContext seq) })
+    useCurrentSubgoal Multiplicative . buildJustification1 freshGoal $ CutRule newRenamedProof
+    invalidateNameCache
     return $ "Linear theorem cut tactic applied: " ++ propToS (goalProposition conclusion)
 
-weakenTac :: Monad m => String -> Tactic m
+cutProcessAssumptionTac :: String -> Tactic
+cutProcessAssumptionTac n = do
+    seq <- getCurrentSequent
+    processAssumptions <- ST.gets procAssumptions
+    assumption <- case L.dropWhile (\pa -> fst pa /= n) processAssumptions of [] -> tacError "Could not find the assumed process"; (h:_) -> return h
+    curNames <- getProofStateNames
+    when (n `S.member` curNames) $ tacError ("Name clash for " ++ n)
+    let otherNames = propNames (snd assumption)
+        allNames = S.union otherNames curNames
+        freshName = getFreshName allNames
+    newChan <- getFreshVarAttempt freshName
+    freshGoal <- createNewSubgoal (seq { linearContext = Data.Map.insert newChan (snd assumption) (linearContext seq) })
+    useCurrentSubgoal Multiplicative . buildJustification1 freshGoal $ ProcessFiatRule n newChan (snd assumption)
+    invalidateNameCache
+    return "Assumed process cut in."
+
+weakenTac :: String -> Tactic
 weakenTac t = altTactical (replWeakenTac t) (fnWeakenTac t)
 
-exactTac :: Monad m => Process -> Tactic m
-exactTac p = return ""
+byProcessTac :: Process -> Tactic
+byProcessTac p = do
+    seq <- getCurrentSequent
+    curSg <- ST.gets curSubgoal
+    curS <- ST.get
+    let
+        unavailableVars = getUnavailableVarsForSubgoal curSg curS
+        typeCheckSeq = seq { linearContext = S.foldl (flip Data.Map.delete) (linearContext seq) unavailableVars}
+    procProof <- case typeCheckProcessUnderSequent seq p of Right res -> return res; Left e -> tacError e
+    case verifyProofM procProof of Right True -> return (); Left e -> tacError ("Could not verify proof derived from process: " ++ e); _ -> tacError "Error verifying type derivation."
+    newSeq <- case concl procProof of Right newSeq -> return newSeq; Left e -> tacError ("Error getting conclusion of type derivation: " ++ e)
+    unless (newSeq == seq) $ tacError ("Sequents are not the same in subgoal and derivation: " ++ seqToS seq ++ "\n\n" ++ seqToS newSeq) -- TODO allow subset of linear context.
+    useCurrentSubgoal Trunk . buildJustification0 $ procProof
+    return "Process is the correct type."
 
-holeTac :: Monad m => Tactic m
+
+holeTac :: Tactic
 holeTac = do
     seq <- getCurrentSequent
     useCurrentSubgoal Trunk . buildJustification0 $ HoleRule (tyVarContext seq) (fnContext seq) (unrestrictedContext seq) (linearContext seq) (recursiveBindings seq) (channel seq) (goalProposition seq)
     return "Hole applied."
 
-thenTactical :: Monad m => Tactic m -> Tactic m -> Tactic m
+thenTactical :: Tactic -> Tactic -> Tactic
 thenTactical t1 t2 = do
     currentSubgoals <- ST.gets openGoalStack
     res1 <- t1
@@ -920,20 +937,20 @@ thenTactical t1 t2 = do
             t2)) toApplySubgoals
     return (res1 ++ "\n" ++ L.intercalate "\n" t2Res)
 
-skipTactical :: Monad m => Tactic m
+skipTactical :: Tactic
 skipTactical = do
     seq <- getCurrentSequent
     newGoal <- createNewSubgoal seq
     useCurrentSubgoal Trunk . buildJustification1 newGoal $ id
     return "Skip applied."
 
-altTactical :: Monad m => Tactic m -> Tactic m -> Tactic m
+altTactical :: Tactic -> Tactic -> Tactic
 altTactical t1 t2 = t1 `mplus` t2
 
-repeatTactical :: Monad m => Tactic m -> Tactic m
+repeatTactical :: Tactic -> Tactic
 repeatTactical t = t `thenTactical` (repeatTactical t `altTactical` return "Repeat applied")
 
-initCleanState :: String -> ProofState m
+initCleanState :: String -> ProofState
 initCleanState mName =
     let
         channelVar = []
@@ -942,90 +959,74 @@ initCleanState mName =
         fnVars = []
         allVars = []
     in
-        S { subgoals = Data.Map.empty, outputs = ["Ready to begin!"], curTheoremName = "", curModuleName = mName, theorems = Data.Map.empty, loadedModules = Data.Map.empty, openGoalStack = [], cachedProofStateNames = S.empty, newSubgoalNameList = tail allSubgoalNames, cachedVarNames = namesInOrder }
+        S { subgoals = Data.Map.empty
+        , outputs = ["Ready to begin!"]
+        , curTheoremName = ""
+        , curModuleName = mName
+        , theorems = Data.Map.empty
+        , loadedModules = Data.Map.empty
+        , openGoalStack = []
+        , cachedProofStateNames = S.empty
+        , newSubgoalNameList = tail allSubgoalNames
+        , cachedVarNames = namesInOrder
+        , stypeDecls = []
+        , fnAssumptions = []
+        , procAssumptions = []
+        , errors = [] }
 
-{-| Assumes the initial  subgoal has no assumptions in -}
--- initializeState :: String -> Subgoal m -> ProofState m
--- initializeState name goal =
---     let
---         channelVar = (channel . sequent $ goal)
---         linearVars = Data.Map.keys . linearContext . sequent $ goal
---         unrestrictedVars = Data.Map.keys . unrestrictedContext . sequent $ goal
---         fnVars = Data.Map.keys . fnContext . sequent $ goal
---         allVars = channelVar : (linearVars ++ unrestrictedVars ++ fnVars)
---     in
---         S { subgoals = singleton "?a" goal, curSubgoal = "?a", uniqueNameVars = Data.Map.fromList $ (\x -> (x, x)) <$> allVars, usedSubgoalNames = S.singleton "?a", outputs = [], curTheoremName = name, theorems = Data.Map.empty, loadedModules = Data.Map.empty }
+runProofState :: ProverState a -> ProofState -> (Either String (a, ProofState))
+runProofState a s = runIdentity $ E.runExceptT $ ST.runStateT a s
 
-runProofState :: ST.StateT s (E.ExceptT String m) a -> s -> m (Either String (a, s))
-runProofState a s = E.runExceptT (ST.runStateT a s)
+applyTactic :: ProofState -> Tactic -> ProofState
+applyTactic s t = case runProofState t s of
+    Right (notif, newState) -> newState { outputs = notif:outputs newState}
+    Left e -> s { errors = e:errors s }
 
-applyTacticGeneral :: Monad m => ProofState m -> Tactic m -> m (Either String (ProofState m))
-applyTacticGeneral s t = do
-    res <- runProofState t s
-    case res of
-        Right (notif, newState) -> return . Right $ newState { outputs = notif:outputs newState}
-        Left e -> return . Left $ e
-
--- clear :: Monad m => String -> Proposition -> ProofState m
--- clear name = initializeState name . initializeProof . initializeSequent
-
-theorem :: Monad m => ProofState m -> String -> Proposition -> ProofState m
-theorem s n p =
+theorem :: ProofState -> [Proposition] -> String -> Proposition -> ProofState
+theorem s ts n p =
     let
-        goal = initializeProof . initializeSequent $ p
-        channelVar = (channel . sequent $ goal)
-        linearVars = Data.Map.keys . linearContext . sequent $ goal
-        unrestrictedVars = Data.Map.keys . unrestrictedContext . sequent $ goal
-        fnVars = Data.Map.keys . fnContext . sequent $ goal
-        allVars = channelVar : (linearVars ++ unrestrictedVars ++ fnVars)
+        typeSynonyms = stypeDecls s
+        sessionsToConsume = substTyDecls typeSynonyms <$> ts
+        goal = initializeProof (initializeSequent (fnAssumptions s) sessionsToConsume (substTyDecls typeSynonyms p))
     in
-        s { subgoals = singleton "?a" goal, outputs = "New theorem started":outputs s, curTheoremName = n, openGoalStack = ["?a"], cachedProofStateNames = S.empty, newSubgoalNameList = tail allSubgoalNames, cachedVarNames = namesInOrder }
+        s { subgoals = singleton "?a" goal
+        , outputs = "New theorem started":outputs s
+        , curTheoremName = n
+        , openGoalStack = ["?a"]
+        , cachedProofStateNames = S.empty
+        , newSubgoalNameList = tail allSubgoalNames
+        , cachedVarNames = namesInOrder }
 
-applyTactic :: ProofState Identity -> Tactic Identity -> Either String (ProofState Identity)
-applyTactic s t = runIdentity $ applyTacticGeneral s t
+runAndVerifyJustification :: ProofState -> Either String (Proof, ProofState)
+runAndVerifyJustification s = case runProofState (subgoalJustification ( subgoals s ! "?a")) s of
+    Right (p, s) -> case verifyProofM p of Right True -> Right (p, s); Right False -> Left "Could not verify the proof." ; Left e ->  Left e
+    Left e -> Left e
 
-applyTacticM :: Either String (ProofState Identity) -> Tactic Identity -> Either String (ProofState Identity)
-applyTacticM s t = s >>= (\s -> runIdentity $ applyTacticGeneral s t)
+extractFromJustification :: ProofState -> Either String (Process, Sequent)
+extractFromJustification s = case runProofState (subgoalJustification ( subgoals s ! "?a")) s of
+    Right (p, s) -> extractProcess p
+    Left err -> Left err
 
-verifyGeneral :: Monad m => ProofState m -> m (Either String (Proof, ProofState m))
-verifyGeneral s = do
-    v <- runProofState (subgoalJustification ( subgoals s ! "?a")) s
-    case v of
-        Right (p, s) -> return (case verifyProofM p of Right True -> Right (p, s); Right False -> Left "Could not verify the proof." ; Left e ->  Left e)
-        Left e -> return (Left e)
-
-extractFromJustification :: Monad m => ProofState m -> m (Either String (Process, Sequent))
-extractFromJustification s = do
-    v <- runProofState (subgoalJustification ( subgoals s ! "?a")) s
-    case v of
-        Right (p, s) -> do
-            let process1 = extractProcess p
-            return process1
-        Left err -> return (Left err)
-
-done :: ProofState Identity -> ProofState Identity
-done res = case runIdentity (verifyGeneral res) of
+done :: ProofState -> ProofState
+done res = case runAndVerifyJustification res of
     Right (p, s) -> s { theorems = Data.Map.insert (curTheoremName s) (Theorem p (fromIntegral . L.length . Data.Map.keys $ subgoals s)) (theorems s),  outputs = ("Theorem complete: " ++ curTheoremName s):outputs res}
-    Left err -> res { outputs = ("Could not verify proof: " ++ err):outputs res }
+    Left err -> res { outputs = ("Could not verify proof: " ++ err):outputs res, errors = ("Could not verify proof: " ++ err):errors res }
 
 -- DSL
 
-_Init :: String -> ProofState Identity
+_Init :: String -> ProofState
 _Init = initCleanState
 
--- _Clear :: String -> Proposition -> ProofState Identity
--- _Clear = clear
-
-_Theorem :: ProofState Identity -> String -> Proposition -> ProofState Identity
+_Theorem :: ProofState -> [Proposition] -> String -> Proposition -> ProofState
 _Theorem = theorem
 
-_Done :: ProofState Identity -> ProofState Identity
+_Done :: ProofState -> ProofState
 _Done = done
 
-_QED :: ProofState Identity -> ProofState Identity
+_QED :: ProofState -> ProofState
 _QED = _Done
 
-_Extract :: ProofState Identity -> String -> ProofState Identity
+_Extract :: ProofState -> String -> ProofState
 _Extract s tName =
     let
         extractor p = case extractProcess p of
@@ -1040,16 +1041,23 @@ _Extract s tName =
                   extractor (proofObject <$> (Data.Map.lookup (L.tail $ L.dropWhile (/= '.') tName) m))
             Just p -> extractor (proofObject p)
 
-_PushMessage :: ProofState Identity -> String -> ProofState Identity
+_STypeDecl :: String -> Proposition -> ProofState -> ProofState
+_STypeDecl n ty s = s { stypeDecls = (n, ty):(stypeDecls s) }
+
+_FAssumption :: String -> FunctionalTerm -> ProofState -> ProofState
+_FAssumption n ty s = s { fnAssumptions = (n, ty):(fnAssumptions s) }
+
+_PAssumption :: String -> Proposition -> ProofState -> ProofState
+_PAssumption n ty s = s { procAssumptions = (n, substTyDecls (stypeDecls s) ty):(procAssumptions s) }
+
+_PushMessage :: ProofState -> String -> ProofState
 _PushMessage s m = s { outputs = m:outputs s }
 
-_Apply :: ProofState Identity -> Tactic Identity -> ProofState Identity
-_Apply s t = case applyTacticM (Right s) t of
-    Right newS -> newS
-    Left err -> s { outputs = ("ERROR: " ++ err):outputs s}
+_Apply :: ProofState -> Tactic -> ProofState
+_Apply s t = applyTactic s t
 
 {-| Tactic: Apply a tactic from the functional system to a functional subgoal. -}
-_FTac :: FT.FunctionalTactic Identity -> Tactic Identity
+_FTac :: FT.FunctionalTactic -> Tactic
 _FTac t = do
     invalidateNameCache
     s <- ST.get
@@ -1058,45 +1066,39 @@ _FTac t = do
             Just (fs, p) -> case FT._FApply (Right fs) t of
                 Right newFs -> if FT._FDone newFs
                     then case FT._FGetProof newFs of
-                        Right fp -> case applyTactic s (p fp) of
-                            Right newS -> ST.put newS >> return "Functional proof complete and tactic applied."
-                            Left err -> tacError $ "ERROR applying tactic after functional proof: " ++ err
+                        Right fp -> ST.put (applyTactic s (p fp)) >> return "Functional proof complete and tactic applied."
                         Left e -> tacError $ "Proof completed, but justification has errors: " ++ e
                     else ST.put (s { subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (newFs, p) }) (subgoals s) }) >> return "Functional tactic applied."
                 Left e -> tacError e
             Nothing -> tacError "No in progress functional proof to apply to in current subgoal."
         Nothing -> tacError $ "Could not find current subgoal name: " ++ curSubgoal s ++ " in subgoals."
 
-_FApply :: ProofState Identity -> FT.FunctionalTactic Identity -> ProofState Identity
+_FApply :: ProofState -> FT.FunctionalTactic -> ProofState
 _FApply s t = case Data.Map.lookup (curSubgoal s) (subgoals s) of
     Just sg -> case inProgressFunctionalProof sg of
         Just (fs, p) -> case FT._FApply (Right fs) t of
             Right newFs -> if FT._FDone newFs
                 then case FT._FGetProof newFs of
-                    Right fp -> case applyTactic s (p fp) of
-                        Right newS -> newS
-                        Left err -> s { outputs = ("ERROR applying tactic after functional proof: " ++ err):outputs s }
-                    Left e -> s { outputs = ("Proof completed, but justification has errors: " ++ e):outputs s }
+                    Right fp -> applyTactic s (p fp)
+                    Left e -> s { outputs = ("Proof completed, but justification has errors: " ++ e):outputs s, errors = ("Proof completed, but justification has errors: " ++ e):errors s }
                 else s { subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (newFs, p) }) (subgoals s), outputs = "Functional tactic applied.":outputs s }
-            Left e -> s { outputs = e:outputs s }
-        Nothing -> s { outputs = "No in progress functional proof to apply to in current subgoal.":outputs s }
-    Nothing -> s { outputs = ("Could not find current subgoal name: " ++ curSubgoal s ++ " in subgoals."):outputs s }
+            Left e -> s { outputs = e:outputs s, errors = e:errors s }
+        Nothing -> s { outputs = "No in progress functional proof to apply to in current subgoal.":outputs s, errors = "No in progress functional proof to apply to in current subgoal.":errors s }
+    Nothing -> s { outputs = ("Could not find current subgoal name: " ++ curSubgoal s ++ " in subgoals."):outputs s, errors = ("Could not find current subgoal name: " ++ curSubgoal s ++ " in subgoals."):errors s }
 
 -- Identity
 {-| Tactic: Apply the Id tactic linking an explicitly provided resource with an offered resource. -}
-_Id :: Monad m => String -> Tactic m
+_Id :: String -> Tactic
 _Id = idTac
 
 -- Document tactics exactly like this!
 {-| Tactic: Apply the Id tactic linking a provided resource with an offered resource. -}
-_IdA :: Monad m => Tactic m
+_IdA :: Tactic
 _IdA = idATac
 
 -- Functional terms
--- _FTermR :: Monad m => FunctionalProof -> Tactic m
--- _FTermR = functionalTermRightTac
 {-| Tactic: Refine a functional term session type to a term in the functional system. -}
-_FTermR :: Monad m => Tactic m
+_FTermR :: Tactic
 _FTermR = do
     curState <- ST.get
     sg <- getCurrentSubgoal
@@ -1112,107 +1114,107 @@ _FTermR = do
         _ -> tacError $ "Cannot apply tactic to non Lift proposition: " ++ show (goalProposition seq)
 
 {-| Tactic: Refine a functional term session type in the assumptions to an assumption in the functional system. -}
-_FTermL :: Monad m => String -> Tactic m
+_FTermL :: String -> Tactic
 _FTermL = functionalTermLeftTac
 
 {-| Tactic: Automatically apply _FTermL to the first functional term in the linear context. -}
-_FTermLA :: Monad m => Tactic m
+_FTermLA :: Tactic
 _FTermLA = functionalTermLeftTacA
 
 {-| Tactic: Refine an implication. Assume the antecedent and prove the consequent. -}
-_ImpliesR :: Monad m => Tactic m
+_ImpliesR :: Tactic
 _ImpliesR = impliesRightTac
 
 {-| Tactic: Refine an implication assumption. Create a goal to prove the antecedent, and another goal where the consequent is an assumption. -}
-_ImpliesL :: Monad m => String -> Tactic m
+_ImpliesL :: String -> Tactic
 _ImpliesL = impliesLeftTac
 
 {-| Tactic: Automatically apply _ImpliesLA to the first implication proposition in the linear context. -}
-_ImpliesLA :: Monad m => Tactic m
+_ImpliesLA :: Tactic
 _ImpliesLA = impliesLeftTacA
 
 {-| Tactic: Refine a unit proposition. Completes this branch of the proof. -}
-_UnitR :: Monad m => Tactic m
+_UnitR :: Tactic
 _UnitR = unitRightTac
 
 {-| Tactic: Refine a unit assumption. Discards the assumption from the linear context. -}
-_UnitL :: Monad m => String -> Tactic m
+_UnitL :: String -> Tactic
 _UnitL = unitLeftTac
 
 {-| Tactic: Automatically apply _UnitL to the first implication proposition in the linear context. -}
-_UnitLA :: Monad m => Tactic m
+_UnitLA :: Tactic
 _UnitLA = unitLeftTacA
 
 {-| Tactic: Refine a replicating proposition. Create a goal to prove the inner proposition. -}
-_BangR :: Monad m => Tactic m
+_BangR :: Tactic
 _BangR = replicationRightTac
 
 {-| Tactic: Refine a replicating assumption. Moves the inner proposition to the unrestricted context. -}
-_BangL :: Monad m => String -> Tactic m
+_BangL :: String -> Tactic
 _BangL = replicationLeftTac
 
 {-| Tactic: Automatically apply _BangL to the first implication proposition in the linear context. -}
-_BangLA :: Monad m => Tactic m
+_BangLA :: Tactic
 _BangLA = replicationLeftTacA
 
 {-| Tactic: Creates a copy of an assumption in the unrestricted context in the linear context. -}
-_Copy :: Monad m => String -> Maybe String -> Tactic m
+_Copy :: String -> Maybe String -> Tactic
 _Copy = copyTac
 
 {-| Tactic: Refine a With proposition. Creates two goals. One to prove the left side, and the other to prove the right side. -}
-_WithR :: Monad m => Tactic m
+_WithR :: Tactic
 _WithR = withRightTac
 
 {-| Tactic: Refine a With assumption. Selects the left side as the assumption. -}
-_WithL1 :: Monad m => String -> Tactic m
+_WithL1 :: String -> Tactic
 _WithL1 = withLeft1Tac
 
 {-| Tactic: Automatically apply _WithL1 to the first implication proposition in the linear context. -}
-_WithL1A :: Monad m => Tactic m
+_WithL1A :: Tactic
 _WithL1A = withLeft1TacA
 
 {-| Tactic: Refine a With assumption. Selects the right side as the assumption. -}
-_WithL2 :: Monad m => String -> Tactic m
+_WithL2 :: String -> Tactic
 _WithL2 = withLeft2Tac
 
 {-| Tactic: Automatically apply _WithL2 to the first implication proposition in the linear context. -}
-_WithL2A :: Monad m => Tactic m
+_WithL2A :: Tactic
 _WithL2A = withLeft2TacA
 
 {-| Tactic: Refine a Tensor proposition. Creates two goals. One to prove the left side, and the other to prove the right side. -}
-_TensorR :: Monad m => Tactic m
+_TensorR :: Tactic
 _TensorR = tensorRightTac
 
 {-| Tactic: Refine a Tensor assumption. Both sides become one assumption each. -}
-_TensorL :: Monad m => String -> Tactic m
+_TensorL :: String -> Tactic
 _TensorL = tensorLeftTac
 
 {-| Tactic: Automatically apply _TensorL to the first implication proposition in the linear context. -}
-_TensorLA :: Monad m => Tactic m
+_TensorLA :: Tactic
 _TensorLA = tensorLeftTacA
 
 {-| Tactic: Refine a Plus proposition. Selects the left side as the goal. -}
-_PlusR1 :: Monad m => Tactic m
+_PlusR1 :: Tactic
 _PlusR1 = plusRight1Tac
 
 {-| Tactic: Refine a Plus proposition. Selects the right side as the goal. -}
-_PlusR2 :: Monad m => Tactic m
+_PlusR2 :: Tactic
 _PlusR2 = plusRight2Tac
 
 {-| Tactic: Refine a Plus assumption. Two subgoals are created. One to complete the proof with the left side of the assumption, and one for the right side. -}
-_PlusL :: Monad m => String -> Tactic m
+_PlusL :: String -> Tactic
 _PlusL = plusLeftTac
 
 {-| Tactic: Automatically apply _PlusL to the first implication proposition in the linear context. -}
-_PlusLA :: Monad m => Tactic m
+_PlusLA :: Tactic
 _PlusLA = plusLeftTacA
 
 {-| Tactic: Refine a forall quantification proposition. Adds the term to the functional context. -}
-_ForallR :: Monad m => Tactic m
+_ForallR :: Tactic
 _ForallR = forallRightTac
 
 {-| Tactic: Refine a forall quantification assumption. Creates a subgoal to validate the type of the term, and another to continue the proof once validated. -}
-_ForallL :: Monad m => String -> Tactic m
+_ForallL :: String -> Tactic
 _ForallL x = do
     curState <- ST.get
     sg <- getCurrentSubgoal
@@ -1227,11 +1229,11 @@ _ForallL x = do
                 return "Functional proof in progress.")
         _ -> tacError $ "Cannot apply tactic to non Forall proposition: " ++ show (goalProposition seq)
 
-_ForallLA :: Monad m => Tactic m
+_ForallLA :: Tactic
 _ForallLA = leftTacA _ForallL (\case Forall x t p -> True; _ -> False)
 
 {-| Tactic: Refine an existential quantification proposition. Creates a subgoal to validate the type of the term, and another to continue the proof once validated. -}
-_ExistsR :: Monad m => Tactic m
+_ExistsR :: Tactic
 _ExistsR = do
     curState <- ST.get
     sg <- getCurrentSubgoal
@@ -1247,117 +1249,96 @@ _ExistsR = do
         _ -> tacError $ "Cannot apply tactic to non Exists proposition: " ++ show (goalProposition seq)
 
 {-| Tactic: Refine an existential quantification assumption. Adds the term to the functional context. -}
-_ExistsL :: Monad m => String -> Tactic m
+_ExistsL :: String -> Tactic
 _ExistsL = existsLeftTac
 
 {-| Tactic: Automatically apply _ExistsL to the first implication proposition in the linear context. -}
-_ExistsLA :: Monad m => Tactic m
+_ExistsLA :: Tactic
 _ExistsLA = existsLeftTacA
 
 {-| Tactic: Refine a second order universal quantified proposition. Adds the variable to the type variable context. -}
-_Forall2R :: Monad m => Tactic m
+_Forall2R :: Tactic
 _Forall2R = forallRight2Tac
 
 {-| Tactic: Refine a second order universal quantified assumption. Provide a well-formed type to bind to the abstraction. -}
-_Forall2L :: Monad m => String -> Proposition -> Tactic m
+_Forall2L :: String -> Proposition -> Tactic
 _Forall2L = forallLeft2Tac
 
 {-| Tactic: Refine a second order existential quantified proposition. Provide a well-formed type to bind to the abstraction. -}
-_Exists2R :: Monad m => Proposition -> Tactic m
+_Exists2R :: Proposition -> Tactic
 _Exists2R = existsRight2Tac
 
 {-| Tactic: Refine a second order existential quantified assumption. Adds the variable to the type variable context. -}
-_Exists2L :: Monad m => String -> Tactic m
+_Exists2L :: String -> Tactic
 _Exists2L = existsLeft2Tac
 
 {-| Tactic: Automatically apply _Exists2L to the first implication proposition in the linear context. -}
-_Exists2LA :: Monad m => Tactic m
+_Exists2LA :: Tactic
 _Exists2LA = existsLeft2TacA
 
 {-| Tactic: Cut a theorem into the proof. A goal to prove the theorem is created, and another goal to use it as an assumption is created. -}
-_Cut :: Monad m => Proposition -> Tactic m
+_Cut :: Proposition -> Tactic
 _Cut = cutTac
 
 {-| Tactic: Cut a replicating theorem into the proof. A goal to prove the theorem is created, and another goal to use it as an unrestricted assumption is created. -}
-_CutRepl :: Monad m => Proposition -> Tactic m
+_CutRepl :: Proposition -> Tactic
 _CutRepl = cutReplicationTac
 
-_CutTheorem :: Monad m => String -> Tactic m
+_CutTheorem :: String -> Tactic
 _CutTheorem = cutLinearTheoremTac
 
-_CutReplTheorem :: Monad m => String -> Tactic m
-_CutReplTheorem = (\s -> return "Not implemented!")
+_CutReplTheorem :: String -> Tactic
+_CutReplTheorem = (\s -> tacError "Not implemented!")
 
 {-| Tactic: Refine a corecursive proposition. Provide the binding name, parameter names, and initial arguments. -}
-_NuR :: Monad m => String -> [String] -> [String] -> Tactic m
+_NuR :: String -> [String] -> [String] -> Tactic
 _NuR = nuRightTac
 
 {-| Tactic: Refine a corecursive assumption. Unfolds the type one level. -}
-_NuL :: Monad m => String -> Tactic m
+_NuL :: String -> Tactic
 _NuL = nuLeftTac
 
 {-| Tactic: Automatically apply _NuL to the first implication proposition in the linear context. -}
-_NuLA :: Monad m => Tactic m
+_NuLA :: Tactic
 _NuLA = nuLeftTacA
 
 {-| Tactic: Refine a type variable assumption. Provide the binding name from a previous _NuR application and the new arguments. -}
-_TyVar :: Monad m => String -> [String] -> Tactic m
+_TyVar :: String -> [String] -> Tactic
 _TyVar = tyVarTac
 
 {-| Tactic: Apply the weaken structural rule to the matching variable in the unrestricted or functional context. Will not allow the other contexts to be modified. -}
-_Weaken :: Monad m => String -> Tactic m
+_Weaken :: String -> Tactic
 _Weaken = weakenTac
 
 -- Hole
-_Hole :: Monad m => Tactic m
+_Hole :: Tactic
 _Hole = holeTac
 
-_Fiat :: Monad m => Tactic m
+_Fiat :: Tactic
 _Fiat = _Hole
 
 -- Tacticals
 {-| Tactic: Apply one tactic, then the second to the resulting subgoals of the first tactic. -}
-_Then :: Monad m => Tactic m -> Tactic m -> Tactic m
+_Then :: Tactic -> Tactic -> Tactic
 _Then = thenTactical
 
 {-| Tactic: Apply one tactic, then the second if the first one fails. -}
-_Alt :: Monad m => Tactic m -> Tactic m -> Tactic m
+_Alt :: Tactic -> Tactic -> Tactic
 _Alt = altTactical
 
 {-| Tactic: Do nothing and succeed. Useful with _Alt. -}
-_Skip :: Monad m => Tactic m
+_Skip :: Tactic
 _Skip = skipTactical
 
 {-| Tactic: Apply the tactic until it no longer succeeds. -}
-_Repeat :: Monad m => Tactic m -> Tactic m
+_Repeat :: Tactic -> Tactic
 _Repeat = repeatTactical
 
 {-| Tactic: Apply all available introduction rules. -}
-_Intros :: Monad m => Tactic m
+_Intros :: Tactic
 _Intros = _Repeat (_ImpliesR `_Alt` _ForallR `_Alt` _Forall2R)
 
--- _Switch :: Monad m => String -> Tactic m
--- _Switch newSg = do
---     validSwitch <- Data.Map.member newSg <$> ST.gets subgoals
---     if validSwitch
---     then (do
---         --ST.modify (\s -> s{curSubgoal = newSg})
---         return $ "Switched subgoal to " ++ newSg)
---     else (do
---         curState <- ST.get
---         let sgName = L.takeWhile (/= '.') newSg
---             fgName = L.tail . L.dropWhile (/= '.') $ newSg
---         newSgData <- case Data.Map.lookup sgName (subgoals curState) of
---             Nothing -> tacError "No valid switch."
---             Just res -> return res
---         (fs, tac) <- case inProgressFunctionalProof newSgData of
---             Nothing -> tacError "No valid switch."
---             Just res -> return res
---         _ <- (if Data.Map.member fgName (FT.subgoals fs) then return () else tacError "No valid switch.")
---         ST.modify (\s -> s { curSubgoal = sgName, subgoals = Data.Map.insert sgName (newSgData { inProgressFunctionalProof = Just (fs { FT.curSubgoal = fgName }, tac) }) (subgoals s) })
---         return $ "Switched subgoal to " ++ newSg)
-
-_Defer :: Monad m => ProofState m -> ProofState m
+_Defer :: ProofState -> ProofState
 _Defer curS =
     let
         filteredStack = L.filter (\name -> maybe False (not . isUsed) (Data.Map.lookup name (subgoals curS))) (openGoalStack curS)
@@ -1365,7 +1346,7 @@ _Defer curS =
     in
         curS { openGoalStack = newStack }
 
-_Prefer :: Monad m => ProofState m -> Int ->  ProofState m
+_Prefer :: ProofState -> Int ->  ProofState
 _Prefer curS i =
     let
         curSgs = openGoalStack curS
@@ -1375,39 +1356,23 @@ _Prefer curS i =
         then curS
         else curS { openGoalStack = head ts : (hs ++ tail ts) }
 
-_PrintTheorems :: Monad m => ProofState m -> ProofState m
+_PrintTheorems :: ProofState -> ProofState
 _PrintTheorems s = let
-    --printTs curMessage prefix ts = Data.Map.foldrWithKey (\k v acc -> case concl v of Right seq -> k ++ ": " ++ seqToS seq ++ "\n" ++ acc; Left e -> acc) curMessage ts
     localTs = L.intercalate "\n" $ L.filter (/= "") $ (\(n, p) -> case concl p of Right seq -> n ++ ": " ++ seqToS seq; Left e -> "") <$> Data.Map.toList (proofObject <$> theorems s)
     modulePrint = L.intercalate "\n" $ L.filter (/= "") $ (\(mName, moduleTheorems) -> L.intercalate "\n" $ L.filter (/= "") $ (\(n, p) -> case concl p of Right seq -> mName ++ "." ++ n ++ ": " ++ seqToS seq; Left e -> "") <$> Data.Map.toList (proofObject <$> moduleTheorems)) <$> Data.Map.toList (loadedModules s)
-    --localTs = printTs "" "" (theorems s)
-    --fullMessage = Data.Map.foldrWithKey (\k v acc -> acc ++ )
     in s { outputs = (L.intercalate "\n" [modulePrint, localTs]):outputs s }
 
-_LoadModule :: Monad m => ProofState m -> ProofState m -> ProofState m
-_LoadModule curState moduleData = curState {
-        loadedModules = Data.Map.insert (curModuleName moduleData) (theorems moduleData) (loadedModules curState),
-        outputs = ("Loaded module: " ++ curModuleName moduleData):outputs curState
-    }
-
-_SaveModule :: Monad m => ProofState m -> String -> ProofState m
-_SaveModule curState mName = curState {
-    theorems = Data.Map.empty,
-    loadedModules = Data.Map.insert mName (theorems curState) (loadedModules curState),
-    outputs = ("Saved theorems as module: " ++ mName):outputs curState
-}
-
-_TestDisallowedVars :: Monad m => Tactic m
+_TestDisallowedVars :: Tactic
 _TestDisallowedVars = do
     s <- ST.get
     return $ show (getUnavailableVarsForSubgoal (curSubgoal s) s)
 
-_TestBranchReserved :: Monad m => Tactic m
+_TestBranchReserved :: Tactic
 _TestBranchReserved = do
     s <- ST.get
     return $ show (getVarsReservedInSubgoalBranches  s (curSubgoal s))
 
-_TestPrevGoal :: Monad m => Tactic m
+_TestPrevGoal :: Tactic
 _TestPrevGoal = do
     sg <- getCurrentSubgoal
     return $ prevGoal sg

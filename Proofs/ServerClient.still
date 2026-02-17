@@ -1,0 +1,46 @@
+module ServerClient begin
+
+stype N = "1"
+stype I = "1"
+
+stype serverProto = "((N -o I -o (N * 1)) & (N -o (I * 1)))"
+
+theorem qclientbody consumes "serverProto": "1"
+apply ExactPi "a.inr;(nu tea:1) a[tea].(0 | a(pr).0)"
+done
+
+theorem server: "serverProto"
+apply ExactPi "z.case(inl: z(pn).z(cn).(nu rc:1) z[rc].(0|0), inr: z(pn).(nu pr:1) z[pr].(0|0))"
+done
+
+theorem bclientbody consumes "serverProto": "1"
+apply ExactPi "a.inl; (nu cof:1) a[cof].(0 | (nu pin:1) a[pin].(0 | a(rc).0))"
+done
+
+theorem bsimple: "1"
+apply CutTheorem server
+apply ExactPi "a.inl; (nu cof:1) a[cof].(0 | (nu pin:1) a[pin].(0 | a(rc).0))"
+done
+
+theorem sharedServer: "!serverProto"
+apply ExactPi "!z(s).s.case(inl: s(pn).s(cn).(nu rc:1) s[rc].(0|0), inr: s(pn).(nu pr:1) s[pr].(0|0))"
+done
+
+theorem qclient consumes "!serverProto": "1"
+apply BangLA
+apply ExactPi "(nu c:((1 -o 1 -o (1 * 1)) & (1 -o (1 * 1)))) b[c].c.inr;(nu tea:1) c[tea].(0 | c(pr).0)"
+done
+
+theorem bclient consumes "!serverProto": "1"
+apply BangLA
+apply ExactPi "(nu c:((1 -o 1 -o (1 * 1)) & (1 -o (1 * 1)))) b[c].c.inl; (nu cof:1) c[cof].(0 | (nu pin:1) c[pin].(0 | c(rc).0))"
+done
+
+theorem allTogether: "1"
+apply CutTheorem sharedServer
+apply BangLA
+apply CutTheorem qclient
+apply CutTheorem bclient
+apply UnitLA+
+apply UnitR
+done

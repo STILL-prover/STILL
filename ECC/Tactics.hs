@@ -12,7 +12,6 @@ import ECC.Kernel hiding (FunctionalSequent(functionalContext, goalType, goalTer
 import qualified ECC.Kernel as FS (FunctionalSequent(..))
 import Util
 import Debug.Trace
-import Control.Monad.Trans (MonadIO(liftIO))
 import Control.Monad.Identity ( Identity(runIdentity) )
 import qualified Data.Map as M
 
@@ -29,39 +28,41 @@ ftseqToSHelper seq = L.dropWhile (\c -> c == ',' || c == ' ') (L.foldl (\acc (k,
 getFunctionalTacticsSequentNames :: FunctionalTacticsSequent -> S.Set String
 getFunctionalTacticsSequentNames (FunctionalTacticsSequent fc gt gTy) = functionalNames gTy `S.union` maybe S.empty functionalNames gt `S.union` getFunctionalContextNames fc
 
-data Subgoal m = Subgoal {
+data Subgoal = Subgoal {
     sequent :: FunctionalTacticsSequent,
     prevGoal :: String,
     nextGoals :: [String],
-    subgoalJustification :: ProverStateT m FunctionalProof,
+    subgoalJustification :: ProverState FunctionalProof,
     used :: Bool
 } deriving ()
 
-data ProofState m = S {
-    subgoals :: Map String (Subgoal m),
+data ProofState = S {
+    subgoals :: Map String Subgoal,
     curSubgoal :: String,
     usedSubgoalNames :: S.Set String,
     reservedVars :: S.Set String
 } deriving ()
 
-initializeProof :: Monad m => FunctionalTacticsSequent -> Subgoal m
+initializeProof :: FunctionalTacticsSequent -> Subgoal
 initializeProof seq = Subgoal { sequent = seq, prevGoal = "", nextGoals = [], used = False, subgoalJustification = tacError "No justification." }
 
-initializeState :: Subgoal m -> S.Set String -> ProofState m
+initializeState :: Subgoal -> S.Set String -> ProofState
 initializeState goal additionalReservedVars =
     let
         fnVars = getFunctionalContextNames . functionalContext . sequent $ goal
     in
         S { subgoals = singleton "?a" goal, curSubgoal = "?a", reservedVars = additionalReservedVars `S.union` fnVars, usedSubgoalNames = S.singleton "?a" }
 
-type ProverStateT m a = ST.StateT (ProofState m) (E.ExceptT String m) a
+type ProverStateT m a = ST.StateT ProofState (E.ExceptT String m) a
 
-type Justification m = ProverStateT m FunctionalProof
+type ProverState a = ProverStateT Identity a
 
-buildJustification0 :: Monad m => FunctionalProof -> Justification m
+type Justification m = ProverState FunctionalProof
+
+buildJustification0 :: FunctionalProof -> Justification m
 buildJustification0 = return
 
-buildJustification1 :: Monad m => String -> (FunctionalProof -> FunctionalProof) -> Justification m
+buildJustification1 :: String -> (FunctionalProof -> FunctionalProof) -> Justification m
 buildJustification1 sg p = do
     curSubgoals <- ST.gets subgoals
     case Data.Map.lookup sg curSubgoals of
@@ -70,7 +71,7 @@ buildJustification1 sg p = do
             return $ p jst
         _ -> tacError $ "Child subgoal lost " ++ sg
 
-buildJustification2 :: Monad m => String -> String -> (FunctionalProof -> FunctionalProof -> FunctionalProof) -> Justification m
+buildJustification2 :: String -> String -> (FunctionalProof -> FunctionalProof -> FunctionalProof) -> Justification m
 buildJustification2 sg1 sg2 p = do
     curSubgoals <- ST.gets subgoals
     case Data.Map.lookup sg1 curSubgoals of
@@ -79,7 +80,7 @@ buildJustification2 sg1 sg2 p = do
             buildJustification1 sg2 (p jst)
         _ -> tacError $ "Child subgoal lost " ++ sg1
 
-buildJustification3 :: Monad m => String -> String -> String -> (FunctionalProof -> FunctionalProof -> FunctionalProof -> FunctionalProof) -> Justification m
+buildJustification3 :: String -> String -> String -> (FunctionalProof -> FunctionalProof -> FunctionalProof -> FunctionalProof) -> Justification m
 buildJustification3 sg1 sg2 sg3 p = do
     curSubgoals <- ST.gets subgoals
     case Data.Map.lookup sg1 curSubgoals of
@@ -96,12 +97,12 @@ instance Show (ProverStateT m FunctionalProof) where
 -- --     justification :: Justification
 -- -- } deriving (Show)
 
-type FunctionalTactic m = ProverStateT m String
+type FunctionalTactic = ProverState String
 
-tacError :: Monad m => String -> ProverStateT m a
+tacError :: String -> ProverState a
 tacError = ST.lift . E.throwE
 
-liftMaybeWithError :: Monad m => String -> Maybe a -> ProverStateT m a
+liftMaybeWithError :: String -> Maybe a -> ProverState a
 liftMaybeWithError err res = case res of
     Nothing -> tacError err
     Just x -> return x
@@ -109,7 +110,7 @@ liftMaybeWithError err res = case res of
 allSubgoalNames :: [String]
 allSubgoalNames = ('?' :) <$> namesInOrder
 
-getFreshVar :: Monad m => ProverStateT m String
+getFreshVar :: ProverState String
 getFreshVar = do
     curSubgoals <- ST.gets subgoals
     uniqueNames <- reservedVars <$> ST.get
@@ -118,7 +119,7 @@ getFreshVar = do
     ST.modify (\s -> s { reservedVars = S.insert newVar $ reservedVars s })
     return newVar
 
-getFreshVarAttempt :: Monad m => String -> ProverStateT m String
+getFreshVarAttempt :: String -> ProverState String
 getFreshVarAttempt z = do
     curSubgoals <- ST.gets subgoals
     uniqueNames <- reservedVars <$> ST.get
@@ -128,14 +129,14 @@ getFreshVarAttempt z = do
     ST.modify (\s -> s { reservedVars = S.insert newVar $ reservedVars s })
     return newVar
 
-getFreshSubgoalName :: Monad m => ProverStateT m String
+getFreshSubgoalName :: ProverState String
 getFreshSubgoalName = do
     curSubgoals <- ST.gets usedSubgoalNames
     let newSubgoalName = head $ Prelude.filter (\l -> not $ S.member l curSubgoals) allSubgoalNames
     ST.modify (\s -> s { usedSubgoalNames = S.insert newSubgoalName $ usedSubgoalNames s })
     return newSubgoalName
 
-createNewSubgoal :: Monad m => FunctionalTacticsSequent -> ProverStateT m String
+createNewSubgoal :: FunctionalTacticsSequent -> ProverState String
 createNewSubgoal seq = do
     freshGoal <- getFreshSubgoalName
     curSubgoalName <- ST.gets curSubgoal
@@ -143,13 +144,13 @@ createNewSubgoal seq = do
     ST.modify (\s -> s { subgoals = Data.Map.insert freshGoal newSubgoal $ subgoals s })
     return freshGoal
 
-getCurrentSequent :: Monad m => ProverStateT m FunctionalTacticsSequent
+getCurrentSequent :: ProverState FunctionalTacticsSequent
 getCurrentSequent = do
     curSubgoalName <- ST.gets curSubgoal
     curSubgoalMaybe <- Data.Map.lookup curSubgoalName <$> ST.gets subgoals
     sequent <$> liftMaybeWithError ("Cannot find current subgoal " ++ curSubgoalName) curSubgoalMaybe
 
-useCurrentSubgoal :: Monad m => Justification m -> ProverStateT m ()
+useCurrentSubgoal :: Justification m -> ProverState ()
 useCurrentSubgoal j = do
     curState <- ST.get
     let curSubgoals = subgoals curState
@@ -160,7 +161,7 @@ useCurrentSubgoal j = do
     let availableNextSubgoals = L.dropWhile (\(x, sg) -> used sg) $ Data.Map.toList newSubgoals
     if not (L.null availableNextSubgoals) then ST.modify (\s -> s { curSubgoal = fst . head $ availableNextSubgoals }) else ST.modify (\s -> s { curSubgoal = "" })
 
-axTac :: Monad m => FunctionalTactic m
+axTac :: FunctionalTactic
 axTac = do
     seq <- getCurrentSequent
     let ctx = functionalContext seq
@@ -170,7 +171,7 @@ axTac = do
                 return "Ax tactic applied." else tacError "Empty context required"
         _ -> tacError $ "EXPECTED: " ++ show (Type 0) ++ "\nRECEIVED: " ++ show (goalType seq)
 
--- cTac :: Monad m => String -> Integer -> FunctionalTactic m
+-- cTac :: String -> Integer -> FunctionalTactic
 -- cTac x j = do
 --     seq <- getCurrentSequent
 --     let ctx = functionalContext seq
@@ -183,7 +184,7 @@ axTac = do
 --             else tacError "Cannot apply to non- (Prop:Type 0) goal."
 --         Nothing -> tacError $ "Could not find " ++ show x ++ " in the context."
 
-tTac :: Monad m => FunctionalTactic m
+tTac :: FunctionalTactic
 tTac = do
     seq <- getCurrentSequent
     let ctx = functionalContext seq
@@ -196,7 +197,7 @@ tTac = do
             else tacError "Goal term is not valid. Should be type universe minus 1."
         _ -> tacError "Cannot apply to non-Type j goal."
 
--- wfTac :: Monad m => FunctionalTactic m
+-- wfTac :: FunctionalTactic
 -- wfTac = do
 --     seq <- getCurrentSequent
 --     let ctx = functionalContext seq
@@ -208,7 +209,7 @@ tTac = do
 --         (Left e, _) -> tacError e
 --         (_, Left e) -> tacError e
 
-varTac :: Monad m => String -> FunctionalTactic m
+varTac :: String -> FunctionalTactic
 varTac x = do
     seq <- getCurrentSequent
     let ctx = functionalContext seq
@@ -226,7 +227,7 @@ varTac x = do
             else tacError $ "Cannot apply tactic. Goal term or type is mismatched.\nEXPECTED: " ++ maybe "" show (goalTerm seq) ++ show (goalType seq) ++ "\nRECEIVED: " ++ show xTy
         _ -> tacError $ "Cannot find " ++ x ++ " in the context."
 
-varATac :: Monad m => FunctionalTactic m
+varATac :: FunctionalTactic
 varATac = do
     seq <- getCurrentSequent
     let ctx = functionalContext seq
@@ -236,7 +237,7 @@ varATac = do
             ((x,xTy):rest) -> varTac x
             _ -> tacError $ "Cannot find a variable with type " ++ show (goalType seq) ++ " in the context."
 
-piTac :: Monad m => Maybe FunctionalTerm -> FunctionalTactic m
+piTac :: Maybe FunctionalTerm -> FunctionalTactic
 piTac fa = do
     seq <- getCurrentSequent
     (realX, realA, realB) <- case (fa, goalTerm seq) of
@@ -253,7 +254,7 @@ piTac fa = do
     useCurrentSubgoal . buildJustification2 freshGoalLeft freshGoalRight $ PiRule realX
     return "Pi tactic applied."
 
-lambdaTac :: Monad m => FunctionalTactic m
+lambdaTac :: FunctionalTactic
 lambdaTac = do
     seq <- getCurrentSequent
     case goalType seq of
@@ -267,7 +268,7 @@ lambdaTac = do
             return "Lambda tactic applied"
         _ -> tacError "Tactic cannot be used on non-Pi goal."
 
-tyAppTac :: Monad m => String -> FunctionalTerm -> Maybe FunctionalTerm -> FunctionalTactic m
+tyAppTac :: String -> FunctionalTerm -> Maybe FunctionalTerm -> FunctionalTactic
 tyAppTac x a nMaybe = do
     seq <- getCurrentSequent
     (m, realNTerm) <- case (nMaybe, goalTerm seq) of
@@ -282,7 +283,7 @@ tyAppTac x a nMaybe = do
     useCurrentSubgoal . buildJustification2 freshGoalLeft freshGoalRight $ AppRule
     return "Tyapp tactic applied."
 
-sigmaTac :: Monad m => Maybe FunctionalTerm -> FunctionalTactic m
+sigmaTac :: Maybe FunctionalTerm -> FunctionalTactic
 sigmaTac fa = do
     seq <- getCurrentSequent
     (realX, realA, realB) <- case (fa, goalTerm seq) of
@@ -299,7 +300,7 @@ sigmaTac fa = do
     useCurrentSubgoal . buildJustification2 freshGoalLeft freshGoalRight $ SigmaRule realX
     return "Sigma tactic applied."
 
-pairTac :: Monad m => Maybe FunctionalTerm -> Maybe FunctionalTerm -> Integer -> FunctionalTactic m
+pairTac :: Maybe FunctionalTerm -> Maybe FunctionalTerm -> Integer -> FunctionalTactic
 pairTac mMaybe nMaybe j = do
     seq <- getCurrentSequent
     realMTerm <- case (mMaybe, goalTerm seq) of
@@ -320,7 +321,7 @@ pairTac mMaybe nMaybe j = do
     useCurrentSubgoal . buildJustification3 freshGoal1 freshGoal2 freshGoal3 $ PairRule x
     return "Pair tactic applied."
 
-proj1Tac :: Monad m => String -> FunctionalTerm -> FunctionalTactic m
+proj1Tac :: String -> FunctionalTerm -> FunctionalTactic
 proj1Tac x b = do
     seq <- getCurrentSequent
     realM <- case goalTerm seq of
@@ -331,7 +332,7 @@ proj1Tac x b = do
     useCurrentSubgoal . buildJustification1 freshGoal $ Proj1Rule
     return "Proj1 tactic applied"
 
-proj2Tac :: Monad m => String -> FunctionalTerm -> Maybe FunctionalTerm -> FunctionalTactic m
+proj2Tac :: String -> FunctionalTerm -> Maybe FunctionalTerm -> FunctionalTactic
 proj2Tac x a mMaybe = do
     seq <- getCurrentSequent
     realM <- case (mMaybe, goalTerm seq) of
@@ -343,7 +344,7 @@ proj2Tac x a mMaybe = do
     useCurrentSubgoal . buildJustification1 freshGoal $ Proj2Rule
     return "Proj2 tactic applied"
 
-cumulativityTac :: Monad m => FunctionalTerm -> Integer -> FunctionalTactic m
+cumulativityTac :: FunctionalTerm -> Integer -> FunctionalTactic
 cumulativityTac a j = do
     seq <- getCurrentSequent
     if cumulativiyRelation (goalType seq) a
@@ -354,7 +355,7 @@ cumulativityTac a j = do
         return "Cumulativity tactic applied")
     else tacError $ show a ++ " does not reduce to " ++ show (goalType seq)
 
-simpTac :: Monad m => Integer -> FunctionalTactic m
+simpTac :: Integer -> FunctionalTactic
 simpTac steps = do
     seq <- getCurrentSequent
     let reductions = L.take (fromInteger steps) $ allConversionSteps (goalType seq) -- avoid infinite loops by limiting to set number of steps.
@@ -375,7 +376,7 @@ simpTac steps = do
                 (Right False) -> tacError $ "Could not verify proof"
         Left e -> tacError e
 
-exactTac :: Monad m => FunctionalTerm -> FunctionalTactic m
+exactTac :: FunctionalTerm -> FunctionalTactic
 exactTac ft = do
     seq <- getCurrentSequent
     let pMaybe = extractProofFromTermUnderCtx (functionalContext seq) ft
@@ -389,141 +390,38 @@ exactTac ft = do
         Right False -> tacError ("Could not extract valid proof from " ++ show ft)
         Left e -> tacError e
 
-exactKnownTac :: Monad m => FunctionalTactic m
+exactKnownTac :: FunctionalTactic
 exactKnownTac = do
     seq <- getCurrentSequent
     case goalTerm seq of
         Just res -> exactTac res
         Nothing -> tacError "No term known for goal."
 
-axTacAction :: FunctionalTactic IO
-axTacAction = axTac
-
-varTacAction :: FunctionalTerm -> FunctionalTactic IO
-varTacAction t = do
-    liftIO $ Prelude.putStrLn "Enter the variable name in the context:"
-    i <- liftIO Prelude.getLine
-    varTac i
-
-largeTypeTacAction :: FunctionalTactic IO
-largeTypeTacAction = do
-    seq <- getCurrentSequent
-    if isJust $ goalTerm seq
-    then piTac Nothing
-    else (do
-        liftIO . Prelude.putStrLn $ "Enter the Pi term that you would like to prove has type " ++ show (goalType seq)
-        newGoalTerm <- liftIO Prelude.getLine
-        piTac (Prelude.read newGoalTerm))
-
-piTacAction :: FunctionalTactic IO
-piTacAction = lambdaTac
-
-tyAppTacAction :: FunctionalTactic IO
-tyAppTacAction = do
-    liftIO $ Prelude.putStrLn "Enter the variable name you would like to replace in the goal:"
-    x <- liftIO Prelude.getLine
-    liftIO $ Prelude.putStrLn "Enter the type of the variable as a term:"
-    a <- Prelude.read <$> liftIO Prelude.getLine
-    seq <- getCurrentSequent
-    if isJust $ goalTerm seq
-    then tyAppTac x a Nothing
-    else (do
-        liftIO . Prelude.putStrLn $ "Enter the term you would like to replace " ++ x ++ " with:"
-        n <- Prelude.read <$> liftIO Prelude.getLine
-        tyAppTac x a (Just n))
-
-betaReduceTacAction :: FunctionalTerm -> FunctionalTactic IO
-betaReduceTacAction k = do
-    seq <- getCurrentSequent
-    liftIO . Prelude.putStrLn $ "Enter a term that beta-reduces to " ++ show (goalType seq)
-    a <- Prelude.read <$> liftIO Prelude.getLine
-    liftIO . Prelude.putStrLn $ "Enter the level of universe " ++ show (goalType seq)
-    j <- Prelude.read <$> liftIO Prelude.getLine
-    cumulativityTac a j
-
-actions :: [(String, FunctionalTactic IO)]
-actions = []
--- actions = [("ax", axTacAction),
---     ("varT", varTacAction T),
---     ("varP", varTacAction P),
---     ("largeTypeP", largeTypeTacAction P),
---     ("largeTypeT", largeTypeTacAction T),
---     ("piP", piTacAction P),
---     ("piT", piTacAction T),
---     ("tyApp", tyAppTacAction),
---     ("betaP", betaReduceTacAction P),
---     ("betaT", betaReduceTacAction T)]
-
-proveLoop :: ProofState IO -> IO (ProofState IO)
-proveLoop st = do
-    if Data.Map.member (curSubgoal st) (subgoals st)
-    then (do
-        Prelude.putStrLn "Current state:"
-        Prelude.putStrLn $ "Current subgoal: " ++ curSubgoal st
-        Prelude.putStrLn $ "Sequent: " ++ ftseqToSHelper (sequent (subgoals st! curSubgoal st))
-        Prelude.putStrLn "Enter a tactic (exit to switch back for now): "
-        (i :: String) <- Prelude.getLine
-        if L.any (\a -> fst a == i) actions
-        then do
-            let nextTactic = snd . head $ L.filter (\a -> fst a == i) actions
-            tacRes <- E.runExceptT (ST.runStateT nextTactic st)
-            case tacRes of
-                Right (res, newState) -> (do
-                    Prelude.putStrLn res
-                    proveLoop newState)
-                Left err -> (do
-                    Prelude.putStrLn err
-                    proveLoop st)
-        else return st)
-    else return st
-
-prove :: FunctionalContext -> FunctionalTerm -> S.Set String -> IO (ProofState IO)
-prove assms g vars = do
-    let seq = FunctionalTacticsSequent { functionalContext = assms, goalTerm = Nothing, goalType = g }
-    proveLoop $ initializeState (initializeProof seq) vars
-
-continueProof :: ProofState IO -> IO (ProofState IO)
-continueProof = proveLoop
-
--- prove :: FunctionalContext -> FunctionalTerm -> S.Set String -> IO (Either String FunctionalProof)
--- prove assms g vars = do
---     let seq = FunctionalTacticsSequent { functionalContext = assms, goalTerm = Nothing, goalType = g }
---     finalState <- proveLoop $ initializeState (initializeProof seq) vars
---     let firstSubgoal = Data.Map.lookup "?a" $ subgoals finalState
---     case firstSubgoal of
---         Just sg -> E.runExceptT (fst <$> ST.runStateT (subgoalJustification sg) finalState)
---         Nothing -> return (Left "Could not find first subgoal!")
-
-isComplete :: Monad m => ProofState m -> Bool
+isComplete :: ProofState -> Bool
 isComplete s = all used (Data.Map.elems $ subgoals s)
 
-getProof :: Monad m => ProofState m -> m (Either String FunctionalProof)
+getProof :: ProofState -> Either String FunctionalProof
 getProof s = case Data.Map.lookup "?a" $ subgoals s of
-    Just sg -> E.runExceptT (fst <$> ST.runStateT (subgoalJustification sg) s)
-    Nothing -> return (Left "Could not find first subgoal!")
+    Just sg -> runIdentity $ E.runExceptT (fst <$> ST.runStateT (subgoalJustification sg) s)
+    Nothing -> Left "Could not find first subgoal!"
 
-runProofState :: ST.StateT s (E.ExceptT String m) a -> s -> m (Either String (a, s))
-runProofState a s = E.runExceptT (ST.runStateT a s)
+runProofState :: ST.StateT s (E.ExceptT String Identity) a -> s -> Either String (a, s)
+runProofState a s = runIdentity $ E.runExceptT $ ST.runStateT a s
 
-applyFTacticGeneral :: Monad m => ProofState m -> FunctionalTactic m -> m (Either String (ProofState m))
-applyFTacticGeneral s t = do
-    res <- runProofState t s
-    case res of
-        Right (notif, newState) -> return . Right $ newState
-        Left e -> return . Left $ e
+applyFTactic :: ProofState -> FunctionalTactic -> Either String ProofState
+applyFTactic s t = case runProofState t s of
+    Right (notif, newState) -> Right newState
+    Left e -> Left e
 
-applyFTactic :: ProofState Identity -> FunctionalTactic Identity -> Either String (ProofState Identity)
-applyFTactic s t = runIdentity $ applyFTacticGeneral s t
-
-applyFTacticM :: Either String (ProofState Identity) -> FunctionalTactic Identity -> Either String (ProofState Identity)
-applyFTacticM s t = s >>= (\s -> runIdentity $ applyFTacticGeneral s t)
+applyFTacticM :: Either String ProofState -> FunctionalTactic -> Either String ProofState
+applyFTacticM s t = s >>= (\s -> applyFTactic s t)
 
 -- ============================================================
 -- DSL for FunctionalTactics.hs
 -- ============================================================
 
 -- Start a theorem
-_FTheorem :: Monad m => FunctionalContext -> FunctionalTerm -> S.Set String -> ProofState m
+_FTheorem :: FunctionalContext -> FunctionalTerm -> S.Set String -> ProofState
 _FTheorem ctx g reserved =
     initializeState (initializeProof (FunctionalTacticsSequent
         { functionalContext = ctx
@@ -531,94 +429,94 @@ _FTheorem ctx g reserved =
         , goalType = g
         })) reserved
 
-_FApply :: Either String (ProofState Identity) -> FunctionalTactic Identity -> Either String (ProofState Identity)
+_FApply :: Either String ProofState -> FunctionalTactic -> Either String ProofState
 _FApply = applyFTacticM
 
 -- Completion
-_FDone :: ProofState Identity -> Bool
+_FDone :: ProofState -> Bool
 _FDone = isComplete
 
-_FQED :: ProofState Identity -> Bool
+_FQED :: ProofState -> Bool
 _FQED = _FDone
 
 -- Extract proof
-_FGetProof :: ProofState Identity -> Either String FunctionalProof
-_FGetProof st = runIdentity (getProof st)
+_FGetProof :: ProofState -> Either String FunctionalProof
+_FGetProof st = getProof st
 
 -- Core rules
 {-| Tactic: Apply the axiom tactic. Proving Prop:Type 0 -}
-_FAx :: Monad m => FunctionalTactic m
+_FAx :: FunctionalTactic
 _FAx = axTac
 
 {-| Tactic: Apply the well-formed tactic. Attempt to complete a full proof that the types in the context are well formed. -}
--- _FWF :: Monad m => FunctionalTactic m
+-- _FWF :: FunctionalTactic
 -- _FWF = wfTac
 
 {-| Tactic: Provide the variable with the type in the context. -}
-_FVar :: Monad m => String -> FunctionalTactic m
+_FVar :: String -> FunctionalTactic
 _FVar = varTac
 
 {-| Tactic: Automatically find the variable with the type in the context. -}
-_FVarA :: Monad m => FunctionalTactic m
+_FVarA :: FunctionalTactic
 _FVarA = varATac
 
 {-| Tactic: For goals of the form (Pi x: A . B) : L. Supply the sort of A, and A if it is not known.  -}
-_FPi :: Monad m => Maybe FunctionalTerm -> FunctionalTactic m
+_FPi :: Maybe FunctionalTerm -> FunctionalTactic
 _FPi = piTac
 
 {-| Tactic: For goals of the form (\x:A.N):(Pi x:A.B) -}
-_FLambda :: Monad m => FunctionalTactic m
+_FLambda :: FunctionalTactic
 _FLambda = lambdaTac
 
 {-| Tactic: x, the type of x, and the maybe term that x was replaced with. Do not supply optional term if the extract term is known. -}
-_FApp :: Monad m => String -> FunctionalTerm -> Maybe FunctionalTerm -> FunctionalTactic m
+_FApp :: String -> FunctionalTerm -> Maybe FunctionalTerm -> FunctionalTactic
 _FApp = tyAppTac
 
 {-| Tactic: For goals of the form Sigma x : A . B : Type j -}
-_FSigma :: Monad m => Maybe FunctionalTerm -> FunctionalTactic m
+_FSigma :: Maybe FunctionalTerm -> FunctionalTactic
 _FSigma = sigmaTac
 
 {-| Tactic: For goals of the form (M,N):(Sigma x:A.B) -}
-_FPair :: Monad m => Maybe FunctionalTerm -> Maybe FunctionalTerm -> Integer -> FunctionalTactic m
+_FPair :: Maybe FunctionalTerm -> Maybe FunctionalTerm -> Integer -> FunctionalTactic
 _FPair = pairTac
 
 {-| Tactic: For goals of the form fst M:A that refine to M:Sigma x:A.B -}
-_FProj1 :: Monad m => String -> FunctionalTerm -> FunctionalTactic m
+_FProj1 :: String -> FunctionalTerm -> FunctionalTactic
 _FProj1 = proj1Tac
 
 {-| Tactic: For goals of the form snd M:[fst M/x]B that refine to M:Sigma x:A.B -}
-_FProj2 :: Monad m => String -> FunctionalTerm -> Maybe FunctionalTerm -> FunctionalTactic m
+_FProj2 :: String -> FunctionalTerm -> Maybe FunctionalTerm -> FunctionalTactic
 _FProj2 = proj2Tac
 
 {-| Tactic: Attempt to refine a goal A' to the supplied A within a certain number of reduction steps. -}
-_FCumulativity :: Monad m => FunctionalTerm -> Integer -> FunctionalTactic m
+_FCumulativity :: FunctionalTerm -> Integer -> FunctionalTactic
 _FCumulativity = cumulativityTac
 
 {-| Tactic: Simplify the goal term the provided number of times. -}
-_FSimp :: Monad m => Integer -> FunctionalTactic m
+_FSimp :: Integer -> FunctionalTactic
 _FSimp = simpTac
 
 {-| Tactic: Prove the goal is inhabited with the supplied term. -}
-_FExact :: Monad m => FunctionalTerm -> FunctionalTactic m
+_FExact :: FunctionalTerm -> FunctionalTactic
 _FExact = exactTac
 
 {-| Tactic: Attempt to prove the goal automatically if the term is known. -}
-_FExactKnown :: Monad m => FunctionalTactic m
+_FExactKnown :: FunctionalTactic
 _FExactKnown = exactKnownTac
 
 -- Hole / Fiat (alias for axiom/hole-style step)
--- _FHole :: Monad m => FunctionalTactic m
+-- _FHole :: FunctionalTactic
 -- _FHole = do
 --     seq <- getCurrentSequent
 --     useCurrentSubgoal . buildJustification0 $ FHoleRule (functionalContext seq) (fromMaybe FHoleTerm (goalTerm seq)) (goalType seq)
 --     return "Hole applied."
 
--- _FFiat :: Monad m => FunctionalTactic m
+-- _FFiat :: FunctionalTactic
 -- _FFiat = _FHole
 
 -- Tacticals
 {-| Tactic: Apply the first tactic and then the second to the resulting subgoals. -}
-_FThen :: Monad m => FunctionalTactic m -> FunctionalTactic m -> FunctionalTactic m
+_FThen :: FunctionalTactic -> FunctionalTactic -> FunctionalTactic
 _FThen t1 t2 = do
     currentSubgoals <- ST.gets subgoals
     res1 <- t1
@@ -630,11 +528,11 @@ _FThen t1 t2 = do
     return (res1 ++ "\n" ++ L.foldl' (\a b -> a ++ "\n" ++ b) "" t2Res)
 
 {-| Tactic: Attempt to apply the first tactic and then the second if the first does not succeed. -}
-_FAlt :: Monad m => FunctionalTactic m -> FunctionalTactic m -> FunctionalTactic m
+_FAlt :: FunctionalTactic -> FunctionalTactic -> FunctionalTactic
 _FAlt t1 t2 = t1 `mplus` t2
 
 {-| Tactic: Skip the tactic application. Always succeeds. -}
-_FSkip :: Monad m => FunctionalTactic m
+_FSkip :: FunctionalTactic
 _FSkip = do
     seq <- getCurrentSequent
     newGoal <- createNewSubgoal seq
@@ -642,5 +540,5 @@ _FSkip = do
     return "Skip applied."
 
 {-| Tactic: Repeat the application of a tactic until it fails. -}
-_FRepeat :: Monad m => FunctionalTactic m -> FunctionalTactic m
+_FRepeat :: FunctionalTactic -> FunctionalTactic
 _FRepeat t = t `_FThen` (_FRepeat t `_FAlt` return "Repeat applied")

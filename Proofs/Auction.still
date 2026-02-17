@@ -9,9 +9,7 @@ apply TyVar AUC (newBid)
 done
 -- z(curBid).(corec AUC(bid).z(newBid).AUC(newBid)) (curBid)
 
-
-theorem english:
-    "forall ItemType:stype.
+stype englishSession = "forall ItemType:stype.
     forall bid:Type 1.
     forall zeroB:bid.
     forall validNewB:(Pi b1:bid. Pi b2:bid. Type 1).
@@ -26,6 +24,8 @@ theorem english:
         forall nextValid:validNewB firstB newB.
         $currency newB -o
         (ItemType + $currency newB -o 1) -o Y) & 1"
+
+theorem english: "englishSession"
 apply Intros
 apply NuR AUC
     (item, ownerC, curB, winnerChan, oldB, lastB, curValid)
@@ -56,22 +56,7 @@ done
 
 -- Demonstrate a different proof and extraction of the english auction.
 -- It receives the new bid before returning the old one. Original english returns then receives the new one.
-theorem english2:
-    "forall ItemType:stype.
-    forall bid:Type 1.
-    forall zeroB:bid.
-    forall validNewB:(Pi b1:bid. Pi b2:bid. Type 1).
-    forall currency:(Pi b:bid.Type 1).
-    ItemType -o
-    (forall b:bid. $currency b -o 1) -o
-    forall firstB:bid.
-    forall firstValid:validNewB zeroB firstB.
-    $currency firstB -o
-    (ItemType + $currency firstB -o 1) -o
-    nu Y. (forall newB:bid.
-        forall nextValid:validNewB firstB newB.
-        $currency newB -o
-        (ItemType + $currency newB -o 1) -o Y) & 1"
+theorem english2: "englishSession"
 apply Intros
 apply NuR AUC
     (item, ownerC, curB, winnerC, oldB, lastB, curValid)
@@ -98,3 +83,75 @@ apply Weaken firstValid
 apply TyVar AUC (a, c, h, i, firstB, newB, nextValid)
 done
 -- z(ItemType).z(bid).z(zeroB).z(validNewB).z(currency).z(a).z(c).z(firstB).z(firstValid).z(d).z(e).(corec AUC(item, ownerC, curB, winnerC, oldB, lastB, curValid).z.case(inl z(newB).z(nextValid).z(h).z(i).((ν j) winnerC[j].(j.inr;[curB <-> j] | AUC(item, ownerC, h, i, lastB, newB, nextValid))), inr ownerC[lastB].((ν f) ownerC[f].([curB <-> f] | (ν g) winnerC[g].(g.inl;[item <-> g] | 0))) )) (a, c, d, e, zeroB, firstB, firstValid)
+
+assume delivery is "Pi itemType:Type 1.Pi item:itemType.Type 1"
+
+stype postOfficeSession = "forall itemObjectType:Type 1.
+    forall item:itemObjectType.$delivery itemObjectType item"
+
+assume book is "Type 1"
+assume int is "Type 1"
+assume usd is "Pi b:int.Type 1"
+
+stype bookOwnerSession = "exists startPrice:int.exists bidValid:(Pi b1:int. Pi b2:int. Type 1).exists bookForSale:book.(forall b:int.$usd b -o 1)"
+stype bookBuyerSession = "forall validator:(Pi b1:int. Pi b2:int. Type 1).
+    exists buyerAmount:int.
+        forall curPrice:int.
+        exists buyerValid:validator curPrice buyerAmount.
+        $(usd buyerAmount) * (forall bookBought:book.($usd buyerAmount + $delivery book bookBought) -o 1)"
+
+theorem bookAuction consumes "bookOwnerSession" "bookBuyerSession" "englishSession" "postOfficeSession": "1"
+apply ExistsLA+
+apply Forall2L d "$delivery book bookForSale"
+apply ForallL d
+apply Exact "int"
+apply ForallL d
+apply Exact "startPrice"
+apply ForallL d
+apply Exact "bidValid"
+apply ForallL d
+apply Exact "usd"
+apply ForallL e
+apply Exact "book"
+apply ForallL e
+apply Exact "bookForSale"
+apply ImpliesL d
+defer
+apply IdA
+apply ImpliesL d
+defer
+apply IdA
+apply ForallL c
+apply Exact "bidValid"
+apply ExistsLA
+apply ForallL d
+apply Exact "buyerAmount"
+apply ForallL c
+apply Exact "startPrice"
+apply ExistsLA
+apply ForallL d
+apply Exact "buyerValid"
+apply TensorL c
+apply ImpliesL d
+defer
+apply IdA
+apply ForallL c
+apply Exact "bookForSale"
+apply ImpliesL d
+defer
+apply ImpliesR
+apply ImpliesL c
+defer
+apply PlusLA
+apply PlusR1
+apply Id k
+apply PlusR2
+apply Id k
+defer
+apply UnitL c
+apply UnitR
+apply NuL d
+apply WithL2 d
+apply UnitL d
+apply UnitR
+done

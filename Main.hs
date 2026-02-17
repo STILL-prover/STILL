@@ -11,21 +11,22 @@ import qualified Data.Map as Map
 import qualified Data.Set as S
 import Control.Monad.Identity (Identity, runIdentity)
 
-import SessionTypes.Tactics (ProofState(..), Theorem (proofObject, numberOfSubgoals), allSubgoalNames) -- Ensure you import necessary types
+import SessionTypes.Tactics (ProofState(..), Theorem (proofObject, numberOfSubgoals), allSubgoalNames)
 import SessionTypes.Kernel
-import STILLParser (parseFile, parseStringCommand)
+import Parser.CmdParsers (parseFile, parseStringCommand)
 import DisplayUtil
 import Data.List (intercalate, transpose, foldl')
 import Data.Map (toList)
 import Data.Time (formatTime, defaultTimeLocale)
 import Numeric (showFFloat)
 import Util (namesInOrder)
+import Control.Monad (unless)
 
 -- ==========================================
 -- State Initialization
 -- ==========================================
 
-emptyState :: ProofState Identity
+emptyState :: ProofState
 emptyState = S {
     subgoals = Map.empty,
     outputs = ["STILL Prover Initialized."],
@@ -36,7 +37,11 @@ emptyState = S {
     openGoalStack = [],
     cachedProofStateNames = S.empty,
     newSubgoalNameList = allSubgoalNames,
-    cachedVarNames = namesInOrder
+    cachedVarNames = namesInOrder,
+    stypeDecls = [],
+    fnAssumptions = [],
+    procAssumptions = [],
+    errors = []
 }
 
 data DiagnosticInfo = DiagnosticInfo {
@@ -57,23 +62,23 @@ data DiagnosticInfo = DiagnosticInfo {
 -- ==========================================
 
 -- Parses and runs a file, handling imports recursively
-runProofScript :: FilePath -> String -> IO (Either String (ProofState Identity))
+runProofScript :: FilePath -> String -> IO (Either String ProofState)
 runProofScript fname content = do
     let res = parseFile fname content
     case res of
         Left err -> return . Left $ "--------------------------------\nParse Error:\n" ++ show err
         Right (imports, commands) -> do
-            -- 1. Load Imports (IO Action)
+            -- Load Imports (IO Action)
             stateWithImports <- loadImports imports emptyState
 
-            -- 2. Run Commands (Pure Fold)
+            -- Run Commands (Pure Fold)
             let finalState = foldl (\s f -> f s) stateWithImports commands
 
-            -- 3. Return Output Log (Reversed because logs act like a stack)
+            -- Return Output Log (Reversed because logs act like a stack)
             return . Right $ finalState -- unlines (reverse (outputs finalState))
 
 -- Recursively load imported modules
-loadImports :: [String] -> ProofState Identity -> IO (ProofState Identity)
+loadImports :: [String] -> ProofState -> IO ProofState
 loadImports [] s = return s
 loadImports (m:ms) s = do
     if Map.member m (loadedModules s)
@@ -92,17 +97,17 @@ loadImports (m:ms) s = do
                     putStrLn $ "[Error] Failed to parse import " ++ m ++ ": " ++ show err
                     loadImports ms s
                 Right (subImports, subCmds) -> do
-                    -- 1. Load recursive imports for this module
+                    -- Load recursive imports for this module
                     s' <- loadImports subImports s
 
-                    -- 2. Run module commands on a clean slate (inheriting only loadedModules)
+                    -- Run module commands on a clean slate (inheriting only loadedModules)
                     let modState = s' { subgoals = Map.empty, theorems = Map.empty, curModuleName = m, openGoalStack = [] }
                     let modResult = foldl (\st f -> f st) modState subCmds
 
-                    -- 3. Store the resulting theorems in the global loadedModules map
+                    -- Store the resulting theorems in the global loadedModules map
                     let newLoaded = Map.insert m (theorems modResult) (loadedModules s')
 
-                    -- 4. Continue
+                    -- Continue
                     loadImports ms (s' { subgoals = Map.empty, theorems = Map.empty, openGoalStack = [], loadedModules = newLoaded })
 
 -- ==========================================
@@ -138,7 +143,7 @@ main = do
             result <- runProofScript fname content
             case result of
                 Left e -> putStrLn e
-                Right fs -> putStrLn $ unlines (reverse (outputs fs))
+                Right fs -> putStrLn (unlines (reverse (outputs fs))) >> unless (null (errors fs)) (putStrLn "Errors:" >> putStrLn (unlines (reverse (errors fs))))
 
         runDiagnostics :: [String] -> [DiagnosticInfo] -> IO ()
         runDiagnostics [] infos = printInfos (reverse infos)
@@ -201,7 +206,7 @@ main = do
             -- Print Data
             mapM_ (putStrLn . formatRow) rows
 
-getDiagnostics :: UTCTime -> UTCTime -> ProofState m -> DiagnosticInfo
+getDiagnostics :: UTCTime -> UTCTime -> ProofState -> DiagnosticInfo
 getDiagnostics st et s = DiagnosticInfo {
     moduleName = curModuleName s,
     executionTime = realToFrac $ diffUTCTime et st,
@@ -225,7 +230,7 @@ startRepl fnames = do
     putStrLn "--- STILL Interactive Mode (Type :q to quit) ---"
     replLoop initState
 
-replLoop :: ProofState Identity -> IO ()
+replLoop :: ProofState -> IO ()
 replLoop currentState = do
     putStr "π> "
     done <- isEOF

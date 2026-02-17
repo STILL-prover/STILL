@@ -20,17 +20,17 @@ fcToS = M.foldlWithKey (\acc k t -> acc ++ k ++ ":" ++ ftToS t) ""
 ftseqToS :: FT.FunctionalTacticsSequent -> String
 ftseqToS = ftseqToSHelper
 
-fsgToS :: FT.Subgoal m -> String
+fsgToS :: FT.Subgoal -> String
 fsgToS sg = ftseqToS (FT.sequent sg)
 
-sgToS :: Subgoal m -> String
+sgToS :: Subgoal -> String
 sgToS sg = seqToS (sequent sg)
 
-sgsToS :: [Subgoal m] -> String
+sgsToS :: [Subgoal] -> String
 sgsToS (sg:sgs) = sgToS sg ++ "\n" ++ sgsToS sgs
 sgsToS [] = ""
 
-showFiltered :: S.Set String -> Subgoal m -> String
+showFiltered :: S.Set String -> Subgoal -> String
 showFiltered reservedVars sg =
     let
         actualSequent = (sequent sg) {
@@ -61,21 +61,11 @@ mainPrinter (Right s) =
             subgoalPrinter n sg = case inProgressFunctionalProof sg of
                 Nothing -> (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (curReservedVars n) sg
                 Just (fs, p) -> L.foldl' (\acc kvp -> acc ++ "\n" ++ (if n == curSubgoal s && fst kvp == FT.curSubgoal fs then "*" else " ") ++ n ++ "." ++ fst kvp ++ sgNameSep ++ fsgToS (snd kvp)) ""  (Data.Map.toList (Data.Map.filter (not . FT.used) (FT.subgoals fs)))
-            messagePrinter = if L.null $ outputs s then "" else head $ outputs s
+            messagePrinter = (if L.null $ outputs s then "" else head $ outputs s) ++ (if L.null (errors s) then "" else "\n" ++ unlines (reverse (errors s)))
             orderedSubgoals = L.reverse $ (\(sgn, sg) -> (sgn, fromJust sg)) <$> L.filter (\(sgn, sg) -> isJust sg) ((\sgn -> (sgn, Data.Map.lookup  sgn (subgoals s))) <$> openGoalStack s)
         in
             putStrLn $ messagePrinter ++ L.foldl' (\acc kvp -> acc ++ "\n" ++ uncurry subgoalPrinter kvp) "" orderedSubgoals
 mainPrinter (Left e) = putStrLn $ "Error occured: " ++ e
-
-instance {-# OVERLAPPING #-} GhciPrint (Either String (ProofState m)) where
-    ghciPrint = mainPrinter
-
-instance {-# OVERLAPPING #-} GhciPrint (Either String Process) where
-    ghciPrint (Right p) = putStrLn . pToS $ p
-    ghciPrint (Left e) = putStrLn $ "Error occured: " ++ e
-
-instance {-# OVERLAPPING #-} GhciPrint (ProofState m) where
-    ghciPrint s = mainPrinter (Right s)
 
 getGoodLines :: [(String, String, String)] -> [String] -> [(String, String, String)]
 getGoodLines acc (h1:h2:h3:rest) = if L.take 10 h1 == "{-| Tactic" then getGoodLines ((h1,h2,h3):acc) rest else getGoodLines acc (h2:h3:rest)
