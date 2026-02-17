@@ -10,6 +10,7 @@ import SessionTypes.Tactics
 import Data.List
 import Data.Map (Map)
 import qualified Data.Map as Map
+import qualified Data.Set as S
 import Parser.TermParsers (proposition, fTerm, process)
 import Data.Functor ((<&>))
 import ECC.Tactics (FunctionalTactic, _FAx, _FVarA, _FVar, _FRepeat, _FAlt, _FThen, _FPi, _FLambda, _FApp, _FSigma, _FPair, _FProj1, _FProj2, _FCumulativity, _FSimp, _FExactKnown, _FExact, _FSkip)
@@ -222,17 +223,17 @@ simpleTactics =
 singleStringArgTactics :: [(String, String -> Tactic)]
 singleStringArgTactics =
     [ ("Id", _Id)
-    , ("TensorL", tensorLeftTac)
-    , ("ImpliesL", impliesLeftTac)
-    , ("UnitL", unitLeftTac)
-    , ("LiftL", functionalTermLeftTac)
-    , ("BangL", replicationLeftTac)
-    , ("WithL1", withLeft1Tac)
-    , ("WithL2", withLeft2Tac)
-    , ("PlusL", plusLeftTac)
-    , ("NuL", nuLeftTac)
-    , ("ExistsL", existsLeftTac)
-    , ("Exists2L", existsLeft2Tac)
+    , ("TensorL", tensorLeftTac S.empty)
+    , ("ImpliesL", impliesLeftTac S.empty)
+    , ("UnitL", unitLeftTac S.empty)
+    , ("LiftL", functionalTermLeftTac S.empty)
+    , ("BangL", replicationLeftTac S.empty)
+    , ("WithL1", withLeft1Tac S.empty)
+    , ("WithL2", withLeft2Tac S.empty)
+    , ("PlusL", plusLeftTac S.empty)
+    , ("NuL", nuLeftTac S.empty)
+    , ("ExistsL", existsLeftTac S.empty)
+    , ("Exists2L", existsLeft2Tac S.empty)
     , ("ForallL", _ForallL)
     , ("FTermL", _FTermL)
     , ("Weaken", _Weaken)

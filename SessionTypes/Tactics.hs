@@ -235,10 +235,13 @@ removeVarsFromSubgoal varsToRem (x, sg) = if isUsed sg
         return (x, sg { sequent = newSeq }))
 
 reserveVars :: [String] -> ProverState ()
-reserveVars varsToRes = do
-    curSubgoalData <- getCurrentSubgoal
+reserveVars = reserveVarsKnownUnavailable S.empty
+
+reserveVarsKnownUnavailable :: S.Set String -> [String] -> ProverState ()
+reserveVarsKnownUnavailable unavailableVarsArg varsToRes = do
     curSubgoalName <- ST.gets curSubgoal
-    unavailableVars <- ST.gets (getUnavailableVarsForSubgoal curSubgoalName)
+    curSubgoalData <- getCurrentSubgoal
+    unavailableVars <- if unavailableVarsArg == S.empty then ST.gets (getUnavailableVarsForSubgoal curSubgoalName) else return unavailableVarsArg
     let newSgData = curSubgoalData { reservedVars = reservedVars curSubgoalData `S.union` S.fromList varsToRes}
     if L.any (`S.member` unavailableVars) varsToRes
     then tacError "Variables already reserved, and should not be available to use."
@@ -327,10 +330,11 @@ idTac x = do
 idATac :: Tactic
 idATac = do
     seq <- getCurrentSequent
-    case L.filter (\(_, p) -> p == goalProposition seq) . Data.Map.toList $ linearContext seq of
+    curSg <- ST.gets curSubgoal
+    unavailableVars <- getUnavailableVarsForSubgoal curSg <$> ST.get
+    case L.filter (\(k, p) -> not (S.member k unavailableVars) && p == goalProposition seq) . Data.Map.toList $ linearContext seq of
         ((x,p):rest) -> do
-            --reserveVars [x, channel seq]
-            reserveVars [x]
+            reserveVarsKnownUnavailable unavailableVars [x]
             xName <- lookupVarName x
             zName <- lookupVarName (channel seq)
             useCurrentSubgoal Trunk (buildJustification0 $ IdRule xName zName (tyVarContext seq) (fnContext seq) (unrestrictedContext seq) (recursiveBindings seq) p)
@@ -351,14 +355,14 @@ functionalTermRightTac fp = if verifyFunctionalProof fp
             _ -> tacError "Cannot apply tactic to goal.")
     else tacError "Invalid proof."
 
-functionalTermLeftTac :: String -> Tactic
-functionalTermLeftTac x = do
+functionalTermLeftTac :: S.Set String -> String -> Tactic
+functionalTermLeftTac unavailableVars x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x (linearContext seq) of
         (Just (Lift t)) -> do
             -- Get fresh vars needed
             -- Reserve vars
-            reserveVars [x]
+            reserveVarsKnownUnavailable unavailableVars [x]
             x1Name <- lookupVarName x
             -- Make new subgoals
             freshGoal <- createNewSubgoal $ seq { fnContext = Data.Map.insert x1Name t $ fnContext seq, linearContext = Data.Map.delete x $ linearContext seq }
@@ -383,12 +387,12 @@ impliesRightTac = do
             return "Implies right side tactic applied"
         _ -> tacError "Not an implication"
 
-impliesLeftTac :: String -> Tactic
-impliesLeftTac x = do
+impliesLeftTac :: S.Set String -> String -> Tactic
+impliesLeftTac unavailableVars x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x (linearContext seq) of
         Just (Implication a b) -> (do
-            reserveVars [x]
+            reserveVarsKnownUnavailable unavailableVars [x]
             y <- getFreshVar
             xName <- lookupVarName x
             freshGoalY <- createNewSubgoal $ seq { linearContext = Data.Map.delete x $ linearContext seq, goalProposition = a, channel = y }
@@ -398,13 +402,13 @@ impliesLeftTac x = do
         Just _ -> tacError "Cannot apply to non-implication proposition."
         Nothing -> tacError $ "Cannot find " ++ x ++ " in linear context."
 
-leftTacA :: (String -> Tactic) -> (Proposition -> Bool) -> Tactic
+leftTacA :: (S.Set String -> String -> Tactic) -> (Proposition -> Bool) -> Tactic
 leftTacA tac test = do
     seq <- getCurrentSequent
     sgName <- ST.gets curSubgoal
     unavailableVars <- ST.gets (getUnavailableVarsForSubgoal sgName)
     let candidateProps = Data.Map.keys (Data.Map.filterWithKey (\k v -> not . S.member k $ unavailableVars) (Data.Map.filter test (linearContext seq)))
-    if L.null candidateProps then tacError "No propositions in the linear context of the correct form!" else tac (head candidateProps)
+    if L.null candidateProps then tacError "No propositions in the linear context of the correct form!" else tac unavailableVars (head candidateProps)
 
 impliesLeftTacA :: Tactic
 impliesLeftTacA = leftTacA impliesLeftTac (\case Implication _ _ -> True; _ -> False)
@@ -420,14 +424,14 @@ unitRightTac = do
             return "Unit right side tactic applied.")
         _ -> tacError "Cannot apply to non-implication proposition."
 
-unitLeftTac :: String -> Tactic
-unitLeftTac x = do
+unitLeftTac :: S.Set String -> String -> Tactic
+unitLeftTac unavailableVars x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x (linearContext seq) of
         Just Unit -> do
             -- Get fresh vars needed
             -- Reserve vars
-            reserveVars [x]
+            reserveVarsKnownUnavailable unavailableVars [x]
             -- Make new subgoals
             freshGoal <- createNewSubgoal $ seq { linearContext = Data.Map.delete x $ linearContext seq }
             -- Make justification lookup unique var names
@@ -459,14 +463,14 @@ replicationRightTac = do
             return "Replication right side tactic applied."
         _ -> tacError "Not a Replication proposition."
 
-replicationLeftTac :: String -> Tactic
-replicationLeftTac x = do
+replicationLeftTac :: S.Set String -> String -> Tactic
+replicationLeftTac unavailableVars x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x $ linearContext seq of
         Just (Replication a) -> do
             -- Get fresh vars needed
             -- Reserve vars
-            reserveVars [x]
+            reserveVarsKnownUnavailable unavailableVars [x]
             u <- getFreshVar
             -- Make new subgoals
             freshGoal <- createNewSubgoal $ seq { unrestrictedContext = Data.Map.insert u a $ unrestrictedContext seq, linearContext = Data.Map.delete x $ linearContext seq }
@@ -511,13 +515,13 @@ withRightTac = do
             return "With right side tactic applied."
         _ -> tacError "Cannot apply tactic to non-with proposition."
 
-withLeft1Tac :: String -> Tactic
-withLeft1Tac x = do
+withLeft1Tac :: S.Set String -> String -> Tactic
+withLeft1Tac unavailableVars x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x $ linearContext seq of
         Just (With p1 p2) -> do
             xName <- lookupVarName x
-            reserveVars [x]
+            reserveVarsKnownUnavailable unavailableVars [x]
             newGoalName <- createNewSubgoal $ seq { linearContext = Data.Map.insert x p1 $ linearContext seq }
             useCurrentSubgoal Trunk . buildJustification1 newGoalName $ WithLeft1Rule xName p2
             return "With left side 1 tactic applied."
@@ -526,13 +530,13 @@ withLeft1Tac x = do
 withLeft1TacA :: Tactic
 withLeft1TacA = leftTacA withLeft1Tac (\case With _ _ -> True; _ -> False)
 
-withLeft2Tac :: String -> Tactic
-withLeft2Tac x = do
+withLeft2Tac :: S.Set String -> String -> Tactic
+withLeft2Tac unavailableVars x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x $ linearContext seq of
         Just (With p1 p2) -> do
             xName <- lookupVarName x
-            reserveVars [x]
+            reserveVarsKnownUnavailable unavailableVars [x]
             newGoalName <- createNewSubgoal $ seq { linearContext = Data.Map.insert x p2 $ linearContext seq }
             useCurrentSubgoal Trunk . buildJustification1 newGoalName $ WithLeft2Rule xName p1
             return "With left side 2 tactic applied."
@@ -555,12 +559,12 @@ tensorRightTac = do
             return "Tensor right side tactic applied.")
         _ -> tacError "Cannot apply to non-tensor proposition."
 
-tensorLeftTac :: String -> Tactic
-tensorLeftTac x = do
+tensorLeftTac :: S.Set String -> String -> Tactic
+tensorLeftTac unavailableVars x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x $ linearContext seq of
         Just (Tensor a b) -> do
-            reserveVars [x]
+            reserveVarsKnownUnavailable unavailableVars [x]
             xName <- lookupVarName x
             y <- getFreshVar
             freshGoal <- createNewSubgoal $ seq { linearContext = Data.Map.insert y a . Data.Map.insert x b . Data.Map.delete x $ linearContext seq }
@@ -596,13 +600,13 @@ plusRight2Tac = do
             return "Plus right side 2 tactic applied.")
         _ -> tacError "Cannot apply to non-plus proposition."
 
-plusLeftTac :: String -> Tactic
-plusLeftTac x = do
+plusLeftTac :: S.Set String -> String -> Tactic
+plusLeftTac unavailableVars x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x $ linearContext seq of
         Just (Plus p1 p2) -> do
             xName <- lookupVarName x
-            reserveVars [x]
+            reserveVarsKnownUnavailable unavailableVars [x]
             zName <- lookupVarName $ channel seq
             leftGoal <- createNewSubgoal $ seq { linearContext = Data.Map.insert x p1 (linearContext seq) }
             rightGoal <- createNewSubgoal $ seq { linearContext = Data.Map.insert x p2 (linearContext seq) }
@@ -657,12 +661,12 @@ existsRightTac fp = if verifyFunctionalProof fp then (do
         Right res -> tacError "Should not happen at all."
         Left e -> tacError $ "Invalid proof: " ++ e)
 
-existsLeftTac :: String -> Tactic
-existsLeftTac x = do
+existsLeftTac :: S.Set String -> String -> Tactic
+existsLeftTac unavailableVars x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x $ linearContext seq of
         Just (Exists y t p) -> do
-            reserveVars [x]
+            reserveVarsKnownUnavailable unavailableVars [x]
             xName <- lookupVarName x
             freshY <- getFreshVarAttempt y
             let newP = substVarProp p freshY y
@@ -718,12 +722,12 @@ existsRight2Tac bWithDecls = do
             return "Exists second order right side tactic applied."
         _ -> tacError "Cannot apply to non-forall second order proposition."
 
-existsLeft2Tac :: String -> Tactic
-existsLeft2Tac x = do
+existsLeft2Tac :: S.Set String -> String -> Tactic
+existsLeft2Tac unavailableVars x = do
     seq <- getCurrentSequent
     case Data.Map.lookup x $ linearContext seq of
         Just (Forall2 y p) -> do
-            reserveVars [x]
+            reserveVarsKnownUnavailable unavailableVars [x]
             xName <- lookupVarName $ x
             newGoal <- createNewSubgoal $ seq { tyVarContext = S.insert x $ tyVarContext seq, linearContext = Data.Map.insert x p $ linearContext seq }
             useCurrentSubgoal Trunk . buildJustification1 newGoal $ ExistsLeft2Rule xName y
@@ -776,12 +780,12 @@ nuRightTac x ys zs = do
             return "Nu right tactic applied.")
         _ -> tacError "Cannot apply to non-Nu proposition."
 
-nuLeftTac :: String -> Tactic
-nuLeftTac c = do
+nuLeftTac :: S.Set String -> String -> Tactic
+nuLeftTac unavailableVars c = do
     seq <- getCurrentSequent
     case Data.Map.lookup c (linearContext seq) of
         Just (TyNu x a) -> (do
-            reserveVars [c]
+            reserveVarsKnownUnavailable unavailableVars [c]
             freshGoalName <- createNewSubgoal $ seq { linearContext = Data.Map.insert c (unfoldRec a x a) $ linearContext seq}
             useCurrentSubgoal Trunk . buildJustification1 freshGoalName $ TyNuLeftRule c x
             return "Nu left tactic applied.")
@@ -1115,7 +1119,7 @@ _FTermR = do
 
 {-| Tactic: Refine a functional term session type in the assumptions to an assumption in the functional system. -}
 _FTermL :: String -> Tactic
-_FTermL = functionalTermLeftTac
+_FTermL = functionalTermLeftTac S.empty
 
 {-| Tactic: Automatically apply _FTermL to the first functional term in the linear context. -}
 _FTermLA :: Tactic
@@ -1127,7 +1131,7 @@ _ImpliesR = impliesRightTac
 
 {-| Tactic: Refine an implication assumption. Create a goal to prove the antecedent, and another goal where the consequent is an assumption. -}
 _ImpliesL :: String -> Tactic
-_ImpliesL = impliesLeftTac
+_ImpliesL = impliesLeftTac S.empty
 
 {-| Tactic: Automatically apply _ImpliesLA to the first implication proposition in the linear context. -}
 _ImpliesLA :: Tactic
@@ -1139,7 +1143,7 @@ _UnitR = unitRightTac
 
 {-| Tactic: Refine a unit assumption. Discards the assumption from the linear context. -}
 _UnitL :: String -> Tactic
-_UnitL = unitLeftTac
+_UnitL = unitLeftTac S.empty
 
 {-| Tactic: Automatically apply _UnitL to the first implication proposition in the linear context. -}
 _UnitLA :: Tactic
@@ -1151,7 +1155,7 @@ _BangR = replicationRightTac
 
 {-| Tactic: Refine a replicating assumption. Moves the inner proposition to the unrestricted context. -}
 _BangL :: String -> Tactic
-_BangL = replicationLeftTac
+_BangL = replicationLeftTac S.empty
 
 {-| Tactic: Automatically apply _BangL to the first implication proposition in the linear context. -}
 _BangLA :: Tactic
@@ -1167,7 +1171,7 @@ _WithR = withRightTac
 
 {-| Tactic: Refine a With assumption. Selects the left side as the assumption. -}
 _WithL1 :: String -> Tactic
-_WithL1 = withLeft1Tac
+_WithL1 = withLeft1Tac S.empty
 
 {-| Tactic: Automatically apply _WithL1 to the first implication proposition in the linear context. -}
 _WithL1A :: Tactic
@@ -1175,7 +1179,7 @@ _WithL1A = withLeft1TacA
 
 {-| Tactic: Refine a With assumption. Selects the right side as the assumption. -}
 _WithL2 :: String -> Tactic
-_WithL2 = withLeft2Tac
+_WithL2 = withLeft2Tac S.empty
 
 {-| Tactic: Automatically apply _WithL2 to the first implication proposition in the linear context. -}
 _WithL2A :: Tactic
@@ -1187,7 +1191,7 @@ _TensorR = tensorRightTac
 
 {-| Tactic: Refine a Tensor assumption. Both sides become one assumption each. -}
 _TensorL :: String -> Tactic
-_TensorL = tensorLeftTac
+_TensorL = tensorLeftTac S.empty
 
 {-| Tactic: Automatically apply _TensorL to the first implication proposition in the linear context. -}
 _TensorLA :: Tactic
@@ -1203,7 +1207,7 @@ _PlusR2 = plusRight2Tac
 
 {-| Tactic: Refine a Plus assumption. Two subgoals are created. One to complete the proof with the left side of the assumption, and one for the right side. -}
 _PlusL :: String -> Tactic
-_PlusL = plusLeftTac
+_PlusL = plusLeftTac S.empty
 
 {-| Tactic: Automatically apply _PlusL to the first implication proposition in the linear context. -}
 _PlusLA :: Tactic
@@ -1230,7 +1234,7 @@ _ForallL x = do
         _ -> tacError $ "Cannot apply tactic to non Forall proposition: " ++ show (goalProposition seq)
 
 _ForallLA :: Tactic
-_ForallLA = leftTacA _ForallL (\case Forall x t p -> True; _ -> False)
+_ForallLA = leftTacA (\_ s -> _ForallL s) (\case Forall x t p -> True; _ -> False)
 
 {-| Tactic: Refine an existential quantification proposition. Creates a subgoal to validate the type of the term, and another to continue the proof once validated. -}
 _ExistsR :: Tactic
@@ -1250,7 +1254,7 @@ _ExistsR = do
 
 {-| Tactic: Refine an existential quantification assumption. Adds the term to the functional context. -}
 _ExistsL :: String -> Tactic
-_ExistsL = existsLeftTac
+_ExistsL = existsLeftTac S.empty
 
 {-| Tactic: Automatically apply _ExistsL to the first implication proposition in the linear context. -}
 _ExistsLA :: Tactic
@@ -1270,7 +1274,7 @@ _Exists2R = existsRight2Tac
 
 {-| Tactic: Refine a second order existential quantified assumption. Adds the variable to the type variable context. -}
 _Exists2L :: String -> Tactic
-_Exists2L = existsLeft2Tac
+_Exists2L = existsLeft2Tac S.empty
 
 {-| Tactic: Automatically apply _Exists2L to the first implication proposition in the linear context. -}
 _Exists2LA :: Tactic
@@ -1296,7 +1300,7 @@ _NuR = nuRightTac
 
 {-| Tactic: Refine a corecursive assumption. Unfolds the type one level. -}
 _NuL :: String -> Tactic
-_NuL = nuLeftTac
+_NuL = nuLeftTac S.empty
 
 {-| Tactic: Automatically apply _NuL to the first implication proposition in the linear context. -}
 _NuLA :: Tactic
