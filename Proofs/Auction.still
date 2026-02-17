@@ -93,12 +93,12 @@ assume book is "Type 1"
 assume int is "Type 1"
 assume usd is "Pi b:int.Type 1"
 
-stype bookOwnerSession = "exists startPrice:int.exists bidVal:(Pi b1:int. Pi b2:int. Type 1).exists bookForSale:book.(forall b:int.$usd b -o 1)"
-stype bookBuyerSession = "forall sellerVal:(Pi b1:int. Pi b2:int. Type 1).
-    (exists buyerAmount:int.
+stype bookOwnerSession = "exists startPrice:int.exists bidValid:(Pi b1:int. Pi b2:int. Type 1).exists bookForSale:book.(forall b:int.$usd b -o 1)"
+stype bookBuyerSession = "forall validator:(Pi b1:int. Pi b2:int. Type 1).
+    exists buyerAmount:int.
         forall curPrice:int.
-        exists buyerValid:sellerVal curPrice buyerAmount.
-        $(usd buyerAmount) * (forall bookBought:book.($usd buyerAmount + $delivery book bookBought) -o 1))"
+        exists buyerValid:validator curPrice buyerAmount.
+        $(usd buyerAmount) * (forall bookBought:book.($usd buyerAmount + $delivery book bookBought) -o 1)"
 
 theorem bookAuction consumes "bookOwnerSession" "bookBuyerSession" "englishSession" "postOfficeSession": "1"
 apply ExistsLA+
@@ -108,7 +108,7 @@ apply Exact "int"
 apply ForallL d
 apply Exact "startPrice"
 apply ForallL d
-apply Exact "bidVal"
+apply Exact "bidValid"
 apply ForallL d
 apply Exact "usd"
 apply ForallL e
@@ -122,7 +122,7 @@ apply ImpliesL d
 defer
 apply IdA
 apply ForallL c
-apply Exact "bidVal"
+apply Exact "bidValid"
 apply ExistsLA
 apply ForallL d
 apply Exact "buyerAmount"
