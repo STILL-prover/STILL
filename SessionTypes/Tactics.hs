@@ -31,7 +31,8 @@ data Subgoal = Subgoal {
     reservedVars :: S.Set String,
     subgoalJustification :: ProverState Proof,
     expanded :: Maybe BranchType,
-    inProgressFunctionalProof :: Maybe (FT.ProofState, FunctionalProof -> Tactic)
+    inProgressFunctionalProof :: Maybe (FT.ProofState, FunctionalProof -> Tactic),
+    unavailableVarsCache :: S.Set String
 } deriving ()
 
 isUsed :: Subgoal -> Bool
@@ -42,22 +43,48 @@ getVarsReservedInSubgoalBranches s sgName = case Data.Map.lookup sgName (subgoal
     Just curSg -> S.unions (getVarsReservedInSubgoalBranches s <$> nextGoals curSg) `S.union` reservedVars curSg
     Nothing -> S.empty
 
+getUnavailableVarsForSubgoalM :: String -> ProverState (S.Set String)
+getUnavailableVarsForSubgoalM sgName = do
+    s <- ST.get
+    case Data.Map.lookup sgName (subgoals s) of
+        Nothing -> return S.empty
+        Just curSg | unavailableVarsCache curSg /= S.empty -> return (unavailableVarsCache curSg)
+        Just curSg | prevGoal curSg == "" -> return S.empty
+        Just curSg -> do
+            let cacheRes v = ST.modify (\s -> s { subgoals = Data.Map.insert sgName (curSg { unavailableVarsCache = v }) (subgoals s) })
+            case Data.Map.lookup (prevGoal curSg) (subgoals s) of
+                Nothing -> return S.empty
+                Just prevSg | expanded prevSg == Just Multiplicative -> do
+                    let unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
+                    unavailableForPrev <- getUnavailableVarsForSubgoalM (prevGoal curSg)
+                    let res = unavailableForPrev `S.union` unavailableInBranches
+                    cacheRes res
+                    return res
+                Just prevSg | expanded prevSg == Just Cut -> do
+                    let unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
+                    unavailableForPrev <- getUnavailableVarsForSubgoalM (prevGoal curSg)
+                    let res = S.delete (channel (sequent prevSg)) $ unavailableForPrev `S.union` unavailableInBranches
+                    cacheRes res
+                    return res
+                Just prevSg -> do
+                    res <- getUnavailableVarsForSubgoalM (prevGoal curSg)
+                    cacheRes res
+                    return res
+
 getUnavailableVarsForSubgoal :: String -> ProofState -> S.Set String
 getUnavailableVarsForSubgoal sgName s = case Data.Map.lookup sgName (subgoals s) of
-    Just curSg -> (if prevGoal curSg == ""
-        then S.empty
-        else (case Data.Map.lookup (prevGoal curSg) (subgoals s) of
-            Just prevSg -> case expanded prevSg of--DBG.trace (show $ used prevSg) (used prevSg) of
-                Just Multiplicative -> let
-                        unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
-                        unavailableForPrev = getUnavailableVarsForSubgoal (prevGoal curSg) s
-                    in unavailableForPrev `S.union` unavailableInBranches-- `S.union` reservedVars prevSg
-                Just Cut -> let
-                        unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
-                        unavailableForPrev = getUnavailableVarsForSubgoal (prevGoal curSg) s
-                    in S.delete (channel (sequent prevSg)) $ unavailableForPrev `S.union` unavailableInBranches-- `S.union` reservedVars prevSg
-                _ -> getUnavailableVarsForSubgoal (prevGoal curSg) s--reservedVars prevSg `S.union` getUnavailableVarsForSubgoal (prevGoal curSg) s
-            _ -> S.empty))
+    Just curSg | unavailableVarsCache curSg /= S.empty -> unavailableVarsCache curSg
+    Just curSg | prevGoal curSg == "" -> S.empty
+    Just curSg -> case Data.Map.lookup (prevGoal curSg) (subgoals s) of
+        Just prevSg | expanded prevSg == Just Multiplicative -> let
+                    unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
+                    unavailableForPrev = getUnavailableVarsForSubgoal (prevGoal curSg) s
+                in unavailableForPrev `S.union` unavailableInBranches-- `S.union` reservedVars prevSg
+        Just prevSg | expanded prevSg == Just Cut -> let
+                    unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
+                    unavailableForPrev = getUnavailableVarsForSubgoal (prevGoal curSg) s
+                in S.delete (channel (sequent prevSg)) $ unavailableForPrev `S.union` unavailableInBranches-- `S.union` reservedVars prevSg
+        _ -> getUnavailableVarsForSubgoal (prevGoal curSg) s--reservedVars prevSg `S.union` getUnavailableVarsForSubgoal (prevGoal curSg) s
     Nothing -> S.empty
 
 data Theorem = Theorem {
@@ -94,9 +121,6 @@ curSubgoal s = if L.null (openGoalStack s) then "" else head (openGoalStack s)
 
 usedSubgoalNames :: ProofState -> S.Set String
 usedSubgoalNames s = S.fromList $ Data.Map.keys $ subgoals s
-
-getStateReservedVars :: ProofState -> S.Set String
-getStateReservedVars s = Data.Map.foldl' (\acc sg -> S.union acc (reservedVars sg)) S.empty (subgoals s)
 
 type ProverStateT m a = ST.StateT ProofState (E.ExceptT String m) a
 
@@ -187,7 +211,7 @@ initializeSequent assumedTerms consumedProps p = let
     in Sequent { tyVarContext = S.empty, fnContext = Data.Map.fromList assumedTerms, unrestrictedContext = Data.Map.empty, linearContext = Data.Map.fromList linearProps, recursiveBindings = Data.Map.empty, channel = "z", goalProposition = p }
 
 initializeProof :: Sequent -> Subgoal
-initializeProof seq = Subgoal { sequent = seq, prevGoal = "", nextGoals = [], expanded = Nothing, subgoalJustification = tacError "No justification.", inProgressFunctionalProof = Nothing, reservedVars = S.empty }
+initializeProof seq = Subgoal { sequent = seq, prevGoal = "", nextGoals = [], expanded = Nothing, subgoalJustification = tacError "No justification.", inProgressFunctionalProof = Nothing, reservedVars = S.empty, unavailableVarsCache = S.empty }
 
 tacError :: String -> ST.StateT ProofState (E.ExceptT String Identity) a2
 tacError = ST.lift . E.throwE
@@ -202,37 +226,16 @@ liftEither res = case res of
     Left err -> tacError err
     Right x -> return x
 
-getGoal :: String -> ProverState (Subgoal)
-getGoal goalName = do
-    curState <- ST.get
-    case Data.Map.lookup goalName (subgoals curState) of
-        Just goal -> return goal
-        _ -> tacError "Invalid subgoal name."
+getPathToRootGoal :: String -> ProofState -> [String] -> [String]
+getPathToRootGoal sgName s acc = case Data.Map.lookup sgName (subgoals s) of
+    Nothing -> acc
+    Just sg -> getPathToRootGoal (prevGoal sg) s (sgName:acc)
 
--- -- getDisallowedVars :: String -> ProverState (S.Set String)
--- -- getDisallowedVars goalName = do
--- --     curDisjointGoals <- disjointSubgoals <$> getGoal goalName
--- --     curSubgoals <- subgoals <$> ST.get
--- --     -- Get the subgoals and their reserved variables if the subgoal exists. Then union all reserved variables.
--- --     return $ L.foldl' S.union S.empty (maybe S.empty reservedVars . (`Data.Map.lookup` curSubgoals) <$> curDisjointGoals)
-
-updateGoal :: String -> Subgoal -> ProverState ()
-updateGoal goalName newGoalState = do
-    curState <- ST.get
-    ST.put (curState { subgoals = Data.Map.insert goalName newGoalState (subgoals curState) })
-
-removeVarsFromSequent :: [String] -> Sequent -> ProverState Sequent
-removeVarsFromSequent varsToRem seq =
-    if channel seq `L.elem` varsToRem
-    then tacError $ "Cannot reserve the channel of the sequent: " ++ seqToS seq
-    else return $ seq { linearContext = L.foldl (flip Data.Map.delete) (linearContext seq) (S.fromList varsToRem) }
-
-removeVarsFromSubgoal :: [String] -> (String, Subgoal) -> ProverState (String, Subgoal)
-removeVarsFromSubgoal varsToRem (x, sg) = if isUsed sg
-    then return (x, sg)
-    else (do
-        newSeq <- removeVarsFromSequent varsToRem (sequent sg)
-        return (x, sg { sequent = newSeq }))
+bustUnavailableVarsCacheOutsideOfSubgoal :: String -> ProverState ()
+bustUnavailableVarsCacheOutsideOfSubgoal sgName = do
+    s <- ST.get
+    let sgPathToRoot = S.fromList $ getPathToRootGoal sgName s []
+    ST.modify (\s -> s { subgoals = Data.Map.mapWithKey (\k v -> if S.member k sgPathToRoot then v else v { unavailableVarsCache = S.empty }) (subgoals s)})
 
 reserveVars :: [String] -> ProverState ()
 reserveVars varsToRes = do
@@ -242,7 +245,9 @@ reserveVars varsToRes = do
     let newSgData = curSubgoalData { reservedVars = reservedVars curSubgoalData `S.union` S.fromList varsToRes}
     if L.any (`S.member` unavailableVars) varsToRes
     then tacError "Variables already reserved, and should not be available to use."
-    else ST.modify (\s -> s { subgoals = Data.Map.insert curSubgoalName newSgData (subgoals s) })
+    else (do
+        ST.modify (\s -> s { subgoals = Data.Map.insert curSubgoalName newSgData (subgoals s) })
+        bustUnavailableVarsCacheOutsideOfSubgoal curSubgoalName)
 
 buildJustification0 :: Proof -> Justification
 buildJustification0 = return
@@ -299,7 +304,7 @@ createNewSubgoal seq = do
     freshGoal <- getFreshSubgoalName
     curSubgoalName <- ST.gets curSubgoal
     curSubgoalData <- getCurrentSubgoal
-    let newSubgoal = Subgoal { sequent = seq, prevGoal = curSubgoalName, nextGoals = [], subgoalJustification = tacError "No justification", expanded = Nothing, inProgressFunctionalProof = Nothing, reservedVars = S.empty }
+    let newSubgoal = Subgoal { sequent = seq, prevGoal = curSubgoalName, nextGoals = [], subgoalJustification = tacError "No justification", expanded = Nothing, inProgressFunctionalProof = Nothing, reservedVars = S.empty, unavailableVarsCache = S.empty }
         newCurSubgoalData = curSubgoalData { nextGoals = freshGoal:nextGoals curSubgoalData }
     ST.modify (\s -> s { subgoals = Data.Map.insert curSubgoalName newCurSubgoalData (Data.Map.insert freshGoal newSubgoal (subgoals s)), openGoalStack = (head (openGoalStack s)):(freshGoal:tail (openGoalStack s)) })
     return freshGoal
@@ -327,9 +332,10 @@ idTac x = do
 idATac :: Tactic
 idATac = do
     seq <- getCurrentSequent
-    case L.filter (\(_, p) -> p == goalProposition seq) . Data.Map.toList $ linearContext seq of
+    sgName <- ST.gets curSubgoal
+    unavailableVars <- ST.gets (getUnavailableVarsForSubgoal sgName)
+    case L.filter (\(k, p) -> not (k `S.member` unavailableVars) && p == goalProposition seq) . Data.Map.toList $ linearContext seq of
         ((x,p):rest) -> do
-            --reserveVars [x, channel seq]
             reserveVars [x]
             xName <- lookupVarName x
             zName <- lookupVarName (channel seq)
