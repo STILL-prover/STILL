@@ -53,8 +53,8 @@ propToS = go 0
     -- 3: multiplicative (⊗)
     -- 4: atomic / prefix
         go :: Int -> Proposition -> String
-        go _ Unit            = "1"
-        go _ (Lift t)        = "$" ++ ftToS t
+        go _ Unit = "1"
+        go _ (Lift t) = "$" ++ ftToS t
         go p (Replication a) =
             parensIf (p > 4) $ "!" ++ go 4 a
         go p (Tensor a b) =
@@ -81,14 +81,14 @@ propToS = go 0
             go (myPrec + 1) a ++ op ++ go myPrec b
         parensIf :: Bool -> String -> String
         parensIf False s = s
-        parensIf True  s = "(" ++ s ++ ")"
+        parensIf True s = "(" ++ s ++ ")"
 
 {-| Get all names occuring in a proposition.
 
 >>> propNames (With (Lift (Var "A")) (Forall "x" (Var "B") Unit))
 fromList ["A","B","x"]
 -}
-propNames :: Proposition ->  S.Set String
+propNames :: Proposition -> S.Set String
 propNames Unit = S.empty
 propNames (Lift t) = functionalNames t
 propNames (Implication p1 p2) = propNames p1 `S.union` propNames p2
@@ -99,7 +99,7 @@ propNames (Plus p1 p2) = propNames p1 `S.union` propNames p2
 propNames (Forall x t p) = S.insert x $ functionalNames t `S.union` propNames p
 propNames (Exists x t p) = S.insert x $ functionalNames t `S.union` propNames p
 propNames (Forall2 x p) = S.insert x $ propNames p
-propNames (Exists2 x p) = S.insert x $   propNames p
+propNames (Exists2 x p) = S.insert x $ propNames p
 propNames (TyNu x p) = S.insert x $ propNames p
 propNames (TyVar x) = S.singleton x
 
@@ -495,10 +495,10 @@ seqToS seq =
   where
     -- 1. Extract and format the raw components into lists of strings
     tyVars = S.toList (tyVarContext seq)
-    fns    = [k ++ ":" ++ ftToS v   | (k,v) <- Data.Map.toList (fnContext seq)]
-    unres  = [k ++ ":" ++ propToS v | (k,v) <- Data.Map.toList (unrestrictedContext seq)]
-    lin    = [k ++ ":" ++ propToS v | (k,v) <- Data.Map.toList (linearContext seq)]
-    goal   = channel seq ++ ":" ++ propToS (goalProposition seq)
+    fns = [k ++ ":" ++ ftToS v | (k,v) <- Data.Map.toList (fnContext seq)]
+    unres = [k ++ ":" ++ propToS v | (k,v) <- Data.Map.toList (unrestrictedContext seq)]
+    lin = [k ++ ":" ++ propToS v | (k,v) <- Data.Map.toList (linearContext seq)]
+    goal = channel seq ++ ":" ++ propToS (goalProposition seq)
 
     -- 2. Define the single-line representation (Original logic)
     -- We join the internal lists with comma-space, and the sections with semicolons.
@@ -593,48 +593,48 @@ subProofs :: Proof -> [Either FunctionalProof Proof]
 subProofs rule = case rule of
     -- Cases with FunctionalProof
     FunctionalTermRightRule _ fp _ _ _ -> [Left fp]
-    ForallLeftRule _ _ fp p            -> [Left fp, Right p]
-    ExistsRightRule _ fp p             -> [Left fp, Right p]
+    ForallLeftRule _ _ fp p -> [Left fp, Right p]
+    ExistsRightRule _ fp p -> [Left fp, Right p]
 
     -- Binary Proof cases
-    WithRightRule p1 p2                -> [Right p1, Right p2]
-    ImpliesLeftRule _ p1 p2            -> [Right p1, Right p2]
-    TensorRightRule p1 p2              -> [Right p1, Right p2]
-    PlusLeftRule _ p1 p2               -> [Right p1, Right p2]
-    CutRule p1 p2                      -> [Right p1, Right p2]
-    CutReplicationRule _ p1 p2         -> [Right p1, Right p2]
+    WithRightRule p1 p2 -> [Right p1, Right p2]
+    ImpliesLeftRule _ p1 p2 -> [Right p1, Right p2]
+    TensorRightRule p1 p2 -> [Right p1, Right p2]
+    PlusLeftRule _ p1 p2 -> [Right p1, Right p2]
+    CutRule p1 p2 -> [Right p1, Right p2]
+    CutReplicationRule _ p1 p2 -> [Right p1, Right p2]
 
     -- Unary Proof cases
-    FunctionalTermLeftRule _ p         -> [Right p]
-    UnitLeftRule _ p                   -> [Right p]
-    ReplicationRightRule _ p           -> [Right p]
-    ReplicationLeftRule _ _ p          -> [Right p]
-    CopyRule _ _ p                     -> [Right p]
-    WithLeft1Rule _ _ p                -> [Right p]
-    WithLeft2Rule _ _ p                -> [Right p]
-    ImpliesRightRule _ p               -> [Right p]
-    TensorLeftRule _ _ p               -> [Right p]
-    PlusRight1Rule _ p                 -> [Right p]
-    PlusRight2Rule _ p                 -> [Right p]
-    ForallRightRule _ p                -> [Right p]
-    ExistsLeftRule _ _ p               -> [Right p]
-    ForallRight2Rule _ p               -> [Right p]
-    ForallLeft2Rule _ _ _ p            -> [Right p]
-    ExistsRight2Rule _ _ p             -> [Right p]
-    ExistsLeft2Rule _ _ p              -> [Right p]
-    TyNuRightRule _ _ p                -> [Right p]
-    TyNuLeftRule _ _ p                 -> [Right p]
-    ReplWeakening _ _ p                -> [Right p]
-    FnWeakening _ _ p                  -> [Right p] -- Assuming FunctionalTerm is not traversed
-    TyVarWeakening _ p                 -> [Right p]
-    RecBindingWeakening _ _ p          -> [Right p]
-    ProcessFiatRule _ _ _ p            -> [Right p]
+    FunctionalTermLeftRule _ p -> [Right p]
+    UnitLeftRule _ p -> [Right p]
+    ReplicationRightRule _ p -> [Right p]
+    ReplicationLeftRule _ _ p -> [Right p]
+    CopyRule _ _ p -> [Right p]
+    WithLeft1Rule _ _ p -> [Right p]
+    WithLeft2Rule _ _ p -> [Right p]
+    ImpliesRightRule _ p -> [Right p]
+    TensorLeftRule _ _ p -> [Right p]
+    PlusRight1Rule _ p -> [Right p]
+    PlusRight2Rule _ p -> [Right p]
+    ForallRightRule _ p -> [Right p]
+    ExistsLeftRule _ _ p -> [Right p]
+    ForallRight2Rule _ p -> [Right p]
+    ForallLeft2Rule _ _ _ p -> [Right p]
+    ExistsRight2Rule _ _ p -> [Right p]
+    ExistsLeft2Rule _ _ p -> [Right p]
+    TyNuRightRule _ _ p -> [Right p]
+    TyNuLeftRule _ _ p -> [Right p]
+    ReplWeakening _ _ p -> [Right p]
+    FnWeakening _ _ p -> [Right p]
+    TyVarWeakening _ p -> [Right p]
+    RecBindingWeakening _ _ p -> [Right p]
+    ProcessFiatRule _ _ _ p -> [Right p]
 
     -- Leaf cases
-    IdRule{}                           -> []
-    UnitRightRule{}                    -> []
-    TyVarRule{}                        -> []
-    HoleRule{}                         -> []
+    IdRule{} -> []
+    UnitRightRule{} -> []
+    TyVarRule{} -> []
+    HoleRule{} -> []
 
 foldProof :: ([a] -> a) -> ([a] -> a) -> Proof -> a
 foldProof fProof fFunc rule =
@@ -1046,6 +1046,82 @@ validRecursiveBindings eta = Data.Map.foldl (\acc (ps, bs) -> acc && validBindin
 validSequent :: Sequent -> Bool
 validSequent (Sequent tv fc uc lc eta z p) = L.null (Data.Map.keys fc `L.intersect` Data.Map.keys uc `L.intersect` Data.Map.keys lc) && not (Data.Map.member z fc || Data.Map.member z uc || Data.Map.member z lc) && validRecursiveBindings eta
 
+{-| Checks that a type variable occurs in a strictly positive position in a
+proposition.
+
+>>> isStrictlyPositive "Y" (TyVar "Y")
+True
+
+>>> isStrictlyPositive "Y" (Implication (TyVar "Y") (Unit))
+True
+
+>>> isStrictlyPositive "Y" (Implication (Implication Unit (TyVar "Y")) (Unit))
+True
+
+>>> isStrictlyPositive "Y" (Implication (Implication (TyVar "Y") Unit) (Unit))
+False
+-}
+isStrictlyPositive :: String -> Proposition -> Bool
+isStrictlyPositive y p = go y p
+    where
+        checkLeft :: String -> Proposition -> Bool
+        checkLeft y1 (TyVar y2) | y1 == y2 = False
+        checkLeft y1 (Implication p1 p2) = checkLeft y p1 && checkLeft y p2
+        checkLeft y1 (Tensor p1 p2) = checkLeft y p1 && checkLeft y p2
+        checkLeft y1 (Replication p1) = checkLeft y p1
+        checkLeft y1 (With p1 p2) = checkLeft y p1 && checkLeft y p2
+        checkLeft y1 (Plus p1 p2) = checkLeft y p1 && checkLeft y p2
+        checkLeft y (Forall x p1 p2) | x /= y = checkLeft y p2
+        checkLeft y (Exists x p1 p2) | x /= y = checkLeft y p2
+        checkLeft y (Forall2 x p1) | x /= y = checkLeft y p1
+        checkLeft y (Exists2 x p1) | x /= y = checkLeft y p1
+        checkLeft y _ = True -- Variable is shadowed or a lift/tyvar of another var/unit is encountered
+
+        checkCons :: String -> Proposition -> Bool
+        checkCons y (Implication p1 p2) = checkLeft y p1 && checkCons y p2
+        checkCons y (Tensor p1 p2) = checkCons y p1 && checkCons y p2
+        checkCons y (Replication p1) = checkCons y p1
+        checkCons y (With p1 p2) = checkCons y p1 && checkCons y p2
+        checkCons y (Plus p1 p2) = checkCons y p1 && checkCons y p2
+        checkCons y (Forall x p1 p2) | x /= y = checkCons y p2
+        checkCons y (Exists x p1 p2) | x /= y = checkCons y p2
+        checkCons y (Forall2 x p1) | x /= y = checkCons y p1
+        checkCons y (Exists2 x p1) | x /= y = checkCons y p1
+        checkCons y (TyNu x p1) | x /= y = checkCons y p1
+        checkCons y _ = True -- Variable is shadowed or a lift/tyvar/unit is encountered
+
+        go :: String -> Proposition -> Bool
+        go y (Implication p1 p2) = checkCons y p1 && go y p2
+        go y (Tensor p1 p2) = go y p1 && go y p2
+        go y (Replication p1) = go y p1
+        go y (With p1 p2) = go y p1 && go y p2
+        go y (Plus p1 p2) = go y p1 && go y p2
+        go y (Forall x p1 p2) | x /= y = go y p2
+        go y (Exists x p1 p2) | x /= y = go y p2
+        go y (Forall2 x p1) | x /= y = go y p1
+        go y (Exists2 x p1) | x /= y = go y p1
+        go y (TyNu x p1) | x /= y = go y p1
+        go y _ = True -- Variable is shadowed or a lift/tyvar/unit is encountered
+
+wellFormedTypeWithFreeVars :: Proposition -> Either String ()
+wellFormedTypeWithFreeVars b = case b of
+    Unit -> return ()
+    Lift ft -> return ()
+    Implication p1 p2 -> wf2 p1 p2
+    Tensor p1 p2 -> wf2 p1 p2
+    Replication p -> wf p
+    With p1 p2 -> wf2 p1 p2
+    Plus p1 p2 -> wf2 p1 p2
+    Forall x p1 p2 -> wf p2
+    Exists x p1 p2 -> wf p2
+    Forall2 x p -> wellFormedTypeWithFreeVars p
+    Exists2 x p -> wellFormedTypeWithFreeVars p
+    TyNu x p -> unless (isStrictlyPositive x p) (Left (x ++ " is not strictly positive in " ++ propToS p)) >> wellFormedTypeWithFreeVars p
+    TyVar x -> return ()
+    where
+        wf2 p1 p2 = wellFormedTypeWithFreeVars p1 >> wellFormedTypeWithFreeVars p2
+        wf = wellFormedTypeWithFreeVars
+
 wellFormedType :: S.Set String -> Proposition -> Either String ()
 wellFormedType tyVarContext b = case b of
     Unit -> return ()
@@ -1059,7 +1135,7 @@ wellFormedType tyVarContext b = case b of
     Exists x p1 p2 -> wf p2
     Forall2 x p -> wellFormedType (S.insert x tyVarContext) p
     Exists2 x p -> wellFormedType (S.insert x tyVarContext) p
-    TyNu x p -> wellFormedType (S.insert x tyVarContext) p
+    TyNu x p -> unless (isStrictlyPositive x p) (Left (x ++ " is not strictly positive in " ++ propToS p)) >> wellFormedType (S.insert x tyVarContext) p
     TyVar x -> if S.member x tyVarContext then return () else Left (x ++ " is free in what should be a well-formed type.")
     where
         wf2 p1 p2 = wellFormedType tyVarContext p1 >> wellFormedType tyVarContext p2
@@ -1673,118 +1749,3 @@ typeCheckProcessUnderSequentAtom seq process = case process of
         return $ TyVarRule (recursiveBindings seq) x zs
     e -> Left $ "Cannot determine how to type check: " ++ pToS e
         -- when (z /= channel seq) $ Left $ "Identity fail: Process channel " ++ z ++ " does not match goal " ++ channel seq
--- extractProofFromProcessUnderCtx :: Maybe Proposition -> S.Set String -> FunctionalContext -> Context -> Context -> RecursiveBindings -> String -> Process -> Either String Proof
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z prc
---     | any (\(k, v) -> case v of Unit -> True; _ -> False) (Data.Map.toList lctx) = do
---         let props = L.filter (\(k, v) -> case v of Unit -> True; _ -> False) (Data.Map.toList lctx)
---             freshName = getFreshName (S.insert z $ tv `S.union` getFunctionalContextNames fctx `S.union` getContextNames uctx `S.union` getContextNames lctx `S.union` getRecursiveBindingsNames eta)
---             u = fst . head $ props
---         newP <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx (Data.Map.delete u lctx) eta z prc
---         return $ UnitLeftRule u newP
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z prc
---     | any (\(k, v) -> case v of Replication p -> True; _ -> False) (Data.Map.toList lctx) = do
---         let props = L.filter (\(k, v) -> case v of Replication p -> True; _ -> False) (Data.Map.toList lctx)
---             freshName = getFreshName (S.insert z $ tv `S.union` getFunctionalContextNames fctx `S.union` getContextNames uctx `S.union` getContextNames lctx `S.union` getRecursiveBindingsNames eta)
---             x = fst . head $ props
---         replProp <- case snd . head $ props of Replication p -> return p; _ -> Left "Not a replication prop!"
---         newP <- extractProofFromProcessUnderCtx maybeProp tv fctx (Data.Map.insert freshName replProp uctx) (Data.Map.delete x lctx) eta z (substVar prc x freshName)
---         return $ ReplicationLeftRule freshName x newP
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z prop
---     | any (\(k, v) -> case v of Lift p -> True; _ -> False) (Data.Map.toList lctx) = do
---         let props = L.filter (\(k, v) -> case v of Lift p -> True; _ -> False) (Data.Map.toList lctx)
---             x = fst . head $ props
---         replProp <- case snd . head $ props of Lift p -> return p; _ -> Left "Not a lifted prop!"
---         newP <- extractProofFromProcessUnderCtx maybeProp tv (Data.Map.insert x replProp fctx) uctx (Data.Map.delete x lctx) eta z Halt
---         return $ FunctionalTermLeftRule x newP
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z Halt | Data.Map.empty == lctx = return $ UnitRightRule z tv fctx uctx eta
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z1 (Link x z2) | L.length (Data.Map.toList lctx) == 1 = if z1 /= z2
---     then Left $ "Active channel " ++ z1 ++ "not on right side of " ++ show (Link x z2)
---     else case Data.Map.lookup x lctx of
---         Just prop -> return $ IdRule x z1 tv fctx uctx eta prop
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z1 (LiftTerm z2 t) | Data.Map.empty == lctx = do
---     checkNamesMatch z1 z2
---     p1 <- extractProofFromTermUnderCtx fctx t
---     return $ FunctionalTermRightRule z1 p1 tv uctx eta
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z1 (ReplicateReceive z y p) | Data.Map.empty == lctx = do
---     p1 <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta y p
---     return $ ReplicationRightRule z p1
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z (Nu y1 prop (Send u y2 p))
---     | Data.Map.member u uctx && y1 == y2 && uctx ! u == prop = do
---         proof1 <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx (Data.Map.insert y1 prop lctx) eta z p
---         return $ CopyRule u y1 proof1
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z1 (Case z2 proc1 proc2) | z1 == z2 = do
---         proof1 <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z2 proc1
---         proof2 <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z2 proc2
---         return $ WithRightRule proof1 proof2
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z (Case x proc1 proc2)
---     | Data.Map.member x lctx && case lctx ! x of Plus _ _ -> True; _ -> False  = do
---         (a, b) <- case lctx ! x of Plus a b -> return (a, b); _ -> Left "Not a plus proposition!"
---         proof1 <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx (Data.Map.insert x a lctx) eta z proc1
---         proof2 <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx (Data.Map.insert x b lctx) eta z proc2
---         return $ PlusLeftRule x proof1 proof2
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z (SendInl x p)
---     | Data.Map.member x lctx && case lctx ! x of With _ _ -> True; _ -> False  = do
---         (a, b) <- case lctx ! x of With a b -> return (a, b); _ -> Left "Not a with proposition!"
---         proof <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx (Data.Map.insert x a lctx) eta z p
---         return $ WithLeft1Rule x b proof
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z (SendInr x p)
---     | Data.Map.member x lctx && case lctx ! x of With _ _ -> True; _ -> False  = do
---         (a, b) <- case lctx ! x of With a b -> return (a, b); _ -> Left "Not a with proposition!"
---         proof <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx (Data.Map.insert x b lctx) eta z p
---         return $ WithLeft2Rule x a proof
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z1 (Nu y1 prop (Send z2 y2 (ParallelComposition p1 p2))) | z1 == z2 && y1 == y2 = do
---     let freeLeftVars = processFreeNames p1
---         leftLCtx = Data.Map.filterWithKey (\k v -> S.member k freeLeftVars) lctx
---     proof1 <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx leftLCtx eta y1 p1
---     proof2 <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx (Data.Map.difference lctx leftLCtx) eta z1 p2
---     return $ TensorRightRule proof1 proof2
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z (Nu y1 prop (Send x y2 (ParallelComposition p1 p2)))
---     | y1 == y2 && Data.Map.member x lctx && case lctx ! x of Implication {} -> True; _ -> False = do
---         let freeLeftVars = processFreeNames p1
---             leftLCtx = Data.Map.delete y1 $ Data.Map.filterWithKey (\k v -> S.member k freeLeftVars) lctx
---         (a, b) <- case lctx ! x of Implication a b -> return (a, b); _ -> Left "Not an implication!"
---         proof1 <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx leftLCtx eta y1 p1
---         proof2 <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx (Data.Map.insert x b (Data.Map.difference lctx leftLCtx)) eta z p2
---         return $ TensorRightRule proof1 proof2
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z (Receive x y p)
---     | Data.Map.member x lctx && case lctx ! x of Tensor _ _ -> True; _ -> False = do
---         (a, b) <- case lctx ! x of Tensor a b -> return (a, b); _ -> Left "Not a tensor proposition!"
---         proof <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx (Data.Map.insert y a (Data.Map.insert x b lctx)) eta z p
---         return $ TensorLeftRule x y proof
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z1 (SendInl z2 p) | z1 == z2 = do
---     proof <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z1 p
---     return $ PlusRight1Rule Unit proof
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z1 (SendInr z2 p) | z1 == z2 = do
---     proof <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z1 p
---     return $ PlusRight2Rule Unit proof
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z (SendTerm x n p)
---     | Data.Map.member x fctx && case lctx ! x of Forall{} -> True; _ -> False = do
---         (y, t, a) <- case lctx ! x of Forall y t a -> return (y, t, a); _ -> Left "Not a forall proposition!"
---         termProof <- extractProofFromTermUnderCtx fctx n
---         termConcl <- functionalConcl termProof
---         unless (goalType termConcl == t) $ Left "Term and stored types don't match!"
---         proof <- extractProofFromProcessUnderCtx maybeProp tv (Data.Map.insert y t fctx) uctx (Data.Map.insert x (substVarTerm a n y) lctx) eta z p
---         return $ ForallLeftRule x y termProof proof
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z1 (SendTerm z2 n p) | z1 == z2 = do
---         termProof <- extractProofFromTermUnderCtx fctx n
---         termConcl <- functionalConcl termProof
---         let freshName = getFreshName (S.insert z1 $ tv `S.union` getFunctionalContextNames fctx `S.union` getContextNames uctx `S.union` getContextNames lctx `S.union` getRecursiveBindingsNames eta `S.union` functionalNames n)
---         proof <- extractProofFromProcessUnderCtx maybeProp tv (Data.Map.insert freshName (goalType termConcl) fctx) uctx lctx eta z1 p
---         return $ ExistsRightRule freshName termProof proof
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z (Receive x y p)
---     | Data.Map.member x fctx && case lctx ! x of Exists y2 t a -> y == y2; _ -> False = do
---         (y, t, a) <- case lctx ! x of Exists y t a -> return (y, t, a); _ -> Left "Not an exists proposition!"
---         proof <- extractProofFromProcessUnderCtx maybeProp tv (Data.Map.insert y t fctx) uctx (Data.Map.insert x a lctx) eta z p
---         return $ ExistsLeftRule x y proof
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z (Nu u1 prop (ParallelComposition (ReplicateReceive u2 x p1) p2)) | u1 == u2 = do
---     proof1 <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx Data.Map.empty eta x p1
---     proof1Concl <- concl proof1
---     unless (prop == goalProposition proof1Concl) $ Left "Type extracted doesn't match expected."
---     proof2 <- extractProofFromProcessUnderCtx maybeProp tv fctx (Data.Map.insert u1 prop uctx) lctx eta z p2
---     return $ CutReplicationRule u1 proof1 proof2
--- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta z (Nu x prop (ParallelComposition p1 p2)) = do
---     proof1 <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx lctx eta x p1
---     proof1Concl <- concl proof1
---     unless (prop == goalProposition proof1Concl) $ Left "Type extracted doesn't match expected."
---     proof2 <- extractProofFromProcessUnderCtx maybeProp tv fctx uctx (Data.Map.insert x prop $ Data.Map.difference lctx (linearContext proof1Concl)) eta z p2
---     return $ CutRule proof1 proof2

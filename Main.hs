@@ -41,7 +41,8 @@ emptyState = S {
     stypeDecls = [],
     fnAssumptions = [],
     procAssumptions = [],
-    errors = []
+    errors = [],
+    stypeAssumptions = []
 }
 
 data DiagnosticInfo = DiagnosticInfo {

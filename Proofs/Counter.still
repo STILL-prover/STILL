@@ -48,8 +48,8 @@ apply Weaken n
 apply TyVar N (a)
 done
 
--- Counter νX. {val:int ∧ X, inc:X, halt:1}
-theorem Counter: "forall int:Type 1.forall compute:(Pi m:int.Pi b:int.int).forall zero:int.forall one:int.nu X. (X & X & 1)"
+-- CounterSession νX. {val:int ∧ X, inc:X, halt:1}
+theorem CounterSession: "forall int:Type 1.forall compute:(Pi m:int.Pi b:int.int).forall zero:int.forall one:int.nu X. (X & X & 1)"
 apply CutTheorem epsilon
 apply Intros
 apply ForallLA

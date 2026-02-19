@@ -1,5 +1,7 @@
 module parseTest begin
 
+assume N is stype
+
 theorem testUnit: "1"
 apply UnitR
 done

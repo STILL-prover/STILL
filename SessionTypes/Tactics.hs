@@ -79,6 +79,7 @@ data ProofState = S {
     stypeDecls :: [(String, Proposition)],
     fnAssumptions :: [(String, FunctionalTerm)],
     procAssumptions :: [(String, Proposition)],
+    stypeAssumptions :: [String],
     errors :: [String]
 } deriving ()
 
@@ -178,13 +179,13 @@ invalidateNameCache = ST.modify (\s -> s { cachedProofStateNames = S.empty })
 lookupVarName :: String -> ProverState String
 lookupVarName x = return x
 
-initializeSequent :: [(String, FunctionalTerm)] -> [Proposition] -> Proposition -> Sequent
-initializeSequent assumedTerms consumedProps p = let
+initializeSequent :: [String] -> [(String, FunctionalTerm)] -> [Proposition] -> Proposition -> Sequent
+initializeSequent assumedSessionTypes assumedTerms consumedProps p = let
     termNames = S.fromList (fst <$> assumedTerms) `S.union` S.unions (functionalNames . snd <$> assumedTerms)
-    currentAllNames = S.insert "z" $ termNames `S.union` S.unions (propNames <$> (p:consumedProps))
+    currentAllNames = S.insert "z" $ S.fromList assumedSessionTypes `S.union` termNames `S.union` S.unions (propNames <$> (p:consumedProps))
     resourceNames = L.filter (\n -> not $ n `S.member` currentAllNames) namesInOrder
     linearProps = zip resourceNames consumedProps
-    in Sequent { tyVarContext = S.empty, fnContext = Data.Map.fromList assumedTerms, unrestrictedContext = Data.Map.empty, linearContext = Data.Map.fromList linearProps, recursiveBindings = Data.Map.empty, channel = "z", goalProposition = p }
+    in Sequent { tyVarContext = S.fromList assumedSessionTypes, fnContext = Data.Map.fromList assumedTerms, unrestrictedContext = Data.Map.empty, linearContext = Data.Map.fromList linearProps, recursiveBindings = Data.Map.empty, channel = "z", goalProposition = p }
 
 initializeProof :: Sequent -> Subgoal
 initializeProof seq = Subgoal { sequent = seq, prevGoal = "", nextGoals = [], expanded = Nothing, subgoalJustification = tacError "No justification.", inProgressFunctionalProof = Nothing, reservedVars = S.empty }
@@ -976,7 +977,8 @@ initCleanState mName =
         , stypeDecls = []
         , fnAssumptions = []
         , procAssumptions = []
-        , errors = [] }
+        , errors = []
+        , stypeAssumptions = [] }
 
 runProofState :: ProverState a -> ProofState -> (Either String (a, ProofState))
 runProofState a s = runIdentity $ E.runExceptT $ ST.runStateT a s
@@ -991,15 +993,20 @@ theorem s ts n p =
     let
         typeSynonyms = stypeDecls s
         sessionsToConsume = substTyDecls typeSynonyms <$> ts
-        goal = initializeProof (initializeSequent (fnAssumptions s) sessionsToConsume (substTyDecls typeSynonyms p))
+        goalProp = (substTyDecls typeSynonyms p)
+        goal = initializeProof (initializeSequent (stypeAssumptions s) (fnAssumptions s) sessionsToConsume goalProp)
+        wellFormedGoal = wellFormedTypeWithFreeVars goalProp
     in
-        s { subgoals = singleton "?a" goal
-        , outputs = "New theorem started":outputs s
-        , curTheoremName = n
-        , openGoalStack = ["?a"]
-        , cachedProofStateNames = S.empty
-        , newSubgoalNameList = tail allSubgoalNames
-        , cachedVarNames = namesInOrder }
+        case wellFormedGoal of
+            Left e -> s { errors = ("Proposition is not well-formed! " ++ e):errors s }
+            Right () -> declCheck n s (s {
+                subgoals = singleton "?a" goal
+                , outputs = "New theorem started":outputs s
+                , curTheoremName = n
+                , openGoalStack = ["?a"]
+                , cachedProofStateNames = S.empty
+                , newSubgoalNameList = tail allSubgoalNames
+                , cachedVarNames = namesInOrder })
 
 runAndVerifyJustification :: ProofState -> Either String (Proof, ProofState)
 runAndVerifyJustification s = case runProofState (subgoalJustification ( subgoals s ! "?a")) s of
@@ -1045,14 +1052,22 @@ _Extract s tName =
                   extractor (proofObject <$> (Data.Map.lookup (L.tail $ L.dropWhile (/= '.') tName) m))
             Just p -> extractor (proofObject p)
 
+getProofStateDeclNames :: ProofState -> [String]
+getProofStateDeclNames s = [curTheoremName s, curModuleName s] ++ Data.Map.keys (loadedModules s) ++ concatMap Data.Map.keys (loadedModules s) ++ Data.Map.keys (theorems s) ++ (fst <$> stypeDecls s) ++ (fst <$> fnAssumptions s) ++ (fst <$> procAssumptions s) ++ stypeAssumptions s
+
+declCheck n s res = if n `L.elem` getProofStateDeclNames s then s { errors = "Name already declared!":errors s } else res
+
 _STypeDecl :: String -> Proposition -> ProofState -> ProofState
-_STypeDecl n ty s = s { stypeDecls = (n, ty):(stypeDecls s) }
+_STypeDecl n ty s = declCheck n s (s { stypeDecls = (n, ty):stypeDecls s })
 
 _FAssumption :: String -> FunctionalTerm -> ProofState -> ProofState
-_FAssumption n ty s = s { fnAssumptions = (n, ty):(fnAssumptions s) }
+_FAssumption n ty s = declCheck n s (s { fnAssumptions = (n, ty):fnAssumptions s })
 
 _PAssumption :: String -> Proposition -> ProofState -> ProofState
-_PAssumption n ty s = s { procAssumptions = (n, substTyDecls (stypeDecls s) ty):(procAssumptions s) }
+_PAssumption n ty s = declCheck n s (s { procAssumptions = (n, substTyDecls (stypeDecls s) ty):procAssumptions s })
+
+_STypeAssumption :: String -> ProofState -> ProofState
+_STypeAssumption n s = declCheck n s (s { stypeAssumptions = n:stypeAssumptions s })
 
 _PushMessage :: ProofState -> String -> ProofState
 _PushMessage s m = s { outputs = m:outputs s }

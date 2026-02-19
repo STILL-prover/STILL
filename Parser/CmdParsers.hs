@@ -49,7 +49,8 @@ parseStringCommand = parse (whiteSpace >> cmd <* eof) ""
 cmd :: Parser (ProofState -> ProofState)
 cmd = parseTheorem
   <|> parseTypeDec
-  <|> try (parseProcessAssumption)
+  <|> try parseProcessAssumption
+  <|> try parseSTypeAssumption
   <|> parseAssumption
   <|> parseProvingCommand
   <|> parseDone
@@ -102,6 +103,14 @@ parseProcessAssumption = do
     reserved "is"
     resTy <- quotes proposition
     return (_PAssumption resI resTy)
+
+parseSTypeAssumption :: Parser (ProofState -> ProofState)
+parseSTypeAssumption = do
+    reserved "assume"
+    resI <- identifier
+    reserved "is"
+    reserved "stype"
+    return (_STypeAssumption resI)
 
 parseTheorem :: Parser (ProofState -> ProofState)
 parseTheorem = do
