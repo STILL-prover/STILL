@@ -17,6 +17,7 @@ import SessionTypes.Kernel
 import Debug.Trace
 import Control.Monad.Identity (Identity (runIdentity))
 import qualified Debug.Trace as DBG
+import GHC.Conc (par, pseq)
 
 data BranchType = Additive
     | Multiplicative -- Indicate the subgoal with the shared channel as root. The String allows unhiding a cut channel.
@@ -51,12 +52,12 @@ getUnavailableVarsForSubgoal sgName s = case Data.Map.lookup sgName (subgoals s)
                 Just Multiplicative -> let
                         unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
                         unavailableForPrev = getUnavailableVarsForSubgoal (prevGoal curSg) s
-                    in unavailableForPrev `S.union` unavailableInBranches-- `S.union` reservedVars prevSg
+                    in unavailableForPrev `par` (unavailableInBranches `pseq` (unavailableForPrev `S.union` unavailableInBranches))
                 Just Cut -> let
                         unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
                         unavailableForPrev = getUnavailableVarsForSubgoal (prevGoal curSg) s
-                    in S.delete (channel (sequent prevSg)) $ unavailableForPrev `S.union` unavailableInBranches-- `S.union` reservedVars prevSg
-                _ -> getUnavailableVarsForSubgoal (prevGoal curSg) s--reservedVars prevSg `S.union` getUnavailableVarsForSubgoal (prevGoal curSg) s
+                    in unavailableForPrev `par` (unavailableInBranches `pseq` S.delete (channel (sequent prevSg)) (unavailableForPrev `S.union` unavailableInBranches))
+                _ -> getUnavailableVarsForSubgoal (prevGoal curSg) s
             _ -> S.empty))
     Nothing -> S.empty
 
