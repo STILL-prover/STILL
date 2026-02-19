@@ -32,7 +32,7 @@ to move the current subgoal to the end.
 # Compiling
 
 1. Use ghcup to install ghc 9.6.7
-2. ghc Main.hs -o still
+2. ghc -threaded -O2 Main.hs -o still
 3. Run with ./still (still.exe on Windows)
 
 # License
