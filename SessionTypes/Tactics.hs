@@ -92,7 +92,7 @@ substTyDeclsM :: Proposition -> ProverState Proposition
 substTyDeclsM p = (`substTyDecls` p) <$> ST.gets stypeDecls
 
 curSubgoal :: ProofState -> String
-curSubgoal s = if L.null (openGoalStack s) then "" else head (openGoalStack s)
+curSubgoal s = if L.null (openGoalStack s) then "" else L.takeWhile (/= '.') $ head (openGoalStack s)
 
 usedSubgoalNames :: ProofState -> S.Set String
 usedSubgoalNames s = S.fromList $ Data.Map.keys $ subgoals s
@@ -1084,11 +1084,18 @@ _FTac t = do
     case Data.Map.lookup (curSubgoal s) (subgoals s) of
         Just sg -> case inProgressFunctionalProof sg of
             Just (fs, p) -> case FT._FApply (Right fs) t of
-                Right newFs -> if FT._FDone newFs
-                    then case FT._FGetProof newFs of
-                        Right fp -> ST.put (applyTactic s (p fp)) >> return "Functional proof complete and tactic applied."
-                        Left e -> tacError $ "Proof completed, but justification has errors: " ++ e
-                    else ST.put (s { subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (newFs, p) }) (subgoals s) }) >> return "Functional tactic applied."
+                Right newFs ->
+                    let
+                        prevGoals = FT.subgoals fs
+                        newGoals = FT.subgoals newFs
+                        newGoalNames = (\n -> curSubgoal s ++ "." ++ n) <$> Data.Map.keys (Data.Map.difference newGoals prevGoals)
+                        newGoalStack = (if Data.Map.null (Data.Map.filter (not . FT.used) newGoals) then [curSubgoal s] else newGoalNames) ++ tail (openGoalStack s)
+                    in
+                        if FT._FDone newFs
+                        then case FT._FGetProof newFs of
+                            Right fp -> ST.put (applyTactic (s { openGoalStack = newGoalStack }) (p fp)) >> return "Functional proof complete and tactic applied."
+                            Left e -> tacError $ "Proof completed, but justification has errors: " ++ e
+                        else ST.put (s { openGoalStack = newGoalStack, subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (newFs, p) }) (subgoals s) }) >> return "Functional tactic applied."
                 Left e -> tacError e
             Nothing -> tacError "No in progress functional proof to apply to in current subgoal."
         Nothing -> tacError $ "Could not find current subgoal name: " ++ curSubgoal s ++ " in subgoals."
@@ -1129,7 +1136,10 @@ _FTermR = do
             functionalTermRightTac p
     case goalProposition seq of
         Lift t -> (do
-                ST.modify (\s -> s { subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (FT._FTheorem  (fnContext seq) t names, fullTac )}) (subgoals s) })
+                newGoalsStack <- case openGoalStack curState of
+                    h:rest -> return ((h ++ ".?a"):rest)
+                    [] -> tacError "Cannot find the current subgoal!"
+                ST.modify (\s -> s { openGoalStack = newGoalsStack, subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (FT._FTheorem  (fnContext seq) t names, fullTac )}) (subgoals s) })
                 return "Functional proof in progress.")
         _ -> tacError $ "Cannot apply tactic to non Lift proposition: " ++ show (goalProposition seq)
 
@@ -1245,7 +1255,10 @@ _ForallL x = do
             forallLeftTac x p
     case Data.Map.lookup x (linearContext seq) of
         Just (Forall x t p) -> (do
-                ST.modify (\s -> s { subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (FT._FTheorem  (fnContext seq) t names, fullTac )}) (subgoals s) })
+                newGoalsStack <- case openGoalStack curState of
+                    h:rest -> return ((h ++ ".?a"):rest)
+                    [] -> tacError "Cannot find the current subgoal!"
+                ST.modify (\s -> s { openGoalStack = newGoalsStack, subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (FT._FTheorem  (fnContext seq) t names, fullTac )}) (subgoals s) })
                 return "Functional proof in progress.")
         _ -> tacError $ "Cannot apply tactic to non Forall proposition: " ++ show (goalProposition seq)
 
@@ -1264,7 +1277,10 @@ _ExistsR = do
             existsRightTac p
     case goalProposition seq of
         Exists x t a -> (do
-                ST.modify (\s -> s { subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (FT._FTheorem  (fnContext seq) t names, fullTac )}) (subgoals s) })
+                newGoalsStack <- case openGoalStack curState of
+                    h:rest -> return ((h ++ ".?a"):rest)
+                    [] -> tacError "Cannot find the current subgoal!"
+                ST.modify (\s -> s { openGoalStack = newGoalsStack, subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (FT._FTheorem  (fnContext seq) t names, fullTac )}) (subgoals s) })
                 return "Functional proof in progress.")
         _ -> tacError $ "Cannot apply tactic to non Exists proposition: " ++ show (goalProposition seq)
 
@@ -1361,10 +1377,19 @@ _Intros = _Repeat (_ImpliesR `_Alt` _ForallR `_Alt` _Forall2R)
 _Defer :: ProofState -> ProofState
 _Defer curS =
     let
-        filteredStack = L.filter (\name -> maybe False (not . isUsed) (Data.Map.lookup name (subgoals curS))) (openGoalStack curS)
+        filteredStack = L.filter (\name -> maybe False (not . isUsed) (Data.Map.lookup (L.takeWhile (/= '.') name) (subgoals curS))) (openGoalStack curS)
         newStack = if L.null filteredStack then filteredStack else tail filteredStack ++ [head filteredStack]
+        (sessionGoal, fnGoal) = case newStack of
+            goal:rest | '.' `L.elem` goal -> (L.takeWhile (/= '.') goal, L.drop 1 . L.dropWhile (/= '.') $ goal)
+            (goal:rest) -> (goal, "")
+            _ -> ("", "")
+        newFnProofAction = if L.null fnGoal then return else (\fp -> return ((fst fp) { FT.curSubgoal = fnGoal }, snd fp)) :: (FT.ProofState, FunctionalProof -> Tactic) -> Maybe (FT.ProofState, FunctionalProof -> Tactic)
+        newSubgoal = Data.Map.lookup sessionGoal (subgoals curS) >>= (\sg -> return $ sg { inProgressFunctionalProof = inProgressFunctionalProof sg >>= newFnProofAction })
+        newSubgoals = case newSubgoal of
+            Nothing -> subgoals curS
+            Just sg -> Data.Map.insert sessionGoal sg (subgoals curS)
     in
-        curS { openGoalStack = newStack }
+        curS { openGoalStack = newStack, subgoals = newSubgoals }
 
 _Prefer :: ProofState -> Int ->  ProofState
 _Prefer curS i =

@@ -1,0 +1,37 @@
+module Scratch begin
+
+theorem test: "a -o b -o (a -o b -o c) -o c"
+apply Intros
+apply ImpliesLA
+defer
+apply IdA
+apply ImpliesLA
+apply IdA
+apply IdA
+done
+
+theorem test2: "(forall x:Sigma A:Type 1. Type 1 . 1) -o (exists y:Sigma B:Type 1. Type 1 . 1) * $Sigma C:Type 1.Type 1"
+apply ImpliesR
+apply TensorR
+apply FTermR
+defer
+apply ExistsR
+apply Pair "Type 0" "Type 0" 2
+defer
+defer
+defer
+apply Pair "Type 0" "Type 0" 2
+apply Exact
+apply Exact
+apply Exact
+apply Exact
+apply Exact
+apply Exact
+apply ForallLA
+apply Pair "Type 0" "Type 0" 2
+apply Exact
+apply Exact
+apply Exact
+apply UnitLA
+apply UnitR
+done

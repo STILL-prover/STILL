@@ -1,72 +1,72 @@
 # Session type tactics:
 
-- _Id: Apply the Id tactic linking an explicitly provided resource with an offered resource. 
-- _IdA: Apply the Id tactic linking a provided resource with an offered resource. 
-- _FTermR: Refine a functional term session type to a term in the functional system. 
-- _FTermL: Refine a functional term session type in the assumptions to an assumption in the functional system. 
-- _FTermLA: Automatically apply _FTermL to the first functional term in the linear context. 
-- _ImpliesR: Refine an implication. Assume the antecedent and prove the consequent. 
-- _ImpliesL: Refine an implication assumption. Create a goal to prove the antecedent, and another goal where the consequent is an assumption. 
-- _ImpliesLA: Automatically apply _ImpliesLA to the first implication proposition in the linear context. 
-- _UnitR: Refine a unit proposition. Completes this branch of the proof. 
-- _UnitL: Refine a unit assumption. Discards the assumption from the linear context. 
-- _UnitLA: Automatically apply _UnitL to the first implication proposition in the linear context. 
-- _BangR: Refine a replicating proposition. Create a goal to prove the inner proposition. 
-- _BangL: Refine a replicating assumption. Moves the inner proposition to the unrestricted context. 
-- _BangLA: Automatically apply _BangL to the first implication proposition in the linear context. 
-- _Copy: Creates a copy of an assumption in the unrestricted context in the linear context. 
-- _WithR: Refine a With proposition. Creates two goals. One to prove the left side, and the other to prove the right side. 
-- _WithL1: Refine a With assumption. Selects the left side as the assumption. 
-- _WithL1A: Automatically apply _WithL1 to the first implication proposition in the linear context. 
-- _WithL2: Refine a With assumption. Selects the right side as the assumption. 
-- _WithL2A: Automatically apply _WithL2 to the first implication proposition in the linear context. 
-- _TensorR: Refine a Tensor proposition. Creates two goals. One to prove the left side, and the other to prove the right side. 
-- _TensorL: Refine a Tensor assumption. Both sides become one assumption each. 
-- _TensorLA: Automatically apply _TensorL to the first implication proposition in the linear context. 
-- _PlusR1: Refine a Plus proposition. Selects the left side as the goal. 
-- _PlusR2: Refine a Plus proposition. Selects the right side as the goal. 
-- _PlusL: Refine a Plus assumption. Two subgoals are created. One to complete the proof with the left side of the assumption, and one for the right side. 
-- _PlusLA: Automatically apply _PlusL to the first implication proposition in the linear context. 
-- _ForallR: Refine a forall quantification proposition. Adds the term to the functional context. 
-- _ForallL: Refine a forall quantification assumption. Creates a subgoal to validate the type of the term, and another to continue the proof once validated. 
-- _ExistsR: Refine an existential quantification proposition. Creates a subgoal to validate the type of the term, and another to continue the proof once validated. 
-- _ExistsL: Refine an existential quantification assumption. Adds the term to the functional context. 
-- _ExistsLA: Automatically apply _ExistsL to the first implication proposition in the linear context. 
-- _Forall2R: Refine a second order universal quantified proposition. Adds the variable to the type variable context. 
-- _Forall2L: Refine a second order universal quantified assumption. Provide a well
-- _Exists2R: Refine a second order existential quantified proposition. Provide a well
-- _Exists2L: Refine a second order existential quantified assumption. Adds the variable to the type variable context. 
-- _Exists2LA: Automatically apply _Exists2L to the first implication proposition in the linear context. 
-- _Cut: Cut a theorem into the proof. A goal to prove the theorem is created, and another goal to use it as an assumption is created. 
-- _CutRepl: Cut a replicating theorem into the proof. A goal to prove the theorem is created, and another goal to use it as an unrestricted assumption is created. 
-- _NuR: Refine a corecursive proposition. Provide the binding name, parameter names, and initial arguments. 
-- _NuL: Refine a corecursive assumption. Unfolds the type one level. 
-- _NuLA: Automatically apply _NuL to the first implication proposition in the linear context. 
-- _TyVar: Refine a type variable assumption. Provide the binding name from a previous _NuR application and the new arguments. 
-- _Weaken: Apply the weaken structural rule to the matching variable in the unrestricted or functional context. Will not allow the other contexts to be modified. 
-- _Then: Apply one tactic, then the second to the resulting subgoals of the first tactic. 
-- _Alt: Apply one tactic, then the second if the first one fails. 
-- _Skip: Do nothing and succeed. Useful with _Alt. 
-- _Repeat: Apply the tactic until it no longer succeeds. 
-- _Intros: Apply all available introduction rules.
+- Id: Apply the Id tactic linking an explicitly provided resource with an offered resource. 
+- IdA: Apply the Id tactic linking a provided resource with an offered resource. 
+- FTermR: Refine a functional term session type to a term in the functional system. 
+- FTermL: Refine a functional term session type in the assumptions to an assumption in the functional system. 
+- FTermLA: Automatically apply _FTermL to the first functional term in the linear context. 
+- ImpliesR: Refine an implication. Assume the antecedent and prove the consequent. 
+- ImpliesL: Refine an implication assumption. Create a goal to prove the antecedent, and another goal where the consequent is an assumption. 
+- ImpliesLA: Automatically apply _ImpliesLA to the first implication proposition in the linear context. 
+- UnitR: Refine a unit proposition. Completes this branch of the proof. 
+- UnitL: Refine a unit assumption. Discards the assumption from the linear context. 
+- UnitLA: Automatically apply _UnitL to the first implication proposition in the linear context. 
+- BangR: Refine a replicating proposition. Create a goal to prove the inner proposition. 
+- BangL: Refine a replicating assumption. Moves the inner proposition to the unrestricted context. 
+- BangLA: Automatically apply _BangL to the first implication proposition in the linear context. 
+- Copy: Creates a copy of an assumption in the unrestricted context in the linear context. 
+- WithR: Refine a With proposition. Creates two goals. One to prove the left side, and the other to prove the right side. 
+- WithL1: Refine a With assumption. Selects the left side as the assumption. 
+- WithL1A: Automatically apply _WithL1 to the first implication proposition in the linear context. 
+- WithL2: Refine a With assumption. Selects the right side as the assumption. 
+- WithL2A: Automatically apply _WithL2 to the first implication proposition in the linear context. 
+- TensorR: Refine a Tensor proposition. Creates two goals. One to prove the left side, and the other to prove the right side. 
+- TensorL: Refine a Tensor assumption. Both sides become one assumption each. 
+- TensorLA: Automatically apply _TensorL to the first implication proposition in the linear context. 
+- PlusR1: Refine a Plus proposition. Selects the left side as the goal. 
+- PlusR2: Refine a Plus proposition. Selects the right side as the goal. 
+- PlusL: Refine a Plus assumption. Two subgoals are created. One to complete the proof with the left side of the assumption, and one for the right side. 
+- PlusLA: Automatically apply _PlusL to the first implication proposition in the linear context. 
+- ForallR: Refine a forall quantification proposition. Adds the term to the functional context. 
+- ForallL: Refine a forall quantification assumption. Creates a subgoal to validate the type of the term, and another to continue the proof once validated. 
+- ExistsR: Refine an existential quantification proposition. Creates a subgoal to validate the type of the term, and another to continue the proof once validated. 
+- ExistsL: Refine an existential quantification assumption. Adds the term to the functional context. 
+- ExistsLA: Automatically apply _ExistsL to the first implication proposition in the linear context. 
+- Forall2R: Refine a second order universal quantified proposition. Adds the variable to the type variable context. 
+- Forall2L: Refine a second order universal quantified assumption. Provide a well
+- Exists2R: Refine a second order existential quantified proposition. Provide a well
+- Exists2L: Refine a second order existential quantified assumption. Adds the variable to the type variable context. 
+- Exists2LA: Automatically apply _Exists2L to the first implication proposition in the linear context. 
+- Cut: Cut a theorem into the proof. A goal to prove the theorem is created, and another goal to use it as an assumption is created. 
+- CutRepl: Cut a replicating theorem into the proof. A goal to prove the theorem is created, and another goal to use it as an unrestricted assumption is created. 
+- NuR: Refine a corecursive proposition. Provide the binding name, parameter names, and initial arguments. 
+- NuL: Refine a corecursive assumption. Unfolds the type one level. 
+- NuLA: Automatically apply _NuL to the first implication proposition in the linear context. 
+- TyVar: Refine a type variable assumption. Provide the binding name from a previous _NuR application and the new arguments. 
+- Weaken: Apply the weaken structural rule to the matching variable in the unrestricted or functional context. Will not allow the other contexts to be modified. 
+- Then: Apply one tactic, then the second to the resulting subgoals of the first tactic. 
+- Alt: Apply one tactic, then the second if the first one fails. 
+- Skip: Do nothing and succeed. Useful with _Alt. 
+- Repeat: Apply the tactic until it no longer succeeds. 
+- Intros: Apply all available introduction rules.
 
 # ECC Tactics:
 
-- _FAx: Apply the axiom tactic. Proving Prop:Type 0
-- _FVar: Provide the variable with the type in the context. 
-- _FVarA: Automatically find the variable with the type in the context. 
-- _FPi: For goals of the form (Pi x: A . B) : L. Supply the sort of A, and A if it is not known.  
-- _FLambda: For goals of the form (\x:A.N):(Pi x:A.B) 
-- _FApp: x, the type of x, and the maybe term that x was replaced with. Do not supply optional term if the extract term is known. 
-- _FSigma: For goals of the form Sigma x : A . B : Type j 
-- _FPair: For goals of the form (M,N):(Sigma x:A.B) 
-- _FProj1: For goals of the form fst M:A that refine to M:Sigma x:A.B 
-- _FProj2: For goals of the form snd M:[fst M/x]B that refine to M:Sigma x:A.B 
-- _FCumulativity: Attempt to refine a goal A' to the supplied A within a certain number of reduction steps. 
-- _FSimp: Simplify the goal term the provided number of times. 
-- _FExact: Prove the goal is inhabited with the supplied term. 
-- _FExactKnown: Attempt to prove the goal automatically if the term is known. 
-- _FThen: Apply the first tactic and then the second to the resulting subgoals. 
-- _FAlt: Attempt to apply the first tactic and then the second if the first does not succeed. 
-- _FSkip: Skip the tactic application. Always succeeds. 
-- _FRepeat: Repeat the application of a tactic until it fails.
+- FAx: Apply the axiom tactic. Proving Prop:Type 0
+- FVar: Provide the variable with the type in the context. 
+- FVarA: Automatically find the variable with the type in the context. 
+- FPi: For goals of the form (Pi x: A . B) : L. Supply the sort of A, and A if it is not known.  
+- FLambda: For goals of the form (\x:A.N):(Pi x:A.B) 
+- FApp: x, the type of x, and the maybe term that x was replaced with. Do not supply optional term if the extract term is known. 
+- FSigma: For goals of the form Sigma x : A . B : Type j 
+- FPair: For goals of the form (M,N):(Sigma x:A.B) 
+- FProj1: For goals of the form fst M:A that refine to M:Sigma x:A.B 
+- FProj2: For goals of the form snd M:[fst M/x]B that refine to M:Sigma x:A.B 
+- FCumulativity: Attempt to refine a goal A' to the supplied A within a certain number of reduction steps. 
+- FSimp: Simplify the goal term the provided number of times. 
+- FExact: Prove the goal is inhabited with the supplied term. 
+- FExactKnown: Attempt to prove the goal automatically if the term is known. 
+- FThen: Apply the first tactic and then the second to the resulting subgoals. 
+- FAlt: Attempt to apply the first tactic and then the second if the first does not succeed. 
+- FSkip: Skip the tactic application. Always succeeds. 
+- FRepeat: Repeat the application of a tactic until it fails.
