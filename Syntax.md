@@ -1,5 +1,7 @@
 # Syntax for the STILL system
 
+In general terms and propositions must be wrapped in double quotes when using the system.
+
 ```
 n        ::= (natural numbers)
 x,y,z    ::= (variable names)
