@@ -1,3 +1,4 @@
+-- B. Toninho, L. Caires, and F. Pfenning, “Corecursion and Non-divergence in Session-Typed Processes,” in Trustworthy Global Computing, M. Maffei and E. Tuosto, Eds., Berlin, Heidelberg: Springer, 2014, pp. 159–175. doi: 10.1007/978-3-662-45917-1_11.
 module Counter begin
 
 -- CImpl = νX. &{val: int ⊃ int ∧ X, inc: ⊕ {carry:X, done:X}, halt:1}

@@ -28,6 +28,6 @@ PC ::= apply TE | defer | done
 TE ::= (TE) | TE;TE | TE<|>TE | TE+ | t
 
 -- Process terms
-P,Q ::= P|Q | (\(\nu\)x)P | x[y].P | x[M].P | x[A].P | x.inl;P | x.inr;P | x.case(P, Q)
+P,Q ::= P|Q | (nu x:A)P | x[y].P | x[M].P | x[A].P | x.inl;P | x.inr;P | x.case(P, Q)
     | x(y).P | !x(y).P | x <-> y | [x <- M] | (corec x(ys) P) (zs) | x(ys)
 ```

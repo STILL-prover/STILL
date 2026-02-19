@@ -36,6 +36,8 @@ After a theorem is started you can start proving it using the proving commands.
 The ```apply``` command must be followed by a tactic expression. Use ```defer```
 to move the current subgoal to the end.
 
+See Tactics.md for the tactics in the system. See Syntax.md for tactic expressions.
+
 # Compiling
 
 1. Use ghcup or another method to install ghc 9.6.7 (https://www.haskell.org/ghcup/)

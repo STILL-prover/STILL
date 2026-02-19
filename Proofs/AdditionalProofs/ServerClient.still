@@ -1,3 +1,4 @@
+-- L. Caires and F. Pfenning, “Session Types as Intuitionistic Linear Propositions,” in CONCUR 2010 - Concurrency Theory, vol. 6269, P. Gastin and F. Laroussinie, Eds., in Lecture Notes in Computer Science, vol. 6269. , Berlin, Heidelberg: Springer Berlin Heidelberg, 2010, pp. 222–236. doi: 10.1007/978-3-642-15375-4_16.
 module ServerClient begin
 
 stype N = "1"

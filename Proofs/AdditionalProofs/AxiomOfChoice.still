@@ -1,5 +1,6 @@
 module AxiomOfChoice begin
 
+-- P. Martin-Lof, “Intuitionistic Type Theory”.
 theorem AC: "forall A:Type 1.
     forall B:Type 1.
     forall P:(Pi x:A. Pi y:B. Type 1).

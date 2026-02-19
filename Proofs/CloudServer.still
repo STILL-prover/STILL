@@ -1,3 +1,4 @@
+-- L. Caires, J. A. Pérez, F. Pfenning, and B. Toninho, “Behavioral Polymorphism and Parametricity in Session-Based Communication,” in Programming Languages and Systems, vol. 7792, M. Felleisen and P. Gardner, Eds., in Lecture Notes in Computer Science, vol. 7792. , Berlin, Heidelberg: Springer Berlin Heidelberg, 2013, pp. 330–349. doi: 10.1007/978-3-642-37036-6_19.
 module CloudServer begin
 
 theorem CS: "forall X:stype.!API -o !(API -o X) -o !X"

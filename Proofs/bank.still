@@ -1,3 +1,4 @@
+-- B. Toninho, L. Caires, and F. Pfenning, “Dependent session types via intuitionistic linear type theory,” in Proceedings of the 13th international ACM SIGPLAN symposium on Principles and practices of declarative programming, Odense Denmark: ACM, Jul. 2011, pp. 161–172. doi: 10.1145/2003476.2003499.
 module Bank begin
 
 theorem bank: "forall string:Type 1.

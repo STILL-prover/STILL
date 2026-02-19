@@ -76,12 +76,12 @@ prettyPrintGoodLine (a,b,c) = (L.takeWhile (\n -> n /= ' ' && n /= '=' ) b) ++ L
 
 getTactics :: IO ()
 getTactics = do
-    fileLines <- getGoodLines [] . lines <$> readFile "Tactics.hs"
+    fileLines <- getGoodLines [] . lines <$> readFile "SessionTypes/Tactics.hs"
     putStrLn $ L.intercalate "\n" (prettyPrintGoodLine <$> fileLines)
 
 getFTactics :: IO ()
 getFTactics = do
-    fileLines <- getGoodLines [] . lines <$> readFile "FunctionalTactics.hs"
+    fileLines <- getGoodLines [] . lines <$> readFile "ECC/Tactics.hs"
     putStrLn $ L.intercalate "\n" (prettyPrintGoodLine <$> fileLines)
 
 printCommands :: String
