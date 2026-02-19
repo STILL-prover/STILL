@@ -12,7 +12,7 @@ import Text.Read (readMaybe)
 import Data.Maybe (isJust, fromMaybe, isNothing, fromJust, listToMaybe)
 import ECC.Kernel
 import qualified ECC.Tactics as FT
-import Util
+import Utils.Misc
 import SessionTypes.Kernel
 import Debug.Trace
 import Control.Monad.Identity (Identity (runIdentity))

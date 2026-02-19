@@ -3,7 +3,7 @@ module ECC.Kernel where
 import qualified Data.Set as S
 import qualified Data.Map as M
 import qualified Data.List as L
-import Util
+import Utils.Misc
 import Data.Maybe (fromMaybe)
 import Control.Monad (when, unless)
 

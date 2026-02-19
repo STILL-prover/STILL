@@ -1,4 +1,4 @@
-module Util where
+module Utils.Misc where
 
 import qualified Data.Set as S
 import qualified Data.List as L

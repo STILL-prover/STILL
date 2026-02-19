@@ -1,5 +1,4 @@
-{-# LANGUAGE UndecidableInstances #-}
-module DisplayUtil where
+module Utils.Display where
 
 import SessionTypes.Tactics
 import qualified Data.List as L
@@ -39,19 +38,6 @@ showFiltered reservedVars sg =
             linearContext = Data.Map.filterWithKey (\k v -> not (k `S.member` reservedVars)) (linearContext . sequent $ sg)
         }
     in seqToS actualSequent
-
-class GhciPrint a where
-  ghciPrint :: a -> IO ()
-
--- Default: anything with Show uses normal print
-instance {-# OVERLAPPABLE #-} Show a => GhciPrint a where
-  ghciPrint = print
-
-ghciPrintFn :: GhciPrint a => a -> IO ()
-ghciPrintFn = ghciPrint
-
-ghciNoPrintFn :: a -> IO ()
-ghciNoPrintFn a = return ()
 
 mainPrinter (Right s) =
         let

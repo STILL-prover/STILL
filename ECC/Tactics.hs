@@ -10,7 +10,7 @@ import Text.Read (readMaybe)
 import Data.Maybe (isJust, fromMaybe, isNothing)
 import ECC.Kernel hiding (FunctionalSequent(functionalContext, goalType, goalTerm))
 import qualified ECC.Kernel as FS (FunctionalSequent(..))
-import Util
+import Utils.Misc
 import Debug.Trace
 import Control.Monad.Identity ( Identity(runIdentity) )
 import qualified Data.Map as M

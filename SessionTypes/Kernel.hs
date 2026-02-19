@@ -25,7 +25,7 @@ import ECC.Kernel
       FunctionalProof,
       FunctionalSequent(goalTerm, goalType, functionalContext),
       FunctionalTerm(Var), renameVarInFnProof, foldFunctionalProof, getFunctionalContextFreeNames )
-import Util
+import Utils.Misc
 import qualified Debug.Trace as DBG
 
 data Proposition = Unit
