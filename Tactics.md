@@ -33,8 +33,8 @@
 - ExistsL: Refine an existential quantification assumption. Adds the term to the functional context. 
 - ExistsLA: Automatically apply _ExistsL to the first implication proposition in the linear context. 
 - Forall2R: Refine a second order universal quantified proposition. Adds the variable to the type variable context. 
-- Forall2L: Refine a second order universal quantified assumption. Provide a well
-- Exists2R: Refine a second order existential quantified proposition. Provide a well
+- Forall2L: Refine a second order universal quantified assumption. Provide a well formed type.
+- Exists2R: Refine a second order existential quantified proposition. Provide a well formed type.
 - Exists2L: Refine a second order existential quantified assumption. Adds the variable to the type variable context. 
 - Exists2LA: Automatically apply _Exists2L to the first implication proposition in the linear context. 
 - Cut: Cut a theorem into the proof. A goal to prove the theorem is created, and another goal to use it as an assumption is created. 
