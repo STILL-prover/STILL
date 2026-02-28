@@ -15,28 +15,8 @@ import Debug.Trace
 import Control.Monad.Identity ( Identity(runIdentity) )
 import qualified Data.Map as M
 
-{-| A{y/N} replace N with y in A. -}
-abstTermFunctional :: FunctionalTerm -> String -> FunctionalTerm -> FunctionalTerm
-abstTermFunctional a y n = if a == n then Var y else case a of
-    App t1 t2 -> App (abstTermFunctional t1 y n) (abstTermFunctional t2 y n)
-    Lambda x t1 t2 -> if x `S.member` functionalFreeVariables n then a -- n is no longer possible
-        else if x == y then abstTermFunctional (alphaConvert (Lambda x t1 t2) (S.fromList [x, y] `S.union` functionalNames a `S.union` functionalNames n)) y n -- new var will be captured
-        else Lambda x (abstTermFunctional t1 y n) (abstTermFunctional t2 y n)
-    Pi x t1 t2 -> if x `S.member` functionalFreeVariables n then a
-        else if x == y then abstTermFunctional (alphaConvert (Pi x t1 t2) (S.fromList [x, y] `S.union` functionalNames a `S.union` functionalNames n)) y n
-        else Pi x (abstTermFunctional t1 y n) (abstTermFunctional t2 y n)
-    Sigma x t1 t2 -> if x `S.member` functionalFreeVariables n then a
-        else if x == y then abstTermFunctional (alphaConvert (Sigma x t1 t2) (S.fromList [x, y] `S.union` functionalNames a `S.union` functionalNames n)) y n
-        else Sigma x (abstTermFunctional t1 y n) (abstTermFunctional t2 y n)
-    Pair t1 t2 x ty1 ty2 -> if x `S.member` functionalFreeVariables n then a
-        else if x == y then abstTermFunctional (alphaConvert (Pair t1 t2 x ty1 ty2) (S.fromList [x, y] `S.union` functionalNames a `S.union` functionalNames n)) y n
-        else Pair (abstTermFunctional t1 y n) (abstTermFunctional t2 y n) x (abstTermFunctional ty1 y n) (abstTermFunctional ty2 y n)
-    Proj1 t -> Proj1 (abstTermFunctional t y n)
-    Proj2 t -> Proj2 (abstTermFunctional t y n)
-    x -> x
-
 data FunctionalTacticsSequent = FunctionalTacticsSequent {
-    functionalContext :: FunctionalContext SafeCtx,
+    functionalContext :: FunctionalContext,
     goalTerm :: Maybe FunctionalTerm,
     goalType :: FunctionalTerm
 } deriving (Eq)
@@ -237,7 +217,7 @@ varATac = do
             ((x,xTy):rest) -> varTac x
             _ -> tacError $ "Cannot find a variable with type " ++ show (goalType seq) ++ " in the context."
 
-safeInsertTacHelper :: String -> FunctionalTerm -> FunctionalContext SafeCtx -> ProverState (FunctionalContext SafeCtx)
+safeInsertTacHelper :: String -> FunctionalTerm -> FunctionalContext -> ProverState FunctionalContext
 safeInsertTacHelper x a c = case safeInsert x a c of
     Right ctx -> return ctx
     Left e -> tacError e
@@ -442,7 +422,7 @@ applyFTacticM s t = s >>= (\s -> applyFTactic s t)
 -- ============================================================
 
 -- Start a theorem
-_FTheorem :: FunctionalContext SafeCtx -> FunctionalTerm -> S.Set String -> ProofState
+_FTheorem :: FunctionalContext -> FunctionalTerm -> S.Set String -> ProofState
 _FTheorem ctx g reserved =
     initializeState (initializeProof (FunctionalTacticsSequent
         { functionalContext = ctx

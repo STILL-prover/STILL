@@ -9,10 +9,8 @@ import Text.Read (readMaybe)
 import Data.Maybe (isJust, fromMaybe)
 import ECC.Kernel
     ( abstTermFunctional,
-      extractFunctionalTerm,
       extractProofFromTermUnderCtx,
       ftToS,
-      functionalConcl,
       functionalFreeVariables,
       functionalNames,
       functionalRename,
@@ -24,7 +22,11 @@ import ECC.Kernel
       FunctionalContext,
       FunctionalProof,
       FunctionalSequent(goalTerm, goalType, functionalContext),
-      FunctionalTerm(Var), renameVarInFnProof, foldFunctionalProof, getFunctionalContextFreeNames )
+      FunctionalTerm(Var),
+      renameVarInFnProof,
+      foldFunctionalProof,
+      getFunctionalContextFreeNames,
+      ctxToList, renameVarInFnCtx )
 import Utils.Misc
 import qualified Debug.Trace as DBG
 
@@ -495,7 +497,7 @@ seqToS seq =
   where
     -- Extract and format the raw components into lists of strings
     tyVars = S.toList (tyVarContext seq)
-    fns = [k ++ ":" ++ ftToS v | (k,v) <- Data.Map.toList (fnContext seq)]
+    fns = [k ++ ":" ++ ftToS v | (k,v) <- ctxToList (fnContext seq)]
     unres = [k ++ ":" ++ propToS v | (k,v) <- Data.Map.toList (unrestrictedContext seq)]
     lin = [k ++ ":" ++ propToS v | (k,v) <- Data.Map.toList (linearContext seq)]
     goal = channel seq ++ ":" ++ propToS (goalProposition seq)
@@ -533,16 +535,6 @@ substVarTyVarContext ctx x u = S.fromList $ (\n -> if n == u then x else n) <$> 
 substVarContext :: Context -> String -> String -> Context
 substVarContext ctx x u = Data.Map.fromList $ (\(n, k) -> (if n == u then x else n, substVarProp k x u)) <$> Data.Map.toList ctx
 
-{-| Rename a variable in a context. substVarFunctionalContext ctx x u replaces u with x in ctx. -}
-substVarFunctionalContext :: FunctionalContext -> String -> String -> FunctionalContext
-substVarFunctionalContext ctx x u = Data.Map.fromList $ (\(n, k) -> (if n == u then x else n, functionalSubst k (Var x) u)) <$> Data.Map.toList ctx
-
-substVarSequent :: Sequent -> String -> String -> Sequent
-substVarSequent seq x u = seq { fnContext = substVarFunctionalContext (fnContext seq) x u,
-    unrestrictedContext = substVarContext (unrestrictedContext seq) x u,
-    linearContext = substVarContext (linearContext seq) x u,
-    channel = if u == channel seq then x else channel seq,
-    goalProposition = substVarProp (goalProposition seq) x u }
 
 -- the correct type, or extract a term after applying tactics
 -- a is type of functional proof
@@ -698,7 +690,7 @@ isFreshInProof x p = not $ x `S.member` getProofNames p
 
 {-| renameVarInProof x y = P[x/y]. Rename y with x in proof P. -}
 renameVarInProof :: Proof -> String -> String -> Proof
-renameVarInProof p x y {-| DBG.trace "Renaming" True-} = if isFreshInProof x p
+renameVarInProof p x y {- DBG.trace "Renaming" True-} = if isFreshInProof x p
     then go p
     else renameVarInProof (renameVarInProof p newFreshName x) x y -- Rename x first, then y
     where
@@ -716,7 +708,8 @@ renameVarInProof p x y {-| DBG.trace "Renaming" True-} = if isFreshInProof x p
         swapFTerm t = functionalSubst t (Var x) y
 
         swapFn :: FunctionalContext -> FunctionalContext
-        swapFn fnCtx = Data.Map.fromList $ (\(k, a) -> (swap k, functionalSubst a (Var x) y)) <$> Data.Map.toList fnCtx
+        swapFn fnCtx = case renameVarInFnCtx allVars fnCtx x y of
+            
 
         swapCtx :: Context -> Context
         swapCtx ctx = Data.Map.fromList $ (\(k, a) -> (swap k, substVarProp a x y)) <$> Data.Map.toList ctx
@@ -874,168 +867,168 @@ unfoldRec a x (TyNu y p) = if x == y then TyNu y p -- Var being unfolded is capt
 unfoldRec a x (TyVar y) = if x == y then TyNu x a else TyVar y
 
 
-concl :: Proof -> Either String Sequent
-concl (IdRule w x tv fc c eta p) = return $ Sequent { tyVarContext = tv, fnContext = fc, unrestrictedContext = c, linearContext = Data.Map.insert w p empty, recursiveBindings = eta, channel = x, goalProposition = p }
-concl (FunctionalTermRightRule z p tv c eta) = do
-    fJudgement <- functionalConcl p
-    return $ Sequent { tyVarContext = tv, fnContext = functionalContext fJudgement, unrestrictedContext = c, linearContext = empty, recursiveBindings = eta, channel = z, goalProposition = Lift (goalType fJudgement) }
-concl (FunctionalTermLeftRule x p) = do
-    j <- concl p
-    xTy <- eitherLookup x $ fnContext j
-    return $ j { fnContext = Data.Map.delete x $ fnContext j, unrestrictedContext = unrestrictedContext j, linearContext = Data.Map.insert x (Lift xTy) $ linearContext j }
-concl (UnitRightRule z tv fc uc eta) = return $ Sequent { tyVarContext = tv, fnContext = fc, unrestrictedContext = uc, linearContext = empty, recursiveBindings = eta, channel = z, goalProposition = Unit }
-concl (UnitLeftRule x p) = do
-    j <- concl p
-    if x `isFreshInProof` p
-    then return $ j { linearContext = Data.Map.insert x Unit $ linearContext j }
-    else Left $ x ++ " not fresh in " ++ show p
-concl (ReplicationRightRule z p) = do
-    j <- concl p
-    return $ j { channel = z, goalProposition = Replication $ goalProposition j }
-concl (ReplicationLeftRule u x p) = do
-    j <- concl p
-    uProp <- eitherLookup u $ unrestrictedContext j
-    return $ j { unrestrictedContext = Data.Map.delete u $ unrestrictedContext j, linearContext = Data.Map.insert x (Replication uProp) $ linearContext j }
-concl (CopyRule u y p) = do
-    j <- concl p
-    uProp <- eitherLookup u $ unrestrictedContext j
-    yProp <- eitherLookup y $ linearContext j
-    return $ j { linearContext = Data.Map.delete y $ linearContext j }
-concl (WithRightRule p1 p2) = do
-    j1 <- concl p1
-    j2 <- concl p2
-    let
-        sameSequents = channel j1 == channel j2
-            && fnContext j1 == fnContext j2
-            && unrestrictedContext j1 == unrestrictedContext j2
-            && linearContext j1 == linearContext j2
-    if sameSequents then return $ j1 { goalProposition = With (goalProposition j1) (goalProposition j2) } else (Left $ seqToS j1 ++ " and " ++ seqToS j2 ++ " are not the same sequents.")
-concl (WithLeft1Rule x newProp p) = do
-    j <- concl p
-    xProp <- eitherLookup x $ linearContext j
-    return $ j { linearContext = Data.Map.insert x (With xProp newProp) $ linearContext j }
-concl (WithLeft2Rule x newProp p) = do
-    j <- concl p
-    xProp <- eitherLookup x $ linearContext j
-    return $ j { linearContext = Data.Map.insert x (With newProp xProp) $ linearContext j }
-concl (ImpliesRightRule x p) = do
-    j <- concl p
-    xProp <- eitherLookup x $ linearContext j
-    return $ j { linearContext = Data.Map.delete x $ linearContext j, goalProposition = Implication xProp (goalProposition j) }
-concl (ImpliesLeftRule x p1 p2) = do
-    j1 <- concl p1
-    j2 <- concl p2
-    xProp <- eitherLookup x $ linearContext j2
-    let newLinearContext = Data.Map.insert x (Implication (goalProposition j1) xProp) (linearContext j1 `Data.Map.union` linearContext j2)
-        newUnrestrictedContext = unrestrictedContext j1 `Data.Map.union` unrestrictedContext j2
-        newFnContext = fnContext j1 `Data.Map.union` fnContext j2
-        validLinearContexts = Data.Map.null $ linearContext j1 `Data.Map.intersection` linearContext j2
-        validUnrestrictedContexts = unrestrictedContext j1 == unrestrictedContext j2
-        validFnContexts = fnContext j1 == fnContext j2
-    if validLinearContexts then return () else Left ("Invalid linear contexts " ++ show (linearContext j1) ++ " and " ++ show (linearContext j2))
-    if validUnrestrictedContexts then return () else Left ("Invalid unrestricted contexts " ++ show (unrestrictedContext j1) ++ " and " ++ show (unrestrictedContext j2))
-    if validFnContexts then return () else Left ("Invalid fn contexts " ++ show (fnContext j1) ++ " and " ++ show (fnContext j2))
-    return $ j2 { linearContext = newLinearContext, unrestrictedContext = newUnrestrictedContext, fnContext = newFnContext }
-concl (TensorRightRule p1 p2) = do
-    j1 <- concl p1
-    j2 <- concl p2
-    return $ j2 { linearContext = linearContext j1 `Data.Map.union` linearContext j2, goalProposition = Tensor (goalProposition j1) (goalProposition j2) }
-concl (TensorLeftRule x y p) = do
-    j <- concl p
-    xProp <- eitherLookup x $ linearContext j
-    yProp <- eitherLookup y $ linearContext j
-    return $ j { linearContext = Data.Map.insert x (Tensor yProp xProp) $ Data.Map.delete y $ linearContext j }
-concl (PlusRight1Rule newProp p) = do
-    j <- concl p
-    return $ j { goalProposition = Plus (goalProposition j) newProp }
-concl (PlusRight2Rule newProp p) = do
-    j <- concl p
-    return $ j { goalProposition = Plus newProp (goalProposition j) }
-concl (PlusLeftRule x p1 p2) = do
-    j1 <- concl p1
-    j2 <- concl p2
-    xProp1 <- eitherLookup x $ linearContext j1
-    xProp2 <- eitherLookup x $ linearContext j2
-    return $ j2 { linearContext = Data.Map.insert x (Plus xProp1 xProp2) $ linearContext j2 }
-concl (ForallRightRule x p) = do
-    j <- concl p
-    xFnProp <- eitherLookup x $ fnContext j
-    return $ j { fnContext = Data.Map.delete x $ fnContext j, goalProposition = Forall x xFnProp (goalProposition j) }
-concl (ForallLeftRule x y p1 p2) = do
-    (j1) <- functionalConcl p1
-    j2 <- concl p2
-    xProp <- eitherLookup x $ linearContext j2
-    let tau = goalType j1
-        n = goalTerm j1
-    return $ j2 { linearContext = Data.Map.insert x (Forall y tau (abstTerm xProp y n)) $ linearContext j2 }
-concl (ExistsRightRule x p1 p2) = do
-    j1 <- functionalConcl p1
-    j2 <- concl p2
-    let tau = goalType j1
-        n = goalTerm j1
-        zProp = goalProposition j2
-    return $ j2 { goalProposition = Exists x tau $ abstTerm zProp x n }
-concl (ExistsLeftRule x y p) = do
-    j <- concl p
-    yProp <- eitherLookup y $ fnContext j
-    xProp <- eitherLookup x $ linearContext j
-    return $ j { fnContext = Data.Map.delete y $ fnContext j, linearContext = Data.Map.insert x (Exists y yProp xProp) $ linearContext j }
-concl (ForallRight2Rule x p) = do
-    j <- concl p
-    return $ j { tyVarContext = S.delete x $ tyVarContext j, goalProposition = Forall2 x (goalProposition j) }
-concl (ForallLeft2Rule x1 x2 b p) = do
-    j <- concl p
-    xProp <- eitherLookup x1 $ linearContext j
-    return $ j { linearContext = Data.Map.insert x1 (Forall2 x2 (abstProp xProp x2 b)) $ linearContext j }
-concl (ExistsRight2Rule x b p) = do
-    j <- concl p
-    let zProp = goalProposition j
-    return $ j { goalProposition = Exists2 x (abstProp zProp x b) }
-concl (ExistsLeft2Rule x y p) = do
-    j <- concl p
-    xProp <- eitherLookup x $ linearContext j
-    return $ j { tyVarContext = S.delete y $ tyVarContext j, linearContext = Data.Map.insert x (Exists2 y xProp) $ linearContext j }
-concl (TyNuRightRule x zs p) = do
-    j <- concl p
-    (ys, xbinding) <- eitherLookup x $ recursiveBindings j
-    return $ j { recursiveBindings = Data.Map.delete x $ recursiveBindings j, goalProposition = TyNu (bindingTyVar xbinding) (goalProposition j) }
-concl (TyNuLeftRule c x p) = do
-    j <- concl p
-    cProp <- eitherLookup c $ linearContext j
-    let newCProp = TyNu x (foldUpRec x cProp) -- TODO fix
-    return $ j { linearContext = Data.Map.insert c newCProp $ linearContext j }
-concl (TyVarRule eta x zs) = do
-    (ys, xBinding) <- eitherLookup x eta
-    let yzs = zip ys zs
-        newTyVarBindingContext = bindingTyVarContext xBinding
-        newFunctionalContext = L.foldl (\curMap (y,z) -> substVarFunctionalContext curMap z y) (bindingFnContext xBinding) yzs
-        newUnrestrictedContext = L.foldl (\curMap (y,z) -> substVarContext curMap z y) (bindingUC xBinding) yzs
-        newLinearContext = L.foldl (\curMap (y,z) -> substVarContext curMap z y) (bindingLC xBinding) yzs
-        newChannel = L.foldl (\curVar (y, z) -> if y == curVar then z else curVar) (bindingChan xBinding) yzs
-    return $ Sequent { tyVarContext = newTyVarBindingContext, fnContext = newFunctionalContext, unrestrictedContext = newUnrestrictedContext, linearContext = newLinearContext, recursiveBindings = eta, channel = newChannel, goalProposition = TyVar (bindingTyVar xBinding) }
-concl (CutRule p1 p2) = do
-    j1 <- concl p1
-    j2 <- concl p2
-    return $ j2 { linearContext = linearContext j1 `Data.Map.union` Data.Map.delete (channel j1) (linearContext j2) }
-concl (CutReplicationRule u p1 p2) = do
-    j2 <- concl p2
-    return $ j2 { unrestrictedContext = Data.Map.delete u $ unrestrictedContext j2 }
-concl (ReplWeakening u prop proof) = do
-    j <- concl proof
-    return $ j { unrestrictedContext = Data.Map.insert u prop $ unrestrictedContext j }
-concl (FnWeakening a ft p) = do
-    j <- concl p
-    return $ j { fnContext = Data.Map.insert a ft $ fnContext j }
-concl (TyVarWeakening a p) = do
-    j <- concl p
-    return $ j { tyVarContext = S.insert a $ tyVarContext j }
-concl (RecBindingWeakening a (ps, bs) p) = do
-    j <- concl p
-    return $ j { recursiveBindings = Data.Map.insert a (ps, bs) $ recursiveBindings j }
-concl (HoleRule tv fc uc lc eta z p) = return $ Sequent { tyVarContext = tv, fnContext = fc, unrestrictedContext = uc, linearContext = lc, recursiveBindings = eta, channel = z, goalProposition = p }
-concl (ProcessFiatRule procName chanName prop p) = do
-    j <- concl p
-    return $ j { linearContext = Data.Map.insert chanName prop (linearContext j) }
+-- concl :: Proof -> Either String Sequent
+-- concl (IdRule w x tv fc c eta p) = return $ Sequent { tyVarContext = tv, fnContext = fc, unrestrictedContext = c, linearContext = Data.Map.insert w p empty, recursiveBindings = eta, channel = x, goalProposition = p }
+-- concl (FunctionalTermRightRule z p tv c eta) = do
+--     fJudgement <- functionalConcl p
+--     return $ Sequent { tyVarContext = tv, fnContext = functionalContext fJudgement, unrestrictedContext = c, linearContext = empty, recursiveBindings = eta, channel = z, goalProposition = Lift (goalType fJudgement) }
+-- concl (FunctionalTermLeftRule x p) = do
+--     j <- concl p
+--     xTy <- eitherLookup x $ fnContext j
+--     return $ j { fnContext = Data.Map.delete x $ fnContext j, unrestrictedContext = unrestrictedContext j, linearContext = Data.Map.insert x (Lift xTy) $ linearContext j }
+-- concl (UnitRightRule z tv fc uc eta) = return $ Sequent { tyVarContext = tv, fnContext = fc, unrestrictedContext = uc, linearContext = empty, recursiveBindings = eta, channel = z, goalProposition = Unit }
+-- concl (UnitLeftRule x p) = do
+--     j <- concl p
+--     if x `isFreshInProof` p
+--     then return $ j { linearContext = Data.Map.insert x Unit $ linearContext j }
+--     else Left $ x ++ " not fresh in " ++ show p
+-- concl (ReplicationRightRule z p) = do
+--     j <- concl p
+--     return $ j { channel = z, goalProposition = Replication $ goalProposition j }
+-- concl (ReplicationLeftRule u x p) = do
+--     j <- concl p
+--     uProp <- eitherLookup u $ unrestrictedContext j
+--     return $ j { unrestrictedContext = Data.Map.delete u $ unrestrictedContext j, linearContext = Data.Map.insert x (Replication uProp) $ linearContext j }
+-- concl (CopyRule u y p) = do
+--     j <- concl p
+--     uProp <- eitherLookup u $ unrestrictedContext j
+--     yProp <- eitherLookup y $ linearContext j
+--     return $ j { linearContext = Data.Map.delete y $ linearContext j }
+-- concl (WithRightRule p1 p2) = do
+--     j1 <- concl p1
+--     j2 <- concl p2
+--     let
+--         sameSequents = channel j1 == channel j2
+--             && fnContext j1 == fnContext j2
+--             && unrestrictedContext j1 == unrestrictedContext j2
+--             && linearContext j1 == linearContext j2
+--     if sameSequents then return $ j1 { goalProposition = With (goalProposition j1) (goalProposition j2) } else (Left $ seqToS j1 ++ " and " ++ seqToS j2 ++ " are not the same sequents.")
+-- concl (WithLeft1Rule x newProp p) = do
+--     j <- concl p
+--     xProp <- eitherLookup x $ linearContext j
+--     return $ j { linearContext = Data.Map.insert x (With xProp newProp) $ linearContext j }
+-- concl (WithLeft2Rule x newProp p) = do
+--     j <- concl p
+--     xProp <- eitherLookup x $ linearContext j
+--     return $ j { linearContext = Data.Map.insert x (With newProp xProp) $ linearContext j }
+-- concl (ImpliesRightRule x p) = do
+--     j <- concl p
+--     xProp <- eitherLookup x $ linearContext j
+--     return $ j { linearContext = Data.Map.delete x $ linearContext j, goalProposition = Implication xProp (goalProposition j) }
+-- concl (ImpliesLeftRule x p1 p2) = do
+--     j1 <- concl p1
+--     j2 <- concl p2
+--     xProp <- eitherLookup x $ linearContext j2
+--     let newLinearContext = Data.Map.insert x (Implication (goalProposition j1) xProp) (linearContext j1 `Data.Map.union` linearContext j2)
+--         newUnrestrictedContext = unrestrictedContext j1 `Data.Map.union` unrestrictedContext j2
+--         newFnContext = fnContext j1 `Data.Map.union` fnContext j2
+--         validLinearContexts = Data.Map.null $ linearContext j1 `Data.Map.intersection` linearContext j2
+--         validUnrestrictedContexts = unrestrictedContext j1 == unrestrictedContext j2
+--         validFnContexts = fnContext j1 == fnContext j2
+--     if validLinearContexts then return () else Left ("Invalid linear contexts " ++ show (linearContext j1) ++ " and " ++ show (linearContext j2))
+--     if validUnrestrictedContexts then return () else Left ("Invalid unrestricted contexts " ++ show (unrestrictedContext j1) ++ " and " ++ show (unrestrictedContext j2))
+--     if validFnContexts then return () else Left ("Invalid fn contexts " ++ show (fnContext j1) ++ " and " ++ show (fnContext j2))
+--     return $ j2 { linearContext = newLinearContext, unrestrictedContext = newUnrestrictedContext, fnContext = newFnContext }
+-- concl (TensorRightRule p1 p2) = do
+--     j1 <- concl p1
+--     j2 <- concl p2
+--     return $ j2 { linearContext = linearContext j1 `Data.Map.union` linearContext j2, goalProposition = Tensor (goalProposition j1) (goalProposition j2) }
+-- concl (TensorLeftRule x y p) = do
+--     j <- concl p
+--     xProp <- eitherLookup x $ linearContext j
+--     yProp <- eitherLookup y $ linearContext j
+--     return $ j { linearContext = Data.Map.insert x (Tensor yProp xProp) $ Data.Map.delete y $ linearContext j }
+-- concl (PlusRight1Rule newProp p) = do
+--     j <- concl p
+--     return $ j { goalProposition = Plus (goalProposition j) newProp }
+-- concl (PlusRight2Rule newProp p) = do
+--     j <- concl p
+--     return $ j { goalProposition = Plus newProp (goalProposition j) }
+-- concl (PlusLeftRule x p1 p2) = do
+--     j1 <- concl p1
+--     j2 <- concl p2
+--     xProp1 <- eitherLookup x $ linearContext j1
+--     xProp2 <- eitherLookup x $ linearContext j2
+--     return $ j2 { linearContext = Data.Map.insert x (Plus xProp1 xProp2) $ linearContext j2 }
+-- concl (ForallRightRule x p) = do
+--     j <- concl p
+--     xFnProp <- eitherLookup x $ fnContext j
+--     return $ j { fnContext = Data.Map.delete x $ fnContext j, goalProposition = Forall x xFnProp (goalProposition j) }
+-- concl (ForallLeftRule x y p1 p2) = do
+--     (j1) <- functionalConcl p1
+--     j2 <- concl p2
+--     xProp <- eitherLookup x $ linearContext j2
+--     let tau = goalType j1
+--         n = goalTerm j1
+--     return $ j2 { linearContext = Data.Map.insert x (Forall y tau (abstTerm xProp y n)) $ linearContext j2 }
+-- concl (ExistsRightRule x p1 p2) = do
+--     j1 <- functionalConcl p1
+--     j2 <- concl p2
+--     let tau = goalType j1
+--         n = goalTerm j1
+--         zProp = goalProposition j2
+--     return $ j2 { goalProposition = Exists x tau $ abstTerm zProp x n }
+-- concl (ExistsLeftRule x y p) = do
+--     j <- concl p
+--     yProp <- eitherLookup y $ fnContext j
+--     xProp <- eitherLookup x $ linearContext j
+--     return $ j { fnContext = Data.Map.delete y $ fnContext j, linearContext = Data.Map.insert x (Exists y yProp xProp) $ linearContext j }
+-- concl (ForallRight2Rule x p) = do
+--     j <- concl p
+--     return $ j { tyVarContext = S.delete x $ tyVarContext j, goalProposition = Forall2 x (goalProposition j) }
+-- concl (ForallLeft2Rule x1 x2 b p) = do
+--     j <- concl p
+--     xProp <- eitherLookup x1 $ linearContext j
+--     return $ j { linearContext = Data.Map.insert x1 (Forall2 x2 (abstProp xProp x2 b)) $ linearContext j }
+-- concl (ExistsRight2Rule x b p) = do
+--     j <- concl p
+--     let zProp = goalProposition j
+--     return $ j { goalProposition = Exists2 x (abstProp zProp x b) }
+-- concl (ExistsLeft2Rule x y p) = do
+--     j <- concl p
+--     xProp <- eitherLookup x $ linearContext j
+--     return $ j { tyVarContext = S.delete y $ tyVarContext j, linearContext = Data.Map.insert x (Exists2 y xProp) $ linearContext j }
+-- concl (TyNuRightRule x zs p) = do
+--     j <- concl p
+--     (ys, xbinding) <- eitherLookup x $ recursiveBindings j
+--     return $ j { recursiveBindings = Data.Map.delete x $ recursiveBindings j, goalProposition = TyNu (bindingTyVar xbinding) (goalProposition j) }
+-- concl (TyNuLeftRule c x p) = do
+--     j <- concl p
+--     cProp <- eitherLookup c $ linearContext j
+--     let newCProp = TyNu x (foldUpRec x cProp) -- TODO fix
+--     return $ j { linearContext = Data.Map.insert c newCProp $ linearContext j }
+-- concl (TyVarRule eta x zs) = do
+--     (ys, xBinding) <- eitherLookup x eta
+--     let yzs = zip ys zs
+--         newTyVarBindingContext = bindingTyVarContext xBinding
+--         newFunctionalContext = L.foldl (\curMap (y,z) -> substVarFunctionalContext curMap z y) (bindingFnContext xBinding) yzs
+--         newUnrestrictedContext = L.foldl (\curMap (y,z) -> substVarContext curMap z y) (bindingUC xBinding) yzs
+--         newLinearContext = L.foldl (\curMap (y,z) -> substVarContext curMap z y) (bindingLC xBinding) yzs
+--         newChannel = L.foldl (\curVar (y, z) -> if y == curVar then z else curVar) (bindingChan xBinding) yzs
+--     return $ Sequent { tyVarContext = newTyVarBindingContext, fnContext = newFunctionalContext, unrestrictedContext = newUnrestrictedContext, linearContext = newLinearContext, recursiveBindings = eta, channel = newChannel, goalProposition = TyVar (bindingTyVar xBinding) }
+-- concl (CutRule p1 p2) = do
+--     j1 <- concl p1
+--     j2 <- concl p2
+--     return $ j2 { linearContext = linearContext j1 `Data.Map.union` Data.Map.delete (channel j1) (linearContext j2) }
+-- concl (CutReplicationRule u p1 p2) = do
+--     j2 <- concl p2
+--     return $ j2 { unrestrictedContext = Data.Map.delete u $ unrestrictedContext j2 }
+-- concl (ReplWeakening u prop proof) = do
+--     j <- concl proof
+--     return $ j { unrestrictedContext = Data.Map.insert u prop $ unrestrictedContext j }
+-- concl (FnWeakening a ft p) = do
+--     j <- concl p
+--     return $ j { fnContext = Data.Map.insert a ft $ fnContext j }
+-- concl (TyVarWeakening a p) = do
+--     j <- concl p
+--     return $ j { tyVarContext = S.insert a $ tyVarContext j }
+-- concl (RecBindingWeakening a (ps, bs) p) = do
+--     j <- concl p
+--     return $ j { recursiveBindings = Data.Map.insert a (ps, bs) $ recursiveBindings j }
+-- concl (HoleRule tv fc uc lc eta z p) = return $ Sequent { tyVarContext = tv, fnContext = fc, unrestrictedContext = uc, linearContext = lc, recursiveBindings = eta, channel = z, goalProposition = p }
+-- concl (ProcessFiatRule procName chanName prop p) = do
+--     j <- concl p
+--     return $ j { linearContext = Data.Map.insert chanName prop (linearContext j) }
 
 validBindingSequent :: BindingSequent -> Bool
 validBindingSequent (BindingSequent tv fc uc lc z p) = L.null (Data.Map.keys fc `L.intersect` Data.Map.keys uc `L.intersect` Data.Map.keys lc) && not (Data.Map.member z fc || Data.Map.member z uc || Data.Map.member z lc)
