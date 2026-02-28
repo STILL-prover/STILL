@@ -708,8 +708,8 @@ renameVarInProof p x y {- DBG.trace "Renaming" True-} = if isFreshInProof x p
         swapFTerm t = functionalSubst t (Var x) y
 
         swapFn :: FunctionalContext -> FunctionalContext
-        swapFn fnCtx = case renameVarInFnCtx allVars fnCtx x y of
-            
+        swapFn fnCtx = 
+
 
         swapCtx :: Context -> Context
         swapCtx ctx = Data.Map.fromList $ (\(k, a) -> (swap k, substVarProp a x y)) <$> Data.Map.toList ctx
