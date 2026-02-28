@@ -1,4 +1,22 @@
-module ECC.Kernel where
+module ECC.Kernel (FunctionalSequent(functionalContext,goalType,goalTerm)
+    , FunctionalContext
+    , FunctionalTerm(..)
+    , SafeCtx
+    , FunctionalProof(..)
+    , ftToS
+    , ctxToList
+    , functionalNames
+    , getFunctionalContextNames
+    , emptyContext
+    , ctxLookup
+    , extractProofFromTermUnderCtx
+    , safeInsert
+    , functionalFreeVariables
+    , alphaConvert
+    , functionalSubst
+    , cumulativiyRelation
+    , allConversionSteps
+    , verifyFunctionalProofM) where
 
 import qualified Data.Set as S
 import qualified Data.Map as M
@@ -18,7 +36,7 @@ data FunctionalTerm = Type Integer
     | Proj1 FunctionalTerm
     | Proj2 FunctionalTerm
     | FHoleTerm
-    deriving (Eq, Show, Read)
+    deriving (Eq, Show, Read, Ord)
 
 ftToS :: FunctionalTerm -> String
 ftToS (Type i) = "Type " ++ show i
@@ -127,26 +145,6 @@ alphaConvert (Pair t1 t2 x ty1 ty2) names =
         Pair t1 t2 z ty1 (functionalRename t2 z x)
 alphaConvert t names = t
 
-{-| A{y/N} replace N with y in A. -}
-abstTermFunctional :: FunctionalTerm -> String -> FunctionalTerm -> FunctionalTerm
-abstTermFunctional a y n = if a == n then Var y else case a of
-    App t1 t2 -> App (abstTermFunctional t1 y n) (abstTermFunctional t2 y n)
-    Lambda x t1 t2 -> if x `S.member` functionalFreeVariables n then a -- n is no longer possible
-        else if x == y then abstTermFunctional (alphaConvert (Lambda x t1 t2) (S.fromList [x, y] `S.union` functionalNames a `S.union` functionalNames n)) y n -- new var will be captured
-        else Lambda x (abstTermFunctional t1 y n) (abstTermFunctional t2 y n)
-    Pi x t1 t2 -> if x `S.member` functionalFreeVariables n then a
-        else if x == y then abstTermFunctional (alphaConvert (Pi x t1 t2) (S.fromList [x, y] `S.union` functionalNames a `S.union` functionalNames n)) y n
-        else Pi x (abstTermFunctional t1 y n) (abstTermFunctional t2 y n)
-    Sigma x t1 t2 -> if x `S.member` functionalFreeVariables n then a
-        else if x == y then abstTermFunctional (alphaConvert (Sigma x t1 t2) (S.fromList [x, y] `S.union` functionalNames a `S.union` functionalNames n)) y n
-        else Sigma x (abstTermFunctional t1 y n) (abstTermFunctional t2 y n)
-    Pair t1 t2 x ty1 ty2 -> if x `S.member` functionalFreeVariables n then a
-        else if x == y then abstTermFunctional (alphaConvert (Pair t1 t2 x ty1 ty2) (S.fromList [x, y] `S.union` functionalNames a `S.union` functionalNames n)) y n
-        else Pair (abstTermFunctional t1 y n) (abstTermFunctional t2 y n) x (abstTermFunctional ty1 y n) (abstTermFunctional ty2 y n)
-    Proj1 t -> Proj1 (abstTermFunctional t y n)
-    Proj2 t -> Proj2 (abstTermFunctional t y n)
-    x -> x
-
 {-| B{N/x} replace x with n in b 
 
 >>> functionalSubst (Var "x") (Var "y") "x"
@@ -207,40 +205,73 @@ functionalSubst b n x =
             Proj1 t -> Proj1 (functionalSubst t n x)
             Proj2 t -> Proj2 (functionalSubst t n x)
 
-type FunctionalContext = M.Map String FunctionalTerm
+data SafeCtx
+data UnsafeCtx
 
-getFunctionalContextNames :: FunctionalContext -> S.Set String
-getFunctionalContextNames c = S.fromList (M.keys c) `S.union` S.unions (functionalNames <$> M.elems c)
+{-| Make it so the FunctionalContext can only be constructed in a well-formed manner. -}
+newtype FunctionalContext a = FunctionalContext { judgments::[(String, FunctionalTerm)] }
+    deriving (Show, Eq, Ord, Read)
 
-getFunctionalContextFreeNames :: FunctionalContext -> S.Set String
-getFunctionalContextFreeNames c = S.fromList (M.keys c) `S.union` S.unions (functionalFreeVariables <$> M.elems c)
+fcToS :: FunctionalContext a -> String
+fcToS (FunctionalContext j) = L.intercalate "," ((\(k,t) -> k ++ ":" ++ ftToS t) <$> j)
+
+ctxDrop1 :: FunctionalContext a -> FunctionalContext a
+ctxDrop1 (FunctionalContext c) = FunctionalContext { judgments = drop 1 c }
+
+ctxTake1 :: FunctionalContext a -> [(String, FunctionalTerm)]
+ctxTake1 (FunctionalContext c) = take 1 c
+
+ctxToList :: FunctionalContext a -> [(String, FunctionalTerm)]
+ctxToList (FunctionalContext c) = c
+
+emptyContext :: FunctionalContext SafeCtx
+emptyContext = FunctionalContext {judgments =[]}
+
+unsafeInsert :: String -> FunctionalTerm -> FunctionalContext a -> FunctionalContext UnsafeCtx
+unsafeInsert x t c = c { judgments= (x,t):judgments c }
+
+ctxLookup :: String -> FunctionalContext a -> Maybe FunctionalTerm
+ctxLookup x (FunctionalContext []) = Nothing
+ctxLookup x (FunctionalContext ((h,t):rest)) | x == h = return t
+ctxLookup x (FunctionalContext ((h,t):rest))  = ctxLookup x (FunctionalContext { judgments = rest })
+
+ctxEitherLookup :: String -> FunctionalContext a -> Either String FunctionalTerm
+ctxEitherLookup x c = case ctxLookup x c of
+    Just res -> Right res
+    Nothing -> Left $ "Could not find " ++ show x ++ " in " ++ fcToS c
+
+getFunctionalContextNames :: FunctionalContext a -> S.Set String
+getFunctionalContextNames c = S.fromList (fst <$> judgments c) `S.union` S.unions (functionalNames . snd <$> judgments c)
+
+getFunctionalContextFreeNames :: FunctionalContext a -> S.Set String
+getFunctionalContextFreeNames c = S.fromList (fst <$> judgments c) `S.union` S.unions (functionalFreeVariables . snd <$> judgments c)
 
 data FunctionalSequent = FunctionalSequent {
-    functionalContext :: FunctionalContext,
+    functionalContext :: FunctionalContext SafeCtx,
     goalTerm :: FunctionalTerm,
     goalType :: FunctionalTerm
-} deriving (Show, Eq)
+} deriving (Show, Eq, Ord, Read)
 
 getFunctionalSequentNames :: FunctionalSequent -> S.Set String
 getFunctionalSequentNames (FunctionalSequent fc gt gTy) = functionalNames gTy `S.union` functionalNames gt `S.union` getFunctionalContextNames fc
 
 {-|
-    The proof rules and validation here differ slightly from the original presentation of Luo's ECC.
-    We aim to avoid deriving G |- A:Type i multiple times. The variable and pi rules are now.
-    Luo's ECC has the property that there is always a derivation of G|-A:K above G,x:A|-x:A.
+    The proof rules and validation here differ slightly from the original
+    presentation of Luo's ECC. We aim to avoid verifying the validity of the
+    context multiple times. The phantom type FunctionalContext SafeCtx indicates a valid context.
     
-    G |- x:A
     -----------------
     G, x:A, G' |- x:A
 
     G|-A:K     G,x:A|-B:L
-    ----------------- K,L are kinds. 
+    ----------------- K,L are kinds.
     G|-Pi x:A.B : if L == Prop then Prop else max (Type 0, K, L)
 -}
-data FunctionalProof = FunctionalAxiom FunctionalContext -- \vdash P:T
-    | TRule Integer FunctionalProof -- \vdash Type_i : Type_(i+1)
-    | VarRule String FunctionalProof
-    | PiRule String FunctionalProof FunctionalProof
+data FunctionalProof = CRule (FunctionalContext SafeCtx) -- \vdash Prop:Type_0
+    | TRule Integer (FunctionalContext SafeCtx) -- \vdash Type_i : Type_(i+1)
+    | VarRule String (FunctionalContext SafeCtx)
+    | Pi1Rule String FunctionalProof
+    | Pi2Rule String FunctionalProof FunctionalProof
     | LambdaRule String FunctionalProof
     | AppRule FunctionalProof FunctionalProof
     | SigmaRule String FunctionalProof FunctionalProof
@@ -248,22 +279,22 @@ data FunctionalProof = FunctionalAxiom FunctionalContext -- \vdash P:T
     | Proj1Rule FunctionalProof
     | Proj2Rule FunctionalProof
     | CumulativiyRule FunctionalProof FunctionalProof
-    -- | FHoleRule FunctionalContext FunctionalTerm FunctionalTerm
     deriving (Eq, Show, Read)
 
 subFunctionalProofs :: FunctionalProof -> [FunctionalProof]
 subFunctionalProofs rule = case rule of
-    PiRule _ fp1 fp2          -> [fp1, fp2]
-    SigmaRule _ fp1 fp2       -> [fp1, fp2]
-    PairRule _ fp1 fp2 fp3    -> [fp1, fp2, fp3]
-    CumulativiyRule fp1 fp2   -> [fp1, fp2]
-    TRule _ fp                -> [fp]
-    VarRule _ fp              -> [fp]
-    LambdaRule _ fp           -> [fp]
-    AppRule fp1 fp2           -> [fp1, fp2]
-    Proj1Rule fp              -> [fp]
-    Proj2Rule fp              -> [fp]
-    FunctionalAxiom{}         -> []
+    Pi1Rule _ fp1               -> [fp1]
+    Pi2Rule _ fp1 fp2           -> [fp1, fp2]
+    SigmaRule _ fp1 fp2         -> [fp1, fp2]
+    PairRule _ fp1 fp2 fp3      -> [fp1, fp2, fp3]
+    CumulativiyRule fp1 fp2     -> [fp1, fp2]
+    CRule{}                     -> []
+    TRule{}                     -> []
+    VarRule{}                   -> []
+    LambdaRule _ fp             -> [fp]
+    AppRule fp1 fp2             -> [fp1, fp2]
+    Proj1Rule fp                -> [fp]
+    Proj2Rule fp                -> [fp]
 
 foldFunctionalProof :: ([a] -> a) -> FunctionalProof -> a
 foldFunctionalProof fFunc rule = fFunc (map (foldFunctionalProof fFunc) (subFunctionalProofs rule))
@@ -276,10 +307,11 @@ functionalProofDepth = foldFunctionalProof (\results -> 1 + maximum (0 : results
 
 {-| Get all names used in a proof derivation. -}
 getFunctionalProofNames :: FunctionalProof -> S.Set String
-getFunctionalProofNames (FunctionalAxiom ctx) = getFunctionalContextNames ctx
-getFunctionalProofNames (TRule i p) = getFunctionalProofNames p
-getFunctionalProofNames (VarRule x p) = S.singleton x `S.union` getFunctionalProofNames p
-getFunctionalProofNames (PiRule x p1 p2) = S.singleton x `S.union` getFunctionalProofNames p1 `S.union` getFunctionalProofNames p2
+getFunctionalProofNames (CRule ctx) = getFunctionalContextNames ctx
+getFunctionalProofNames (TRule i ctx) = getFunctionalContextNames ctx
+getFunctionalProofNames (VarRule x ctx) = S.singleton x `S.union` getFunctionalContextNames ctx
+getFunctionalProofNames (Pi1Rule x p) = S.singleton x `S.union` getFunctionalProofNames p
+getFunctionalProofNames (Pi2Rule x p1 p2) = S.singleton x `S.union` getFunctionalProofNames p1 `S.union` getFunctionalProofNames p2
 getFunctionalProofNames (LambdaRule x p) = S.singleton x `S.union` getFunctionalProofNames p
 getFunctionalProofNames (AppRule p1 p2) = getFunctionalProofNames p1 `S.union` getFunctionalProofNames p2
 getFunctionalProofNames (SigmaRule x p1 p2) = S.singleton x `S.union` getFunctionalProofNames p1 `S.union` getFunctionalProofNames p2
@@ -300,13 +332,14 @@ renameVarInFnProof vars p x y = if x `S.member`(vars `S.union` getFunctionalProo
         swap :: String -> String
         swap test = if test == y then x else test
 
-        swapCtx :: FunctionalContext -> FunctionalContext
-        swapCtx ctx = M.fromList $ (\(k, a) -> (swap k, substVarFunctional a x y)) <$> M.toList ctx
+        swapCtx :: FunctionalContext a -> FunctionalContext a
+        swapCtx ctx = FunctionalContext $ (\(k, a) -> (swap k, substVarFunctional a x y)) <$> judgments ctx
 
-        go (FunctionalAxiom ctx) = FunctionalAxiom (swapCtx ctx)
-        go (TRule i p) = TRule i (go p)
-        go (VarRule x p) = VarRule (swap x) (go p)
-        go (PiRule x p1 p2) = PiRule (swap x) (go p1) (go p2)
+        go (CRule c) = CRule (swapCtx c)
+        go (TRule i c) = TRule i (swapCtx c)
+        go (VarRule x c) = VarRule (swap x) (swapCtx c)
+        go (Pi1Rule x p1) = Pi1Rule (swap x) (go p1)
+        go (Pi2Rule x p1 p2) = Pi2Rule (swap x) (go p1) (go p2)
         go (LambdaRule x p) = LambdaRule (swap x) (go p)
         go (AppRule p1 p2) = AppRule (go p1) (go p2)
         go (SigmaRule x p1 p2) = SigmaRule (swap x) (go p1) (go p2)
@@ -315,81 +348,68 @@ renameVarInFnProof vars p x y = if x `S.member`(vars `S.union` getFunctionalProo
         go (Proj2Rule p) = Proj2Rule (go p)
         go (CumulativiyRule p1 p2) = CumulativiyRule (go p1) (go p2)
 
-
-simpleFunctionalProof :: FunctionalProof
-simpleFunctionalProof = VarRule "x" $ VarRule "A" $ (FunctionalAxiom M.empty)
-simpleFunctionalProof2 :: FunctionalProof
-simpleFunctionalProof2 = VarRule "A" $ FunctionalAxiom M.empty
-simpleFunctionalProof3 :: FunctionalProof
-simpleFunctionalProof3 = FunctionalAxiom M.empty
-
-functionalConcl :: FunctionalProof -> Either String FunctionalSequent
--- functionalConcl p | p `M.member` concls = Right (concls M.! p, concls)
-functionalConcl (FunctionalAxiom ctx) = return $ (FunctionalSequent { functionalContext = ctx, goalTerm = Prop, goalType = Type 0 })
--- functionalConcl (CRule x p) concls = do
---     (pConcl, concls2) <- functionalConcl p concls
---     return (pConcl { functionalContext = M.insert x (goalTerm pConcl) $ functionalContext pConcl, goalTerm = Prop , goalType = Type 0 }, M.insert p pConcl concls2)
-functionalConcl (TRule i p) = do
-    pConcl <- functionalConcl p
-    return (pConcl { goalTerm = Type i , goalType = Type (i + 1) })
-functionalConcl (VarRule x p) = do
-    pConcl <- functionalConcl p
-    return (pConcl { functionalContext = M.insert x (goalTerm pConcl) (functionalContext pConcl), goalTerm = Var x, goalType = goalTerm pConcl })
--- functionalConcl (Pi1Rule x p) concls = do
---     (pConcl, concls2) <- functionalConcl p concls
---     xTy <- eitherLookup x (functionalContext pConcl)
---     return (pConcl { functionalContext = M.delete x $ functionalContext pConcl, goalTerm = Pi x xTy (goalTerm pConcl), goalType = Prop }, M.insert p pConcl concls2)
-functionalConcl (PiRule x p1 p2) = do
-    p1Concl <- functionalConcl p1
-    p2Concl <- functionalConcl p2
-    let newGoal = case (goalType p1Concl, goalType p2Concl) of
-            (_, Prop) -> Prop
-            (Type i, Type j) -> Type (max i j)
-            (Type i, _) -> Type i
-            (_, Type j) -> Type j
-            (_, _) -> Type 0
-    return (p1Concl { goalTerm = Pi x (goalTerm p1Concl) (goalTerm p2Concl), goalType = newGoal })
-functionalConcl (LambdaRule x p) = do
-    (pConcl) <- functionalConcl p
-    xTy <- eitherLookup x (functionalContext pConcl)
-    return (pConcl { functionalContext = M.delete x $ functionalContext pConcl, goalTerm = Lambda x xTy (goalTerm pConcl), goalType = Pi x xTy (goalType pConcl) })
-functionalConcl (AppRule p1 p2) = do
-    (p1Concl) <- functionalConcl p1
-    (p2Concl) <- functionalConcl p2
-    (varToReplace, termReplaceInside) <- (case goalType p1Concl of
-        Pi x a b -> return (x, b)
-        _ -> Left $ "Error in AppRule (" ++ show p1 ++ ")" ++ "(" ++ show p2 ++ ")")
-    return $ (p2Concl { goalTerm = App (goalTerm p1Concl) (goalTerm p2Concl), goalType = functionalSubst termReplaceInside (goalTerm p2Concl) varToReplace })
-functionalConcl (SigmaRule x p1 p2) = do
-    (p1Concl) <- functionalConcl p1
-    (p2Concl) <- functionalConcl p2
-    xTy <- eitherLookup x $ functionalContext p2Concl
-    let newGoal = case (goalType p1Concl, goalType p2Concl) of
-            (Type i, Type j) -> Type (max i j)
-            (Type i, _) -> Type i
-            (_, Type j) -> Type j
-            (_, _) -> Type 0
-    return (p1Concl { goalTerm = Sigma x (goalTerm p1Concl) (goalTerm p2Concl), goalType = newGoal })
-functionalConcl (PairRule x p1 p2 p3) = do
-    (p1Concl) <- functionalConcl p1
-    (p2Concl) <- functionalConcl p2
-    (p3Concl) <- functionalConcl p3
-    xTy <- eitherLookup x $ functionalContext p3Concl
-    return (p1Concl { goalTerm = Pair (goalTerm p1Concl) (goalTerm p2Concl) x (goalType p1Concl) (goalTerm p3Concl), goalType = Sigma x (goalType p1Concl) (goalTerm p3Concl) })
-functionalConcl (Proj1Rule p) = do
-    (pConcl) <- functionalConcl p
-    case goalType pConcl of
-        Sigma x a b -> return $ (pConcl { goalTerm = Proj1 (goalTerm pConcl), goalType = a })
-        _ -> Left "Expected Sigma type proof for Proj1 rule."
-functionalConcl (Proj2Rule p) = do
-    (pConcl) <- functionalConcl p
-    case goalType pConcl of
-        Sigma x a b -> return (pConcl { goalTerm = Proj2 (goalTerm pConcl), goalType = functionalSubst b (Proj1 (goalTerm pConcl)) x })
-        _ -> Left "Expected Sigma type proof for Proj2 rule."
-functionalConcl (CumulativiyRule p1 p2) = do
-    (p1Concl) <- functionalConcl p1
-    (p2Concl) <- functionalConcl p2
-    return $ (p1Concl { goalType = goalTerm p2Concl })
+-- functionalConcl :: FunctionalProof -> Either String FunctionalSequent
+-- functionalConcl (TRule i p) = do
+--     pConcl <- functionalConcl p
+--     return (pConcl { goalTerm = Type i , goalType = Type (i + 1) })
+-- functionalConcl (VarRule x p) = do
+--     pConcl <- functionalConcl p
+--     return (pConcl { functionalContext = unsafeInsert x (goalTerm pConcl) (functionalContext pConcl), goalTerm = Var x, goalType = goalTerm pConcl })
+-- -- functionalConcl (Pi1Rule x p) concls = do
+-- --     (pConcl, concls2) <- functionalConcl p concls
+-- --     xTy <- eitherLookup x (functionalContext pConcl)
+-- --     return (pConcl { functionalContext = M.delete x $ functionalContext pConcl, goalTerm = Pi x xTy (goalTerm pConcl), goalType = Prop }, M.insert p pConcl concls2)
+-- functionalConcl (PiRule x p1 p2) = do
+--     p1Concl <- functionalConcl p1
+--     p2Concl <- functionalConcl p2
+--     let newGoal = case (goalType p1Concl, goalType p2Concl) of
+--             (_, Prop) -> Prop
+--             (Type i, Type j) -> Type (max i j)
+--             (Type i, _) -> Type i
+--             (_, Type j) -> Type j
+--             (_, _) -> Type 0
+--     return (p1Concl { goalTerm = Pi x (goalTerm p1Concl) (goalTerm p2Concl), goalType = newGoal })
+-- functionalConcl (LambdaRule x p) = do
+--     (pConcl) <- functionalConcl p
+--     xTy <- ctxEitherLookup x (functionalContext pConcl)
+--     return (pConcl { functionalContext = ctxDrop1 $ functionalContext pConcl, goalTerm = Lambda x xTy (goalTerm pConcl), goalType = Pi x xTy (goalType pConcl) })
+-- functionalConcl (AppRule p1 p2) = do
+--     (p1Concl) <- functionalConcl p1
+--     (p2Concl) <- functionalConcl p2
+--     (varToReplace, termReplaceInside) <- (case goalType p1Concl of
+--         Pi x a b -> return (x, b)
+--         _ -> Left $ "Error in AppRule (" ++ show p1 ++ ")" ++ "(" ++ show p2 ++ ")")
+--     return $ (p2Concl { goalTerm = App (goalTerm p1Concl) (goalTerm p2Concl), goalType = functionalSubst termReplaceInside (goalTerm p2Concl) varToReplace })
+-- functionalConcl (SigmaRule x p1 p2) = do
+--     (p1Concl) <- functionalConcl p1
+--     (p2Concl) <- functionalConcl p2
+--     xTy <- ctxEitherLookup x $ functionalContext p2Concl
+--     let newGoal = case (goalType p1Concl, goalType p2Concl) of
+--             (Type i, Type j) -> Type (max i j)
+--             (Type i, _) -> Type i
+--             (_, Type j) -> Type j
+--             (_, _) -> Type 0
+--     return (p1Concl { goalTerm = Sigma x (goalTerm p1Concl) (goalTerm p2Concl), goalType = newGoal })
+-- functionalConcl (PairRule x p1 p2 p3) = do
+--     (p1Concl) <- functionalConcl p1
+--     (p2Concl) <- functionalConcl p2
+--     (p3Concl) <- functionalConcl p3
+--     xTy <- ctxEitherLookup x $ functionalContext p3Concl
+--     return (p1Concl { goalTerm = Pair (goalTerm p1Concl) (goalTerm p2Concl) x (goalType p1Concl) (goalTerm p3Concl), goalType = Sigma x (goalType p1Concl) (goalTerm p3Concl) })
+-- functionalConcl (Proj1Rule p) = do
+--     (pConcl) <- functionalConcl p
+--     case goalType pConcl of
+--         Sigma x a b -> return $ (pConcl { goalTerm = Proj1 (goalTerm pConcl), goalType = a })
+--         _ -> Left "Expected Sigma type proof for Proj1 rule."
+-- functionalConcl (Proj2Rule p) = do
+--     (pConcl) <- functionalConcl p
+--     case goalType pConcl of
+--         Sigma x a b -> return (pConcl { goalTerm = Proj2 (goalTerm pConcl), goalType = functionalSubst b (Proj1 (goalTerm pConcl)) x })
+--         _ -> Left "Expected Sigma type proof for Proj2 rule."
+-- functionalConcl (CumulativiyRule p1 p2) = do
+--     (p1Concl) <- functionalConcl p1
+--     (p2Concl) <- functionalConcl p2
+--     return $ (p1Concl { goalType = goalTerm p2Concl })
 -- functionalConcl (FHoleRule fc gt gTy) = return $ FunctionalSequent { functionalContext = fc, goalTerm = gt, goalType = gTy }
 
 {-| Take one beta reduction if possible. Nothing otherwise.
@@ -497,190 +517,6 @@ cumulativiyRelation t1 t2 = conversionRelation t1 t2
 
 isTrueP t p = unless t $ Left ("Proof failed for " ++ show p)
 
-
-
-{-|
->>> verifyFunctionalProofM simpleFunctionalProof
-Just True
--}
-verifyFunctionalProofM :: FunctionalProof -> Either String (Bool)
--- verifyFunctionalProofM p av | p `M.member` av = return (True, av)
-verifyFunctionalProofM (FunctionalAxiom ctx) = return True
--- verifyFunctionalProofM (CRule x p) av = do
---     (t, av2) <- verifyFunctionalProofM p av
---     isTrueP t p
---     (pConcl, av3) <- functionalConcl p av2
---     when (x `S.member` contextFreeVariables (functionalContext pConcl)) (Left $ x ++ " is a free variable in the context: " ++ show (functionalContext pConcl))
---     case goalType pConcl of
---         (Type i) -> return (True, M.insert p pConcl av3)
---         _ -> Left "Invalid conclusion in derivation above CRule. Expected Type_j."
-verifyFunctionalProofM (TRule i p) = do
-    (t) <- verifyFunctionalProofM p
-    isTrueP t p
-    (pConcl) <- functionalConcl p
-    case goalType pConcl of
-        (Type 0) -> return (i >= 0)
-        _ -> Left "Invalid conclusion in derivation above TRule. Expected Type_0."
-verifyFunctionalProofM (VarRule x p) = do
-    t <- verifyFunctionalProofM p
-    isTrueP t p
-    seq <- functionalConcl p
-    case goalType seq of
-        Type i -> return True
-        Prop -> return True
-        _ -> Left "Invalid conclusion in derviation above VarRule. Expected a kind"
--- verifyFunctionalProofM (Pi1Rule x p) av = do
---     (t, av2) <- verifyFunctionalProofM p av
---     isTrueP t p
---     (seq, av3) <- functionalConcl p av2
---     case goalType seq of
---         Prop -> return (M.member x (functionalContext seq), M.insert p seq av3)
---         _ -> Left "Invalid conclusion in derviation above Pi1Rule. Expected Prop."
-verifyFunctionalProofM (PiRule x p1 p2) = do
-    (t1) <- verifyFunctionalProofM p1
-    (t2) <- verifyFunctionalProofM p2
-    isTrueP t1 p1
-    isTrueP t2 p2
-    (seq1) <- functionalConcl p1
-    (seq2) <- functionalConcl p2
-    xTy <- case M.lookup x $ functionalContext seq2 of
-        Just res -> Right res
-        Nothing -> Left $ "Could not find " ++ x ++ " in context of sequent: " ++ show seq2
-    case (goalType seq1, goalType seq2) of
-        (Type i, Type j) -> return ()
-        (Prop, Type j) -> return ()
-        (Type i, Prop) -> return ()
-        (Prop, Prop) -> return ()
-        r -> Left $ "Invalid kinds as the result types of the proof conclusions: " ++ show r
-    unless (M.insert x xTy (functionalContext seq1) == functionalContext seq2) $ Left ("Contexts not equal: " ++ show (functionalContext seq1) ++ " and " ++ show (M.delete x (functionalContext seq2)))
-    unless (xTy == goalTerm seq1) $ Left (x ++ " does not have expected type: " ++ show (goalTerm seq1) ++ " got " ++ show xTy)
-    return (True)
-verifyFunctionalProofM (LambdaRule x p) = do
-    (t1) <- verifyFunctionalProofM p
-    isTrueP t1 p
-    (seq) <- functionalConcl p
-    return (M.member x (functionalContext seq))
-verifyFunctionalProofM (AppRule p1 p2) = do
-    (t1) <- verifyFunctionalProofM p1
-    (t2) <- verifyFunctionalProofM p2
-    isTrueP t1 p1
-    isTrueP t2 p2
-    (seq1) <- functionalConcl p1
-    (seq2) <- functionalConcl p2
-    let validGoalTy = (case goalType seq1 of
-            Pi x a b -> a == goalType seq2
-            _ -> False)
-    if validGoalTy then return (functionalContext seq1 == functionalContext seq2) else Left ("Not a valid goal type: " ++ show (goalType seq1) ++ " Should be equal to: " ++ show (goalType seq2) ++ " in SEQ: " ++ show seq1 ++ ("PROOF: " ++ show p1))
-verifyFunctionalProofM (SigmaRule x p1 p2) = do
-    (t1) <- verifyFunctionalProofM p1
-    (t2) <- verifyFunctionalProofM p2
-    isTrueP t1 p1
-    isTrueP t2 p2
-    (seq1) <- functionalConcl p1
-    (seq2) <- functionalConcl p2
-    xTy <- case M.lookup x $ functionalContext seq2 of
-        Just res -> Right res
-        Nothing -> Left $ "Could not find " ++ x ++ " in context of sequent: " ++ show seq2
-    case (goalType seq1, goalType seq2) of
-        (Type i, Type j) -> return ()
-        (Prop, Type j) -> return ()
-        (Type i, Prop) -> return ()
-        (Prop, Prop) -> return ()
-        r -> Left $ "Invalid kinds as the result types of the proof conclusions: " ++ show r
-    return (functionalContext seq1 == M.delete x (functionalContext seq2)
-            && xTy == goalTerm seq1)
-verifyFunctionalProofM (PairRule x p1 p2 p3) = do
-    (t1) <- verifyFunctionalProofM p1
-    (t2) <- verifyFunctionalProofM p2
-    (t3) <- verifyFunctionalProofM p3
-    isTrueP t1 p1
-    isTrueP t2 p2
-    isTrueP t3 p3
-    (seq1) <- functionalConcl p1
-    (seq2) <- functionalConcl p2
-    (seq3) <- functionalConcl p3
-    _ <- case goalType seq3 of
-        Type j -> return ()
-        _ -> Left "Invalid conclusion in third proof for PairRule application. Expected Type_j."
-    xTy <- case M.lookup x (functionalContext seq3) of
-        Just res -> return res
-        _ -> Left $ "Could not find " ++ x ++ " in context of sequent: " ++ show seq3
-    let p2ExpectedTy = functionalSubst (goalTerm seq3) (goalTerm seq1) x
-        p2ValidTy = goalType seq2 == p2ExpectedTy
-    return (p2ValidTy
-        && xTy == goalType seq1
-        && functionalContext seq1 == functionalContext seq2
-        && functionalContext seq2 == M.delete x (functionalContext seq3))
-verifyFunctionalProofM (Proj1Rule p) = do
-    (t) <- verifyFunctionalProofM p
-    isTrueP t p
-    (seq) <- functionalConcl p
-    case goalType seq of
-        Sigma x a b -> return (True)
-        _ -> Left $ "Invalid conclusion in derivation for Proj1Rule. Expected Sigma, but got: " ++ show (goalType seq)
-verifyFunctionalProofM (Proj2Rule p) = do
-    (t) <- verifyFunctionalProofM p
-    isTrueP t p
-    (seq) <- functionalConcl p
-    case goalType seq of
-        Sigma x a b -> return (True)
-        _ -> Left $ "Invalid conclusion in derivation for Proj2Rule. Expected Sigma, but got: " ++ show (goalType seq)
-verifyFunctionalProofM (CumulativiyRule p1 p2) = do
-    (t1) <- verifyFunctionalProofM p1
-    (t2) <- verifyFunctionalProofM p2
-    isTrueP t1 p1
-    isTrueP t2 p2
-    (seq1) <- functionalConcl p1
-    (seq2) <- functionalConcl p2
-    return (cumulativiyRelation (goalType seq1) (goalTerm seq2))
--- verifyFunctionalProofM (FHoleRule fc gt gTy) av = return (False, av)
-        
-verifyFunctionalProof :: FunctionalProof -> Bool
-verifyFunctionalProof p =  case verifyFunctionalProofM p of
-    Right (True) -> True
-    _ -> False
-
-extractFunctionalTerm :: FunctionalProof -> Maybe FunctionalTerm
-extractFunctionalTerm t = case (verifyFunctionalProofM t) of
-    (Right (True)) -> case functionalConcl t of
-            Right (seq) -> return $ goalTerm seq
-            _ -> Nothing
-    _ -> Nothing
-
-{-| Initialize the first depth of dependencies in the context.
-Not really used or tested, but might be useful in the future.-}
-initializeDeps :: FunctionalContext -> [(String, S.Set String)]
-initializeDeps ctx = (\(x, a) -> (x, functionalFreeVariables a)) <$> M.toList ctx
-
-{-| Get the dependencies for the type of a variable in a context.
-Not really used or tested, but might be useful in the future.
-
->>> assignDeps "x" (M.fromList [("x", Prop)])
-fromList []
-
->>> assignDeps "x" (M.fromList [("y", Var "Z"), ("x", (Var "y"))])
-fromList ["Z","y"]
--}
-assignDeps :: String -> FunctionalContext -> S.Set String
-assignDeps x ctx = case M.lookup x ctx of
-    Just res -> let
-        curDeps = functionalFreeVariables res
-        nextDeps = S.unions (S.map (\v -> assignDeps v ctx) (curDeps))
-        in curDeps `S.union` nextDeps
-    Nothing -> S.empty
-
-{-| Orders a context by dependencies. Front will depend on most things. Back will depend on least things.
->>> orderCtxDep ([("B", Type 0), ("y", (Var "B")), ("x", (Var "A")), ("A", Prop)])
-[("y",B),("B",Type 0),("x",A),("A",Prop)]
--}
-orderCtxDep :: FunctionalContext -> [(String, FunctionalTerm)]
-orderCtxDep ctx = let
-    deps = M.mapWithKey (\k v -> assignDeps k ctx) ctx
-    in [] -- TODO
-
-contextFreeVariables :: FunctionalContext -> S.Set String
-contextFreeVariables ctx = S.unions $ M.map functionalFreeVariables ctx
-
 {-| Extracts the proof corresponding to a term.
 
 >>> extractProofFromTermUnderCtx (M.fromList []) (Type 1)
@@ -707,57 +543,181 @@ Right (FunctionalSequent {functionalContext = fromList [("A",Type 2)], goalTerm 
 >>> extractProofFromTermUnderCtx (M.fromList []) (Lambda "x" (Type 1) (Lambda "x" (Var "x") (Var "x")))
 Left "Could not find variables that are not free in the rest of the context."
 -}
-extractProofFromTermUnderCtx :: FunctionalContext -> FunctionalTerm -> Either String FunctionalProof
-extractProofFromTermUnderCtx ctx (Type i) = TRule i <$> extractProofFromTermUnderCtx ctx Prop
-extractProofFromTermUnderCtx ctx Prop = return (FunctionalAxiom ctx)
+extractProofFromTermUnderCtx :: FunctionalContext SafeCtx -> FunctionalTerm -> Either String (FunctionalTerm, FunctionalProof)
+extractProofFromTermUnderCtx ctx (Type i) = return $ (Type (i + 1), TRule i ctx)
+extractProofFromTermUnderCtx ctx Prop = return (Type 0, CRule ctx)
 extractProofFromTermUnderCtx ctx (Var x) = do
-    ty <- case M.lookup x ctx of
-        Just res -> Right res
-        Nothing -> Left $ "Could not find " ++ x ++ " in context: " ++ show ctx
-    VarRule x <$> extractProofFromTermUnderCtx (M.delete x ctx) ty
+    ty <- ctxEitherLookup x ctx
+    return $ (ty, VarRule x ctx)
 extractProofFromTermUnderCtx ctx (Pi a ty t) = do
-    tP <- extractProofFromTermUnderCtx (M.insert a ty ctx) t
+    newCtx <- safeInsert a ty ctx
+    tP <- extractProofFromTermUnderCtx newCtx t
     tyP <- extractProofFromTermUnderCtx ctx ty
-    (tPConcl) <- functionalConcl tP
-    return $ PiRule a tyP tP
+    let tPConcl = fst tP
+        tyPConcl = fst tyP
+    typeCheckedType <- (case (tPConcl, tyPConcl) of
+            (Prop, Prop) -> return (Prop, Pi1Rule a (snd tP))
+            (Prop, Type i) -> return (Prop, Pi1Rule a (snd tP))
+            (Type i, Type j) -> return $ (Type (max i j), Pi2Rule a (snd tyP) (snd tP))
+            (Type i, Prop) -> return $ (Type i, Pi2Rule a (snd tyP) (CumulativiyRule (snd tP) (TRule i ctx)))
+            _ -> Left ("Pi type does not have types as expected. Got: " ++ ftToS ty ++ ":" ++ ftToS tyPConcl ++ " and " ++ ftToS t ++ ":" ++ ftToS tPConcl))
+    return typeCheckedType
 extractProofFromTermUnderCtx ctx (Lambda a ty t) = do
-    tP <- extractProofFromTermUnderCtx (M.insert a ty ctx) t
-    return $ LambdaRule a tP
+    newCtx <- safeInsert a ty ctx
+    tP <- extractProofFromTermUnderCtx newCtx t
+    return (Pi a ty (fst tP), LambdaRule a (snd tP))
 extractProofFromTermUnderCtx ctx (App t1 t2) = do
     p1 <- extractProofFromTermUnderCtx ctx t1
     p2 <- extractProofFromTermUnderCtx ctx t2
-    return (AppRule p1 p2)
+    (x, a, b) <- case fst p1 of
+        Pi x a b -> return (x, a, b)
+        _ -> Left $ "Found invalid type for application expect a Pi type but got: " ++ ftToS (fst p1)
+    return (functionalSubst b t2 x, AppRule (snd p1) (snd p2))
 extractProofFromTermUnderCtx ctx (Sigma x a b) = do
     tyP <- extractProofFromTermUnderCtx ctx a
-    tP <- extractProofFromTermUnderCtx (M.insert x a ctx) b
-    return $ SigmaRule x tyP tP
+    newCtx <- safeInsert x a ctx
+    tP <- extractProofFromTermUnderCtx newCtx b
+    typeCheckedType <- case (fst tyP, fst tP) of
+        (Type i, Type j) -> return $ Type (max i j)
+        (Prop, Type j) -> return $ Type j
+        (Type i, Prop) -> return $ Type i
+        (Prop, Prop) -> return $ Type 0
+        _ -> Left ("Sigma type does not have types as expected. Got: " ++ ftToS a ++ ":" ++ ftToS (fst tyP) ++ " and " ++ ftToS b ++ ":" ++ ftToS (fst tP))
+    return (typeCheckedType, SigmaRule x (snd tyP) (snd tP))
 extractProofFromTermUnderCtx ctx (Pair m n x a b) = do
+    newCtx <- safeInsert x a ctx
     mProof <- extractProofFromTermUnderCtx ctx m
     nProof <- extractProofFromTermUnderCtx ctx n
-    bProof <- extractProofFromTermUnderCtx (M.insert x a ctx) b
-    return $ PairRule x mProof nProof bProof
+    bProof <- extractProofFromTermUnderCtx newCtx b
+    return (Sigma x a b, PairRule x (snd mProof) (snd nProof) (snd bProof))
 extractProofFromTermUnderCtx ctx (Proj1 m) = do
     mProof <- extractProofFromTermUnderCtx ctx m
-    return $ Proj1Rule mProof
+    (x, a, b) <- case fst mProof of
+        Sigma x a b -> return (x, a, b)
+        res -> Left $ "Found invalid type for application expect a Sigma type but got: " ++ ftToS (fst mProof)
+    return (a, Proj1Rule (snd mProof))
 extractProofFromTermUnderCtx ctx (Proj2 m) = do
     mProof <- extractProofFromTermUnderCtx ctx m
-    return $ Proj2Rule mProof
--- extractProofFromTermUnderCtx ctx FHoleTerm = return $ FHoleRule ctx FHoleTerm FHoleTerm
+    (x, a, b) <- case fst mProof of
+        Sigma x a b -> return (x, a, b)
+        res -> Left $ "Found invalid type for application expect a Sigma type but got: " ++ ftToS (fst mProof)
+    return (functionalSubst b (Proj1 m) x, Proj2Rule (snd mProof))
 
-{-| Orders the functional context by terms dependent on ones later in the list.
+safeInsert :: String -> FunctionalTerm -> FunctionalContext SafeCtx -> Either String (FunctionalContext SafeCtx)
+safeInsert x ty ctx = do
+    (k, p) <- extractProofFromTermUnderCtx ctx ty
+    concl <- verifyFunctionalProofM p
+    case goalType concl of
+        Type j -> return (FunctionalContext { judgments = (x,ty):judgments ctx })
+        Prop -> return (FunctionalContext { judgments = (x,ty):judgments ctx })
+        res -> Left $ ftToS ty ++ " is not a type! Extracted type is: " ++ ftToS res
 
->>> orderFunctionalContext (M.fromList [("nat", Type 1), ("one", (Var "nat")), ("two", (Var "one"))]) []
-NOW [("two",Var "one"),("one",Var "nat"),("nat",Type 1)]
+{-|
+>>> verifyFunctionalProofM simpleFunctionalProof
+Just True
 -}
-orderFunctionalContext :: FunctionalContext -> [(String, FunctionalTerm)] -> [(String, FunctionalTerm)]
-orderFunctionalContext fc acc =
-    let
-        fvs = contextFreeVariables fc
-        nextItemsMap = M.filterWithKey (\k v -> not (k `S.member` fvs)) fc
-        newCtx = M.difference fc nextItemsMap
-        nextItems = M.toList nextItemsMap
-    in
-        if fc == M.empty then acc else orderFunctionalContext newCtx (acc ++ nextItems)
+verifyFunctionalProofM :: FunctionalProof -> Either String FunctionalSequent
+verifyFunctionalProofM (CRule ctx) = return $ FunctionalSequent { functionalContext = ctx, goalTerm = Prop, goalType = Type 0 }
+verifyFunctionalProofM (TRule i ctx) = return $ FunctionalSequent { functionalContext = ctx, goalTerm = Type i, goalType = Type (i + 1) }
+verifyFunctionalProofM (VarRule x ctx) = do
+    xTy <- ctxEitherLookup x ctx
+    return $ FunctionalSequent { functionalContext = ctx, goalTerm = Var x, goalType = xTy }
+verifyFunctionalProofM (Pi1Rule x p) = do
+    seq <- verifyFunctionalProofM p
+    ty <- case ctxTake1 (functionalContext seq) of
+        [(x1, ty)] | x == x1 -> return ty
+        [(x1, ty)] -> Left $ "End of context should have " ++ x ++ " but has " ++ x1
+        [] -> Left $ "Context is empty but expected " ++ x
+    case goalType seq of
+        Prop -> return $ FunctionalSequent { functionalContext = ctxDrop1 (functionalContext seq), goalTerm = Pi x ty (goalTerm seq), goalType = Prop }
+        _ -> Left "Invalid conclusion in derviation above Pi1Rule. Expected Prop."
+verifyFunctionalProofM (Pi2Rule x p1 p2) = do
+    seq1 <- verifyFunctionalProofM p1
+    seq2 <- verifyFunctionalProofM p2
+    xTy <- case ctxTake1 (functionalContext seq2) of
+        [(x1, ty)] | x1 == x && ty == goalTerm seq1 -> return ty
+        [(x1, ty)] -> Left $ "End of context should have " ++ x ++ " with type " ++ ftToS (goalTerm seq1) ++ " but has " ++ x1 ++ " with type " ++ ftToS ty
+        [] -> Left $ "Context is empty but expected " ++ x
+    fullTy <- case (goalType seq1, goalType seq2) of
+        (Type i, Type j) -> return $ Type (max i j)
+        (Prop, Type j) -> return $ Type j
+        (Type i, Prop) -> return $ Type i
+        (Prop, Prop) -> return $ Type 0
+        r -> Left $ "Invalid kinds as the result types of the proof conclusions: " ++ show r
+    seq1Extended <- safeInsert x (goalTerm seq1) (functionalContext seq1)
+    unless (seq1Extended == functionalContext seq2) $ Left ("Contexts not equal: " ++ fcToS seq1Extended ++ " and " ++ fcToS (functionalContext seq2))
+    unless (xTy == goalTerm seq1) $ Left (x ++ " does not have expected type: " ++ ftToS (goalTerm seq1) ++ " got " ++ ftToS xTy)
+    return (FunctionalSequent { functionalContext = functionalContext seq1, goalTerm = Pi x (goalTerm seq1) (goalTerm seq2), goalType = fullTy })
+verifyFunctionalProofM (LambdaRule x p) = do
+    seq <- verifyFunctionalProofM p
+    xTy <- case ctxTake1 (functionalContext seq) of
+        [(x1, ty)] | x1 == x -> return ty
+        [(x1, ty)] -> Left $ "End of context should have " ++ x ++ " but has " ++ x1
+        [] -> Left $ "Context is empty but expected " ++ x
+    return (FunctionalSequent { functionalContext = ctxDrop1 (functionalContext seq), goalTerm = Lambda x xTy (goalTerm seq), goalType = Pi x xTy (goalType seq) })
+verifyFunctionalProofM (AppRule p1 p2) = do
+    seq1 <- verifyFunctionalProofM p1
+    seq2 <- verifyFunctionalProofM p2
+    (x, a, b) <- case goalType seq1 of
+            Pi x a b | a == goalType seq2 -> return (x, a, b)
+            _ -> Left $ "Invalid goal type. Expected Pi type with argument type " ++ ftToS (goalType seq2) ++ " but got " ++ ftToS (goalType seq1)
+    unless (functionalContext seq1 == functionalContext seq2) (Left ("Contexts not equal: " ++ fcToS (functionalContext seq1) ++ " and " ++ fcToS (functionalContext seq2)))
+    return (FunctionalSequent { functionalContext = functionalContext seq1, goalTerm = App (goalTerm seq1) (goalTerm seq2), goalType = functionalSubst b (goalTerm seq2) x })
+verifyFunctionalProofM (SigmaRule x p1 p2) = do
+    seq1 <- verifyFunctionalProofM p1
+    seq2 <- verifyFunctionalProofM p2
+    xTy <- case ctxTake1 (functionalContext seq2) of
+        [(x1, ty)] | x1 == x && ty == goalTerm seq1 -> return ty
+        [(x1, ty)] -> Left $ "End of context should have " ++ x ++ " with type " ++ ftToS (goalTerm seq1) ++ " but has " ++ x1 ++ " with type " ++ ftToS ty
+        [] -> Left $ "Context is empty but expected " ++ x
+    resTy <- case (goalType seq1, goalType seq2) of
+        (Type i, Type j) -> return $ Type (max i j)
+        (Prop, Type j) -> return $ Type j
+        (Type i, Prop) -> return $ Type i
+        (Prop, Prop) -> return $ Type 0
+        r -> Left $ "Invalid kinds as the result types of the proof conclusions: " ++ show r
+    seq1Extended <- safeInsert x (goalTerm seq1) (functionalContext seq1)
+    unless (seq1Extended == functionalContext seq2) $ Left ("Contexts not equal: " ++ fcToS seq1Extended ++ " and " ++ fcToS (functionalContext seq2))
+    return (FunctionalSequent { functionalContext = functionalContext seq1, goalTerm = Sigma x (goalTerm seq1) (goalTerm seq2), goalType = resTy })
+verifyFunctionalProofM (PairRule x p1 p2 p3) = do
+    seq1 <- verifyFunctionalProofM p1
+    seq2 <- verifyFunctionalProofM p2
+    seq3 <- verifyFunctionalProofM p3
+    case goalType seq3 of
+        Type j -> return ()
+        _ -> Left $ "Invalid conclusion in third proof for PairRule application. Expected Type_j. Got: " ++ ftToS (goalType seq3)
+    xTy <- case ctxTake1 (functionalContext seq3) of
+        [(x1, ty)] | x1 == x && goalType seq1 == ty -> return ty
+        [(x1, ty)] -> Left $ "End of context should have " ++ x ++ " with type " ++ ftToS (goalType seq1) ++ " but has " ++ x1 ++ " with type " ++ ftToS ty
+        [] -> Left $ "Context is empty but expected " ++ x
+    let p2ExpectedTy = functionalSubst (goalTerm seq3) (goalTerm seq1) x
+        p2ValidTy = goalType seq2 == p2ExpectedTy
+    unless (p2ValidTy
+        && xTy == goalType seq1
+        && functionalContext seq1 == functionalContext seq2
+        && functionalContext seq2 == ctxDrop1 (functionalContext seq3)) $ Left "Errors validating Pair rule."
+    return (FunctionalSequent { functionalContext = functionalContext seq1, goalTerm = Pair (goalTerm seq1) (goalTerm seq2) x (goalType seq1) (goalTerm seq3), goalType = Sigma x (goalType seq1) (goalTerm seq3) })
+verifyFunctionalProofM (Proj1Rule p) = do
+    seq <- verifyFunctionalProofM p
+    case goalType seq of
+        Sigma x a b -> return (FunctionalSequent { functionalContext = functionalContext seq, goalTerm = Proj1 (goalTerm seq), goalType = a })
+        _ -> Left $ "Invalid conclusion in derivation for Proj1Rule. Expected Sigma, but got: " ++ show (goalType seq)
+verifyFunctionalProofM (Proj2Rule p) = do
+    seq <- verifyFunctionalProofM p
+    case goalType seq of
+        Sigma x a b -> return (FunctionalSequent { functionalContext = functionalContext seq, goalTerm = Proj2 (goalTerm seq), goalType = functionalSubst b (Proj1 (goalTerm seq)) x })
+        _ -> Left $ "Invalid conclusion in derivation for Proj2Rule. Expected Sigma, but got: " ++ show (goalType seq)
+verifyFunctionalProofM (CumulativiyRule p1 p2) = do
+    seq1 <- verifyFunctionalProofM p1
+    seq2 <- verifyFunctionalProofM p2
+    unless (functionalContext seq1 == functionalContext seq2) $ Left $ "Contexts not equal: " ++ fcToS (functionalContext seq1) ++ " and " ++ fcToS (functionalContext seq2)
+    unless (cumulativiyRelation (goalType seq1) (goalTerm seq2)) $ Left $ "Cumulativity doesn't hold. Expected " ++ ftToS (goalType seq1) ++ " to be smaller or equal to " ++ ftToS (goalTerm seq2)
+    return (FunctionalSequent { functionalContext = functionalContext seq1, goalTerm = goalTerm seq1, goalType = goalTerm seq2 })
+
+verifyFunctionalProof :: FunctionalProof -> Bool
+verifyFunctionalProof p =  case verifyFunctionalProofM p of
+    Right _ -> True
+    _ -> False
 
 {-| P{x/u} replace free occurances of u with x in P.
 >>> substVarFunctional (Lambda "x" (Var "y") (Var "x")) "z" "x"

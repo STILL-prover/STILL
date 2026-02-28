@@ -13,9 +13,6 @@ import qualified Data.String
 import ECC.Kernel (ftToS)
 import ECC.Tactics (ftseqToSHelper)
 
-fcToS :: FS.FunctionalContext -> String
-fcToS = M.foldlWithKey (\acc k t -> acc ++ k ++ ":" ++ ftToS t) ""
-
 ftseqToS :: FT.FunctionalTacticsSequent -> String
 ftseqToS = ftseqToSHelper
 

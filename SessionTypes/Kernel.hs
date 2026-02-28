@@ -493,22 +493,22 @@ seqToS seq =
     then multiLine
     else singleLine
   where
-    -- 1. Extract and format the raw components into lists of strings
+    -- Extract and format the raw components into lists of strings
     tyVars = S.toList (tyVarContext seq)
     fns = [k ++ ":" ++ ftToS v | (k,v) <- Data.Map.toList (fnContext seq)]
     unres = [k ++ ":" ++ propToS v | (k,v) <- Data.Map.toList (unrestrictedContext seq)]
     lin = [k ++ ":" ++ propToS v | (k,v) <- Data.Map.toList (linearContext seq)]
     goal = channel seq ++ ":" ++ propToS (goalProposition seq)
 
-    -- 2. Define the single-line representation (Original logic)
-    -- We join the internal lists with comma-space, and the sections with semicolons.
+    -- Define the single-line representation (Original logic)
+    -- Join the internal lists with comma-space, and the sections with semicolons.
     parts = [tyVars, fns, unres, lin]
     joinedParts = L.map (L.intercalate ", ") parts
     singleLine = L.intercalate "; " joinedParts ++ " |- " ++ goal
 
-    -- 3. Define the multi-line representation
-    -- If a specific context list is empty, we keep it empty. 
-    -- Otherwise, we join items with newlines and indentation.
+    -- Define the multi-line representation
+    -- If a specific context list is empty, keep it empty. 
+    -- Otherwise, join items with newlines and indentation.
     formatBlock [] = ""
     formatBlock items = "\n    " ++ L.intercalate ",\n    " items
 
@@ -1379,6 +1379,11 @@ verifyProof :: Proof -> Bool
 verifyProof p = case verifyProofM p of
     Right True -> True
     _ -> False
+
+extractFunctionalTerm :: FunctionalProof -> Maybe FunctionalTerm
+extractFunctionalTerm t = case verifyFunctionalProofM t of
+    Right seq -> return $ goalTerm seq
+    _ -> Nothing
 
 extractProcess :: Proof -> Either String (Process, Sequent)
 extractProcess rule@(IdRule x z tv fCtx uCtx eta prop) = do

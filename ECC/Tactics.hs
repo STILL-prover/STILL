@@ -15,14 +15,34 @@ import Debug.Trace
 import Control.Monad.Identity ( Identity(runIdentity) )
 import qualified Data.Map as M
 
+{-| A{y/N} replace N with y in A. -}
+abstTermFunctional :: FunctionalTerm -> String -> FunctionalTerm -> FunctionalTerm
+abstTermFunctional a y n = if a == n then Var y else case a of
+    App t1 t2 -> App (abstTermFunctional t1 y n) (abstTermFunctional t2 y n)
+    Lambda x t1 t2 -> if x `S.member` functionalFreeVariables n then a -- n is no longer possible
+        else if x == y then abstTermFunctional (alphaConvert (Lambda x t1 t2) (S.fromList [x, y] `S.union` functionalNames a `S.union` functionalNames n)) y n -- new var will be captured
+        else Lambda x (abstTermFunctional t1 y n) (abstTermFunctional t2 y n)
+    Pi x t1 t2 -> if x `S.member` functionalFreeVariables n then a
+        else if x == y then abstTermFunctional (alphaConvert (Pi x t1 t2) (S.fromList [x, y] `S.union` functionalNames a `S.union` functionalNames n)) y n
+        else Pi x (abstTermFunctional t1 y n) (abstTermFunctional t2 y n)
+    Sigma x t1 t2 -> if x `S.member` functionalFreeVariables n then a
+        else if x == y then abstTermFunctional (alphaConvert (Sigma x t1 t2) (S.fromList [x, y] `S.union` functionalNames a `S.union` functionalNames n)) y n
+        else Sigma x (abstTermFunctional t1 y n) (abstTermFunctional t2 y n)
+    Pair t1 t2 x ty1 ty2 -> if x `S.member` functionalFreeVariables n then a
+        else if x == y then abstTermFunctional (alphaConvert (Pair t1 t2 x ty1 ty2) (S.fromList [x, y] `S.union` functionalNames a `S.union` functionalNames n)) y n
+        else Pair (abstTermFunctional t1 y n) (abstTermFunctional t2 y n) x (abstTermFunctional ty1 y n) (abstTermFunctional ty2 y n)
+    Proj1 t -> Proj1 (abstTermFunctional t y n)
+    Proj2 t -> Proj2 (abstTermFunctional t y n)
+    x -> x
+
 data FunctionalTacticsSequent = FunctionalTacticsSequent {
-    functionalContext :: FunctionalContext,
+    functionalContext :: FunctionalContext SafeCtx,
     goalTerm :: Maybe FunctionalTerm,
     goalType :: FunctionalTerm
 } deriving (Eq)
 
 ftseqToSHelper :: FunctionalTacticsSequent -> String
-ftseqToSHelper seq = L.dropWhile (\c -> c == ',' || c == ' ') (L.foldl (\acc (k, v) -> acc ++ ", " ++ k ++ ":" ++ ftToS v) "" (Data.Map.toList ((functionalContext seq)))) ++ --show (Data.Map.toList (FT.functionalContext seq)) ++
+ftseqToSHelper seq = L.dropWhile (\c -> c == ',' || c == ' ') (L.foldl (\acc (k, v) -> acc ++ ", " ++ k ++ ":" ++ ftToS v) "" (ctxToList ((functionalContext seq)))) ++ --show (Data.Map.toList (FT.functionalContext seq)) ++
     " |- " ++ (case goalTerm seq of Just t -> ftToS t ; Nothing -> "□") ++ ":" ++ ftToS (goalType seq)
 
 getFunctionalTacticsSequentNames :: FunctionalTacticsSequent -> S.Set String
@@ -161,28 +181,15 @@ useCurrentSubgoal j = do
     let availableNextSubgoals = L.dropWhile (\(x, sg) -> used sg) $ Data.Map.toList newSubgoals
     if not (L.null availableNextSubgoals) then ST.modify (\s -> s { curSubgoal = fst . head $ availableNextSubgoals }) else ST.modify (\s -> s { curSubgoal = "" })
 
-axTac :: FunctionalTactic
-axTac = do
+cTac :: FunctionalTactic
+cTac = do
     seq <- getCurrentSequent
     let ctx = functionalContext seq
     case goalType seq of
-        Type 0 -> if ctx == M.empty then do
-                useCurrentSubgoal . buildJustification0 $ FunctionalAxiom ctx
-                return "Ax tactic applied." else tacError "Empty context required"
+        Type 0 -> do
+                useCurrentSubgoal . buildJustification0 $ CRule ctx
+                return "Ax tactic applied."
         _ -> tacError $ "EXPECTED: " ++ show (Type 0) ++ "\nRECEIVED: " ++ show (goalType seq)
-
--- cTac :: String -> Integer -> FunctionalTactic
--- cTac x j = do
---     seq <- getCurrentSequent
---     let ctx = functionalContext seq
---     case M.lookup x ctx of
---         Just xTy -> if goalType seq == Type 0 && (isNothing (goalTerm seq) || goalTerm seq == Just Prop) && j >= 0
---             then (do
---                 freshGoal <- createNewSubgoal $ seq { goalTerm = Just xTy, goalType = Type j }
---                 useCurrentSubgoal . buildJustification1 freshGoal $ CRule x
---                 return "C tactic applied.")
---             else tacError "Cannot apply to non- (Prop:Type 0) goal."
---         Nothing -> tacError $ "Could not find " ++ show x ++ " in the context."
 
 tTac :: FunctionalTactic
 tTac = do
@@ -191,8 +198,7 @@ tTac = do
     case goalType seq of
         (Type j) -> if isNothing (goalTerm seq) || goalTerm seq == Just (Type (j-1))
             then (do
-                freshGoal <- createNewSubgoal $ seq { goalTerm = Just Prop, goalType = Type 0 }
-                useCurrentSubgoal . buildJustification1 freshGoal $ TRule (j - 1)
+                useCurrentSubgoal . buildJustification0 $ TRule (j - 1) ctx
                 return "T tactic applied.")
             else tacError "Goal term is not valid. Should be type universe minus 1."
         _ -> tacError "Cannot apply to non-Type j goal."
@@ -213,16 +219,10 @@ varTac :: String -> FunctionalTactic
 varTac x = do
     seq <- getCurrentSequent
     let ctx = functionalContext seq
-    case Data.Map.lookup x ctx of
+    case ctxLookup x ctx of
         Just xTy -> if xTy == goalType seq && (isNothing (goalTerm seq) || goalTerm seq == Just (Var x))
             then (do
-                let wf = extractProofFromTermUnderCtx (M.delete x ctx) xTy
-                    verifWf = wf >>= verifyFunctionalProofM
-                case (verifWf, wf) of
-                    (Right True, Right wfP) -> useCurrentSubgoal . buildJustification0 $ VarRule x wfP
-                    _ -> (do
-                        freshGoal <- createNewSubgoal $ seq { functionalContext = M.delete x ctx, goalTerm = Just xTy, goalType = Type 0 }
-                        useCurrentSubgoal . buildJustification1 freshGoal $ VarRule x)
+                useCurrentSubgoal . buildJustification0 $ VarRule x ctx
                 return "Var tactic applied.")
             else tacError $ "Cannot apply tactic. Goal term or type is mismatched.\nEXPECTED: " ++ maybe "" show (goalTerm seq) ++ show (goalType seq) ++ "\nRECEIVED: " ++ show xTy
         _ -> tacError $ "Cannot find " ++ x ++ " in the context."
@@ -233,12 +233,35 @@ varATac = do
     let ctx = functionalContext seq
     case goalTerm seq of
         Just (Var x) -> varTac x
-        Nothing -> case L.filter (\(_, p) -> p == goalType seq) . Data.Map.toList $ ctx of
+        Nothing -> case L.filter (\(_, p) -> p == goalType seq) . ctxToList $ ctx of
             ((x,xTy):rest) -> varTac x
             _ -> tacError $ "Cannot find a variable with type " ++ show (goalType seq) ++ " in the context."
 
-piTac :: Maybe FunctionalTerm -> FunctionalTactic
-piTac fa = do
+safeInsertTacHelper :: String -> FunctionalTerm -> FunctionalContext SafeCtx -> ProverState (FunctionalContext SafeCtx)
+safeInsertTacHelper x a c = case safeInsert x a c of
+    Right ctx -> return ctx
+    Left e -> tacError e
+
+pi1Tac :: Maybe FunctionalTerm -> FunctionalTactic
+pi1Tac fa = do
+    seq <- getCurrentSequent
+    case goalType seq of
+        Prop -> return ()
+        _  -> tacError "Pi1 tactic can only be applied to Prop goals!"
+    (realX, realA, realB) <- case (fa, goalTerm seq) of
+        (Just (Pi x1 a1 b1), Nothing) -> return (x1, a1, b1)
+        (Nothing, Just (Pi x2 a2 b2)) -> return (x2, a2, b2)
+        (Just (Pi x1 a1 b1), Just (Pi x2 a2 b2)) -> if x1 == x2 && a1 == a2 && b1 == b2
+            then return (x1, a1, b1)
+            else tacError "Known goal term doesn't equal attempted goal term."
+        _ -> tacError "Invalid application of tactic. Goal term or attempted term is not a Pi term."
+    extendedCtx <- safeInsertTacHelper realX realA $ functionalContext seq
+    freshGoal <- createNewSubgoal $ seq { functionalContext = extendedCtx, goalTerm = Just realB }
+    useCurrentSubgoal . buildJustification1 freshGoal $ Pi1Rule realX
+    return "Pi1 tactic applied."
+
+pi2Tac :: Maybe FunctionalTerm -> FunctionalTactic
+pi2Tac fa = do
     seq <- getCurrentSequent
     (realX, realA, realB) <- case (fa, goalTerm seq) of
         (Just (Pi x1 a1 b1), Nothing) -> return (x1, a1, b1)
@@ -247,12 +270,11 @@ piTac fa = do
             then return (x1, a1, b1)
             else tacError "Known goal term doesn't equal attempted goal term."
         _ -> tacError "Invalid application of tactic. Goal term or attempted term is not a Pi term."
-    --freshX <- getFreshVarAttempt realX
-    --let newB = functionalSubst realB (Var freshX) realX
+    extendedCtx <- safeInsertTacHelper realX realA $ functionalContext seq
     freshGoalLeft <- createNewSubgoal $ seq { goalTerm = Just realA }
-    freshGoalRight <- createNewSubgoal $ seq { functionalContext = Data.Map.insert realX realA $ functionalContext seq, goalTerm = Just realB }
-    useCurrentSubgoal . buildJustification2 freshGoalLeft freshGoalRight $ PiRule realX
-    return "Pi tactic applied."
+    freshGoalRight <- createNewSubgoal $ seq { functionalContext = extendedCtx, goalTerm = Just realB }
+    useCurrentSubgoal . buildJustification2 freshGoalLeft freshGoalRight $ Pi2Rule realX
+    return "Pi2 tactic applied."
 
 lambdaTac :: FunctionalTactic
 lambdaTac = do
@@ -263,7 +285,8 @@ lambdaTac = do
                 Just (Lambda x1 a1 m) -> if x1 /= x || a1 /= a then tacError "Invalid Lambda term for Pi type." else return . Just $ m
                 Just _ -> tacError "Expected Lambda term for Pi type."
                 Nothing -> return Nothing
-            freshGoal <- createNewSubgoal $ seq { goalTerm = realM, goalType = b, functionalContext = Data.Map.insert x a $ functionalContext seq }
+            extendedCtx <- safeInsertTacHelper x a (functionalContext seq)
+            freshGoal <- createNewSubgoal $ seq { goalTerm = realM, goalType = b, functionalContext = extendedCtx }
             useCurrentSubgoal . buildJustification1 freshGoal $ LambdaRule x
             return "Lambda tactic applied"
         _ -> tacError "Tactic cannot be used on non-Pi goal."
@@ -295,8 +318,9 @@ sigmaTac fa = do
         _ -> tacError "Invalid application of tactic. Goal term or attempted term is not a Pi term."
     --freshX <- getFreshVarAttempt realX
     --let newB = functionalSubst realB (Var freshX) realX
+    extendedCtx <- safeInsertTacHelper realX realA $ functionalContext seq
     freshGoalLeft <- createNewSubgoal $ seq { goalTerm = Just realA }
-    freshGoalRight <- createNewSubgoal $ seq { functionalContext = Data.Map.insert realX realA $ functionalContext seq, goalTerm = Just realB }
+    freshGoalRight <- createNewSubgoal $ seq { functionalContext = extendedCtx, goalTerm = Just realB }
     useCurrentSubgoal . buildJustification2 freshGoalLeft freshGoalRight $ SigmaRule realX
     return "Sigma tactic applied."
 
@@ -315,9 +339,10 @@ pairTac mMaybe nMaybe j = do
         _ -> tacError "Invalid terms supplied or found for pair tactic."
     (x, a, b) <- case goalType seq of
         Sigma x a b -> return (x, a, b)
+    extendedCtx <- safeInsertTacHelper x a (functionalContext seq)
     freshGoal1 <- createNewSubgoal $ seq { goalTerm = Just realMTerm, goalType = a }
     freshGoal2 <- createNewSubgoal $ seq { goalTerm = realNTerm, goalType = functionalSubst b realMTerm x }
-    freshGoal3 <- createNewSubgoal $ seq { functionalContext = M.insert x a (functionalContext seq), goalTerm = Just b, goalType = Type j }
+    freshGoal3 <- createNewSubgoal $ seq { functionalContext = extendedCtx, goalTerm = Just b, goalType = Type j }
     useCurrentSubgoal . buildJustification3 freshGoal1 freshGoal2 freshGoal3 $ PairRule x
     return "Pair tactic applied."
 
@@ -362,18 +387,15 @@ simpTac steps = do
         newGoal = L.last reductions
     freshGoalLeft <- createNewSubgoal $ seq { goalType = newGoal }
     case extractProofFromTermUnderCtx (functionalContext seq) (goalType seq) of -- Prove the original type was well formed
-        Right wfP ->
+        Right (_, wfP) ->
             case verifyFunctionalProofM wfP of
-                Right True -> case functionalConcl wfP of
-                        Right j -> (do
+                Right j -> (do
                             case FS.goalType j of
                                 Type j -> return ()
                                 _ -> tacError "Cannot simplify types that are not in a Type j universe."
                             useCurrentSubgoal . buildJustification1 freshGoalLeft $ (`CumulativiyRule` wfP)
                             return "Simp applied.")
-                        Left e -> tacError e
                 (Left e) -> tacError e
-                (Right False) -> tacError $ "Could not verify proof"
         Left e -> tacError e
 
 exactTac :: FunctionalTerm -> FunctionalTactic
@@ -381,13 +403,12 @@ exactTac ft = do
     seq <- getCurrentSequent
     let pMaybe = extractProofFromTermUnderCtx (functionalContext seq) ft
     p <- case pMaybe of
-        Right res -> return res
+        Right (_, res) -> return res
         Left e -> tacError e
     case verifyFunctionalProofM p of
-        Right True -> do
+        Right seq -> do
             useCurrentSubgoal . buildJustification0 $ p
             return "Exact tactic applied"
-        Right False -> tacError ("Could not extract valid proof from " ++ show ft)
         Left e -> tacError e
 
 exactKnownTac :: FunctionalTactic
@@ -421,7 +442,7 @@ applyFTacticM s t = s >>= (\s -> applyFTactic s t)
 -- ============================================================
 
 -- Start a theorem
-_FTheorem :: FunctionalContext -> FunctionalTerm -> S.Set String -> ProofState
+_FTheorem :: FunctionalContext SafeCtx -> FunctionalTerm -> S.Set String -> ProofState
 _FTheorem ctx g reserved =
     initializeState (initializeProof (FunctionalTacticsSequent
         { functionalContext = ctx
@@ -446,7 +467,7 @@ _FGetProof st = getProof st
 -- Core rules
 {-| Tactic: Apply the axiom tactic. Proving Prop:Type 0 -}
 _FAx :: FunctionalTactic
-_FAx = axTac
+_FAx = cTac
 
 {-| Tactic: Apply the well-formed tactic. Attempt to complete a full proof that the types in the context are well formed. -}
 -- _FWF :: FunctionalTactic
@@ -460,9 +481,13 @@ _FVar = varTac
 _FVarA :: FunctionalTactic
 _FVarA = varATac
 
-{-| Tactic: For goals of the form (Pi x: A . B) : L. Supply the sort of A, and A if it is not known.  -}
-_FPi :: Maybe FunctionalTerm -> FunctionalTactic
-_FPi = piTac
+{-| Tactic: For goals of the form (Pi x:A . B) : Prop. Supply the Pi term if it is not known. -}
+_FPi1 :: Maybe FunctionalTerm -> FunctionalTactic
+_FPi1 = pi1Tac
+
+{-| Tactic: For goals of the form (Pi x: A . B) : Type_j. Supply the Pi term if it is not known.  -}
+_FPi2 :: Maybe FunctionalTerm -> FunctionalTactic
+_FPi2 = pi2Tac
 
 {-| Tactic: For goals of the form (\x:A.N):(Pi x:A.B) -}
 _FLambda :: FunctionalTactic
