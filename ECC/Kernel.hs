@@ -8,6 +8,10 @@ module ECC.Kernel (FunctionalSequent(functionalContext,goalType,goalTerm)
     , getFunctionalContextNames
     , emptyContext
     , ctxLookup
+    , ctxEitherLookup
+    , ctxMember
+    , ctxKeys
+    , ctxDelete
     , extractProofFromTermUnderCtx
     , safeInsert
     , functionalFreeVariables
@@ -20,7 +24,6 @@ module ECC.Kernel (FunctionalSequent(functionalContext,goalType,goalTerm)
     , functionalRename
     , getFunctionalProofNames
     , substVarFunctional
-    , renameVarInFnProof
     , foldFunctionalProof
     , getFunctionalContextFreeNames
     , renameVarInFnCtx
@@ -153,7 +156,7 @@ alphaConvert (Pair t1 t2 x ty1 ty2) names =
         Pair t1 t2 z ty1 (functionalRename t2 z x)
 alphaConvert t names = t
 
-{-| B{N/x} replace x with n in b 
+{-| B{N/x} replace x with n in b . Avoids capturing.
 
 >>> functionalSubst (Var "x") (Var "y") "x"
 y
@@ -235,7 +238,7 @@ ctxToList :: TaggedFunctionalContext a -> [(String, FunctionalTerm)]
 ctxToList (TaggedFunctionalContext c) = c
 
 emptyContext :: TaggedFunctionalContext SafeCtx
-emptyContext = TaggedFunctionalContext {judgments =[]}
+emptyContext = TaggedFunctionalContext { judgments = [] }
 
 unsafeInsert :: String -> FunctionalTerm -> TaggedFunctionalContext a -> TaggedFunctionalContext UnsafeCtx
 unsafeInsert x t c = c { judgments= (x,t):judgments c }
@@ -244,6 +247,12 @@ ctxLookup :: String -> TaggedFunctionalContext a -> Maybe FunctionalTerm
 ctxLookup x (TaggedFunctionalContext []) = Nothing
 ctxLookup x (TaggedFunctionalContext ((h,t):rest)) | x == h = return t
 ctxLookup x (TaggedFunctionalContext ((h,t):rest))  = ctxLookup x (TaggedFunctionalContext { judgments = rest })
+
+ctxMember :: String -> TaggedFunctionalContext a -> Bool
+ctxMember x ctx = case ctxLookup x ctx of Just _ -> True; Nothing -> False
+
+ctxKeys :: TaggedFunctionalContext a -> [String]
+ctxKeys ctx = fst <$> judgments ctx
 
 ctxEitherLookup :: String -> TaggedFunctionalContext a -> Either String FunctionalTerm
 ctxEitherLookup x c = case ctxLookup x c of
@@ -255,6 +264,16 @@ getFunctionalContextNames c = S.fromList (fst <$> judgments c) `S.union` S.union
 
 getFunctionalContextFreeNames :: TaggedFunctionalContext a -> S.Set String
 getFunctionalContextFreeNames c = S.fromList (fst <$> judgments c) `S.union` S.unions (functionalFreeVariables . snd <$> judgments c)
+
+ctxDelete :: String -> FunctionalContext -> Either String FunctionalContext
+ctxDelete x ctx = 
+    let
+        beforeXJudgments = L.takeWhile (\(k,v) -> k /= x) $ judgments ctx
+        afterXJudgments = L.drop 1 $ L.dropWhile (\(k,v) -> k /= x) $ judgments ctx
+        freeVarsBeforeX = S.unions $ (\(k, v) -> functionalFreeVariables v) <$> beforeXJudgments
+        newCtx = TaggedFunctionalContext $ beforeXJudgments ++ afterXJudgments
+    in
+        if x `S.member` freeVarsBeforeX then Left ("Judgments depend on " ++ x) else return newCtx
 
 data FunctionalSequent = FunctionalSequent {
     functionalContext :: TaggedFunctionalContext SafeCtx,
@@ -335,11 +354,11 @@ getFunctionalProofFreeNames (CRule ctx) = getFunctionalContextFreeNames ctx
 getFunctionalProofFreeNames (TRule i ctx) = getFunctionalContextFreeNames ctx
 getFunctionalProofFreeNames (VarRule x ctx) = S.singleton x `S.union` getFunctionalContextFreeNames ctx
 getFunctionalProofFreeNames (Pi1Rule x p) = S.delete x $ getFunctionalProofFreeNames p
-getFunctionalProofFreeNames (Pi2Rule x p1 p2) = getFunctionalProofFreeNames p2 `S.union` S.delete x $ getFunctionalProofFreeNames p2
+getFunctionalProofFreeNames (Pi2Rule x p1 p2) = getFunctionalProofFreeNames p2 `S.union` S.delete x (getFunctionalProofFreeNames p2)
 getFunctionalProofFreeNames (LambdaRule x p) = S.delete x $ getFunctionalProofFreeNames p
-getFunctionalProofFreeNames (App p1 p2) = getFunctionalProofFreeNames p1 `S.union` getFunctionalProofFreeNames p2
-getFunctionalProofFreeNames (SigmaRule x p1 p2) = getFunctionalProofFreeNames p2 `S.union` S.delete x $ getFunctionalProofFreeNames p2
-getFunctionalProofFreeNames (PairRule x p1 p2 p3) = getFunctionalProofFreeNames p1 `S.union` getFunctionalProofFreeNames p2 `S.union` S.delete x $ getFunctionalProofFreeNames p3
+getFunctionalProofFreeNames (AppRule p1 p2) = getFunctionalProofFreeNames p1 `S.union` getFunctionalProofFreeNames p2
+getFunctionalProofFreeNames (SigmaRule x p1 p2) = getFunctionalProofFreeNames p2 `S.union` S.delete x (getFunctionalProofFreeNames p2)
+getFunctionalProofFreeNames (PairRule x p1 p2 p3) = getFunctionalProofFreeNames p1 `S.union` getFunctionalProofFreeNames p2 `S.union` S.delete x (getFunctionalProofFreeNames p3)
 getFunctionalProofFreeNames (Proj1Rule p) = getFunctionalProofFreeNames p
 getFunctionalProofFreeNames (Proj2Rule p) = getFunctionalProofFreeNames p
 getFunctionalProofFreeNames (CumulativiyRule p1 p2) = getFunctionalProofFreeNames p1 `S.union` getFunctionalProofFreeNames p2
@@ -347,43 +366,49 @@ getFunctionalProofFreeNames (CumulativiyRule p1 p2) = getFunctionalProofFreeName
 {-| renameVarInFnCtx ctx x y = ctx[x/y]. Rename y with x in ctx. Avoids capturing. -}
 renameVarInFnCtx :: S.Set String -> FunctionalContext -> String -> String -> FunctionalContext
 renameVarInFnCtx vars ctx x y =
-    if not $ x `S.member`getFunctionalContextFreeNames ctx
-    then TaggedFunctionalContext { judgments = (\(y1, ty) -> (if y1 == y then x else y1, substVarFunctional ty x y)) <$> judgments ctx} -- x is not a free name in the context, and will not clash.
+    if not $ x `S.member` (getFunctionalContextFreeNames ctx `S.union` vars)
+    then TaggedFunctionalContext { judgments = (\(y1, ty) -> (if y1 == y then x else y1, substVarFunctional ty x y)) <$> judgments ctx } -- x is not a free name in the context, and will not clash.
     else renameVarInFnCtx vars (renameVarInFnCtx vars ctx newFreshName x) x y -- x is free, so it must be renamed first.
     where
         newFreshName = getFreshName $ S.fromList [x, y] `S.union` getFunctionalContextNames ctx
 
-{-| renameVarInProof p x y = P[x/y]. Rename y with x in proof P. Avoids capturing -}
-renameVarInProof :: FunctionalProof -> String -> String -> FunctionalProof
-renameVarInProof p x y =
-    let
+{-| renameVarInProof p x y = P[x/y]. Rename y with x in proof P. Avoids capturing. -}
+renameVarInProof :: S.Set String -> FunctionalProof -> String -> String -> FunctionalProof
+renameVarInProof vars p x y =
+    if not $ x `S.member` (getFunctionalProofFreeNames p `S.union` vars)
+    then
+    (let
         allNamesConsidered = S.fromList [x, y] `S.union` getFunctionalProofNames p
         freshName = getFreshName allNamesConsidered
-    in 
+    in
         case p of
-            CRule c -> CRule $ renameVarInFnCtx c x y
-            TRule i c -> TRule i $ renameVarInFnCtx c x y
-            VarRule z c -> VarRule (if z == y then x else z) (renameVarInFnCtx c x y)
+            CRule c -> CRule $ renameVarInFnCtx vars c x y
+            TRule i c -> TRule i $ renameVarInFnCtx vars c x y
+            VarRule z c -> VarRule (if z == y then x else z) (renameVarInFnCtx vars c x y)
             Pi1Rule z p1 -> if y == z then Pi1Rule z p1 -- y is captured
-                else if x == z then renameVarInProof (Pi1Rule freshName (renameVarInProof p1 freshName z)) x y -- x will get captured
-                else Pi1Rule z $ renameVarInProof p x y
-            Pi2Rule z p1 p2 -> if y == z then Pi2Rule z (renameVarInProof p1 x y) p2 -- y is captured
-                else if x == z then renameVarInProof (Pi2Rule freshName p1 (renameVarInProof p2 freshName z)) x y -- x will get captured
-                else Pi2Rule z (renameVarInProof p1 x y) (renameVarInProof p2 x y)
+                else if x == z then renameVarInProof vars (Pi1Rule freshName (renameVarInProof vars p1 freshName z)) x y -- x will get captured
+                else Pi1Rule z $ renameVarInProof vars p x y
+            Pi2Rule z p1 p2 -> if y == z then Pi2Rule z (renameVarInProof vars p1 x y) p2 -- y is captured
+                else if x == z then renameVarInProof vars (Pi2Rule freshName p1 (renameVarInProof vars p2 freshName z)) x y -- x will get captured
+                else Pi2Rule z (renameVarInProof vars p1 x y) (renameVarInProof vars p2 x y)
             LambdaRule z p1 -> if y == z then LambdaRule z p1 -- y is captured
-                else if x == z then renameVarInProof (LambdaRule freshName (renameVarInProof p freshName z)) x y -- x will get captured
-                else LambdaRule z $ renameVarInProof p x y
-            AppRule p1 p2 -> AppRule (renameVarInProof p1 x y) (renameVarInProof p2 x y)
-            SigmaRule z p1 p2 -> if y == z then SigmaRule z (renameVarInProof p1 x y) p2 -- y is captured
-                else if x == z then renameVarInProof (SigmaRule freshName p1 (renameVarInProof p2 freshName z)) x y -- x will get captured
-                else SigmaRule z (renameVarInProof p1 x y) (renameVarInProof p2 x y)
-            PairRule z p1 p2 p3 -> if y == z then PairRule z (renameVarInProof p1 x y) (renameVarInProof p2 x y) p3 -- y is captured
-                else if x == z then renameVarInProof (PairRule freshName p1 p2 (renameVarInProof p3 freshName z)) x y -- x will get captured
-                else PairRule z (renameVarInProof p1 x y) (renameVarInProof p2 x y) (renameVarInProof p3 x y)
-            Proj1Rule p1 -> Proj1Rule $ renameVarInProof p1 x y
-            Proj2Rule p1 -> Proj2Rule $ renameVarInProof p1 x y
-            CumulativiyRule p1 p2 -> CumulativiyRule (renameVarInProof p1 x y) (renameVarInProof p2 x y)
-
+                else if x == z then renameVarInProof vars (LambdaRule freshName (renameVarInProof vars p freshName z)) x y -- x will get captured
+                else LambdaRule z $ renameVarInProof vars p x y
+            AppRule p1 p2 -> AppRule (renameVarInProof vars p1 x y) (renameVarInProof vars p2 x y)
+            SigmaRule z p1 p2 -> if y == z then SigmaRule z (renameVarInProof vars p1 x y) p2 -- y is captured
+                else if x == z then renameVarInProof vars (SigmaRule freshName p1 (renameVarInProof vars p2 freshName z)) x y -- x will get captured
+                else SigmaRule z (renameVarInProof vars p1 x y) (renameVarInProof vars p2 x y)
+            PairRule z p1 p2 p3 -> if y == z then PairRule z (renameVarInProof vars p1 x y) (renameVarInProof vars p2 x y) p3 -- y is captured
+                else if x == z then renameVarInProof vars (PairRule freshName p1 p2 (renameVarInProof vars p3 freshName z)) x y -- x will get captured
+                else PairRule z (renameVarInProof vars p1 x y) (renameVarInProof vars p2 x y) (renameVarInProof vars p3 x y)
+            Proj1Rule p1 -> Proj1Rule $ renameVarInProof vars p1 x y
+            Proj2Rule p1 -> Proj2Rule $ renameVarInProof vars p1 x y
+            CumulativiyRule p1 p2 -> CumulativiyRule (renameVarInProof vars p1 x y) (renameVarInProof vars p2 x y))
+    else
+    (let
+        newFreshName = getFreshName $ S.fromList [x, y] `S.union` getFunctionalProofNames p
+    in
+        renameVarInProof vars (renameVarInProof vars p newFreshName x) x y)
 {-| Take one beta reduction if possible. Nothing otherwise.
     Implements the non-reflexive non-symmetric conversion rules
     of the calculus of constructions.
@@ -691,7 +716,7 @@ verifyFunctionalProof p =  case verifyFunctionalProofM p of
     Right _ -> True
     _ -> False
 
-{-| P{x/u} replace free occurances of u with x in P.
+{-| P{x/u} replace free occurances of u with x in P. Avoids capturing.
 >>> substVarFunctional (Lambda "x" (Var "y") (Var "x")) "z" "x"
 Lambda "x" (Var "y") (Var "x")
 

@@ -13,7 +13,7 @@ import qualified Data.Map as Map
 import qualified Data.Set as S
 import Parser.TermParsers (proposition, fTerm, process)
 import Data.Functor ((<&>))
-import ECC.Tactics (FunctionalTactic, _FAx, _FVarA, _FVar, _FRepeat, _FAlt, _FThen, _FPi, _FLambda, _FApp, _FSigma, _FPair, _FProj1, _FProj2, _FCumulativity, _FSimp, _FExactKnown, _FExact, _FSkip)
+import ECC.Tactics (FunctionalTactic, _FAx, _FVarA, _FVar, _FRepeat, _FAlt, _FThen, _FPi1, _FPi2, _FLambda, _FApp, _FSigma, _FPair, _FProj1, _FProj2, _FCumulativity, _FSimp, _FExactKnown, _FExact, _FSkip)
 import Utils.Display (printCommands)
 
 -- ==========================================
@@ -176,7 +176,8 @@ parseFunctionalTacticAtom :: Parser (FunctionalTactic)
 parseFunctionalTacticAtom = parens parseFunctionalTacticsExpression
     <|> parseSimpleFunctionalTactics
     <|> parseSingleStringArgFunctionalTactics
-    <|> parsePi
+    <|> parsePi1
+    <|> parsePi2
     <|> parseApp
     <|> parseSigma
     <|> parsePair
@@ -315,11 +316,17 @@ parseByProc = do
 -- Complex functional tactics
 -- ==========================================
 
-parsePi :: Parser (FunctionalTactic)
-parsePi = do
-    reserved "Pi"
+parsePi1 :: Parser (FunctionalTactic)
+parsePi1 = do
+    reserved "Pi1"
     a <- optionMaybe $ quotes fTerm
-    return (_FPi a)
+    return (_FPi1 a)
+
+parsePi2 :: Parser (FunctionalTactic)
+parsePi2 = do
+    reserved "Pi2"
+    a <- optionMaybe $ quotes fTerm
+    return (_FPi2 a)
 
 parseApp :: Parser (FunctionalTactic)
 parseApp = do
