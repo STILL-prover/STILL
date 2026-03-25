@@ -837,7 +837,7 @@ tyVarTac x zs = do
                 boundSeqRenamedLCContext = L.foldl (\acc (y, z) -> substVarContext acc z y) (bindingLC xSeq) yzs
                 boundSeqRenamedChannel = L.foldl (\curVar (y, z) -> if curVar == y then z else curVar) (bindingChan xSeq) yzs
             when (boundSeqRenamedTyVarContext /= tyVarContext seq) $ tacError "Invalid tyvar contexts."
-            when (boundSeqRenamedFnContext /= fnContext seq) $ tacError "Invalid functional contexts."
+            when (boundSeqRenamedFnContext /= fnContext seq) $ tacError $ "Invalid functional contexts: " ++ show (ctxToList boundSeqRenamedFnContext) ++ " and " ++ show (ctxToList (fnContext seq))
             when (boundSeqRenamedUCContext /= unrestrictedContext seq) $ tacError "Invalid unrestricted contexts."
             when (boundSeqRenamedLCContext /= S.foldl (flip Data.Map.delete) (linearContext seq) unavailVars) $ tacError ("Invalid linear contexts:\n" ++ show boundSeqRenamedLCContext ++ "\n\n" ++ show (S.foldl (flip Data.Map.delete) (linearContext seq) unavailVars))
             when (boundSeqRenamedChannel /= channel seq) $ tacError "Invalid channel."
@@ -890,6 +890,20 @@ useModuleProofTac mName tName = do
             else tacError ("Conclusion of the theorem does not match the current goal:\nExpected: " ++ seqToS seq ++ "\nFound: " ++ seqToS conclusion)
             return $ "Applied theorem " ++ mName ++ "." ++ tName)
 
+{-|
+    Returns the renaming required for assumptions. The empty string is the
+    renaming if searching fails.
+-}
+getAssumptionRenamingForTheorem :: Sequent -> Sequent -> [(String, String)]
+getAssumptionRenamingForTheorem theoremSeq curSeq = Data.Map.foldlWithKey' (\acc k v -> (k, getMatch acc v):acc) [] $ linearContext theoremSeq
+        where
+            availAssumptions = linearContext curSeq
+            getMatches acc prop = Data.Map.toList (Data.Map.filterWithKey (\k v -> v == prop && (k `L.notElem` (fst <$> acc))) availAssumptions)
+            getMatch acc prop = if L.null (getMatches acc prop) then "" else fst . L.head $ getMatches acc prop
+
+applyAssumptionRenamingForTheorem :: [(String, String)] -> Proof -> Proof
+applyAssumptionRenamingForTheorem renaming p = L.foldl' (\newP (prev, next) -> renameVarInProof newP next prev) p renaming
+
 cutLinearTheoremTac :: String -> Tactic
 cutLinearTheoremTac theoremName = do
     seq <- getCurrentSequent
@@ -905,14 +919,20 @@ cutLinearTheoremTac theoremName = do
         allNames = S.union otherNames curNames
         freshName = getFreshName allNames
     newChan <- getFreshVarAttempt freshName
-    let newRenamedProof = renameVarInProof theorem newChan (channel conclusion)
+    let channelRenamedProof = renameVarInProof theorem newChan (channel conclusion)
+    (_, channelRenamedProofSeq) <- liftEither $ verifyProofM channelRenamedProof
+    let assumptionNamingRequirements = getAssumptionRenamingForTheorem channelRenamedProofSeq seq
+        newRenamedProof = applyAssumptionRenamingForTheorem assumptionNamingRequirements  channelRenamedProof
         weakenedUnrestrictedProof = L.foldl' (\proof (k, prop) -> ReplWeakening k prop proof) newRenamedProof (Data.Map.toList (unrestrictedContext seq)) -- Add everything needed for the unrestricted context.
-        weakenedFnProof = L.foldl' (\proof (k, term) -> FnWeakening k term proof) weakenedUnrestrictedProof (ctxToList (fnContext seq)) -- Add everything needed for the functional context.
+        weakenedFnProof = L.foldl' (\proof (k, term) -> FnWeakening k term proof) weakenedUnrestrictedProof (reverse (ctxToList (fnContext seq))) -- Add everything needed for the functional context.
         weakenedTyVarProof = L.foldl' (\proof (k) -> TyVarWeakening k proof) weakenedFnProof (S.toList (tyVarContext seq)) -- Add everything needed for the type variable context.
         weakenedRecBindProof = L.foldl' (\proof (k, b) -> RecBindingWeakening k b proof) weakenedTyVarProof (Data.Map.toList (recursiveBindings seq)) -- Add everything needed for the recursive binding context.
+    when (L.any (\(prev, next) -> next == "") assumptionNamingRequirements) (tacError "Could not find the necessary assumptions to use for the theorem!")
     newConclusion <- case verifyProofM weakenedRecBindProof of Left e -> tacError ("Could not get conclusion of the renamed variable theorem: " ++ e); Right (_, c) -> return c
-    freshGoal <- createNewSubgoal (seq { linearContext = Data.Map.insert newChan (goalProposition newConclusion) (linearContext seq) })
-    useCurrentSubgoal Multiplicative . buildJustification1 freshGoal $ CutRule newRenamedProof
+    reserveVars (snd <$> assumptionNamingRequirements)
+    let deletedReservedFromLinear = L.foldl' (flip Data.Map.delete) (linearContext seq) (snd <$> assumptionNamingRequirements)
+    freshGoal <- createNewSubgoal (seq { linearContext = Data.Map.insert newChan (goalProposition newConclusion) deletedReservedFromLinear })
+    useCurrentSubgoal Multiplicative . buildJustification1 freshGoal $ CutRule weakenedRecBindProof
     invalidateNameCache
     return $ "Linear theorem cut tactic applied: " ++ propToS (goalProposition conclusion)
 

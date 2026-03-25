@@ -27,7 +27,10 @@ module ECC.Kernel (FunctionalSequent(functionalContext,goalType,goalTerm)
     , foldFunctionalProof
     , getFunctionalContextFreeNames
     , renameVarInFnCtx
-    , renameVarInProof) where
+    , renameVarInProof
+    , alphaEquivalentWithRenamings
+    , alphaEquivalent
+    , alphaEquivalentContexts) where
 
 import qualified Data.Set as S
 import qualified Data.Map as M
@@ -35,6 +38,8 @@ import qualified Data.List as L
 import Utils.Misc
 import Data.Maybe (fromMaybe)
 import Control.Monad (when, unless)
+import qualified Debug.Trace as DBG
+import Control.Monad.State (State, MonadState (get, put), evalState)
 
 data FunctionalTerm = Type Integer
     | Prop
@@ -47,7 +52,35 @@ data FunctionalTerm = Type Integer
     | Proj1 FunctionalTerm
     | Proj2 FunctionalTerm
     | FHoleTerm
-    deriving (Eq, Show, Read, Ord)
+    deriving (Show, Read)
+
+alphaEquivalentWithRenamings :: [(String, String)] -> FunctionalTerm -> FunctionalTerm -> Bool
+alphaEquivalentWithRenamings ren t1 t2 = go ren (t1, t2)
+    where
+        go :: [(String, String)] -> (FunctionalTerm, FunctionalTerm) -> Bool
+        go ren (Type i, Type j) = i == j
+        go ren (Prop, Prop) = True
+        go ren (Var x1, Var x2) = eqName ren x1 x2
+        go ren (App m1 n1, App m2 n2) = go ren (m1, m2) && go ren (n1, n2)
+        go ren (Lambda x1 m1 n1, Lambda x2 m2 n2) = go ren (m1, m2) && go ((x1, x2):ren) (n1, n2)
+        go ren (Pi x1 m1 n1, Pi x2 m2 n2) = go ren (m1, m2) && go ((x1, x2):ren) (n1, n2)
+        go ren (Sigma x1 m1 n1, Sigma x2 m2 n2) = go ren (m1, m2) && go ((x1, x2):ren) (n1, n2)
+        go ren (Pair m1 n1 x1 a1 b1, Pair m2 n2 x2 a2 b2) = go ren (m1, m2) && go ren (n1, n2) && go ren (a1, a2) && go ((x1, x2):ren) (b1, b2)
+        go ren (Proj1 m1, Proj1 m2) = go ren (m1, m2)
+        go ren (Proj2 m1, Proj2 m2) = go ren (m1, m2)
+        go ren (FHoleTerm, FHoleTerm) = True
+        go ren _ = False
+
+        eqName [] x1 x2                                     = x1 == x2
+        eqName ((r1,r2):rest) x1 x2  | r1 == x1 && r2 == x2 = True
+        eqName ((r1, r2):rest) x1 x2 | r1 == x1 || r2 == x2 = False
+        eqName ((r1, r2):rest) x1 x2 | r1 /= x1 && r2 /= x2 = eqName rest x1 x2
+
+alphaEquivalent :: FunctionalTerm -> FunctionalTerm -> Bool
+alphaEquivalent = alphaEquivalentWithRenamings []
+
+instance Eq FunctionalTerm where
+    ft1 == ft2 = alphaEquivalent ft1 ft2
 
 ftToS :: FunctionalTerm -> String
 ftToS (Type i) = "Type " ++ show i
@@ -221,7 +254,11 @@ data UnsafeCtx
 
 {-| Make it so the TaggedFunctionalContext can only be constructed in a well-formed manner. -}
 newtype TaggedFunctionalContext a = TaggedFunctionalContext { judgments::[(String, FunctionalTerm)] }
-    deriving (Show, Eq, Ord, Read)
+    deriving (Show, Read)
+
+instance Eq (TaggedFunctionalContext a) where
+    (==) :: forall k (a :: k). TaggedFunctionalContext a -> TaggedFunctionalContext a -> Bool
+    TaggedFunctionalContext ctx1 == TaggedFunctionalContext ctx2 = M.fromList ctx1 == M.fromList ctx2
 
 type FunctionalContext = TaggedFunctionalContext SafeCtx
 
@@ -279,7 +316,7 @@ data FunctionalSequent = FunctionalSequent {
     functionalContext :: TaggedFunctionalContext SafeCtx,
     goalTerm :: FunctionalTerm,
     goalType :: FunctionalTerm
-} deriving (Show, Eq, Ord, Read)
+} deriving (Show, Eq, Read)
 
 getFunctionalSequentNames :: FunctionalSequent -> S.Set String
 getFunctionalSequentNames (FunctionalSequent fc gt gTy) = functionalNames gTy `S.union` functionalNames gt `S.union` getFunctionalContextNames fc
@@ -366,19 +403,19 @@ getFunctionalProofFreeNames (CumulativiyRule p1 p2) = getFunctionalProofFreeName
 {-| renameVarInFnCtx ctx x y = ctx[x/y]. Rename y with x in ctx. Avoids capturing. -}
 renameVarInFnCtx :: S.Set String -> FunctionalContext -> String -> String -> FunctionalContext
 renameVarInFnCtx vars ctx x y =
-    if not $ x `S.member` (getFunctionalContextFreeNames ctx `S.union` vars)
+    if not $ x `S.member` (getFunctionalContextFreeNames ctx)
     then TaggedFunctionalContext { judgments = (\(y1, ty) -> (if y1 == y then x else y1, substVarFunctional ty x y)) <$> judgments ctx } -- x is not a free name in the context, and will not clash.
     else renameVarInFnCtx vars (renameVarInFnCtx vars ctx newFreshName x) x y -- x is free, so it must be renamed first.
     where
-        newFreshName = getFreshName $ S.fromList [x, y] `S.union` getFunctionalContextNames ctx
+        newFreshName = getFreshName $ S.fromList [x, y] `S.union` getFunctionalContextNames ctx `S.union` vars
 
 {-| renameVarInProof p x y = P[x/y]. Rename y with x in proof P. Avoids capturing. -}
 renameVarInProof :: S.Set String -> FunctionalProof -> String -> String -> FunctionalProof
 renameVarInProof vars p x y =
-    if not $ x `S.member` (getFunctionalProofFreeNames p `S.union` vars)
+    if not $ x `S.member` (getFunctionalProofFreeNames p)
     then
     (let
-        allNamesConsidered = S.fromList [x, y] `S.union` getFunctionalProofNames p
+        allNamesConsidered = S.fromList [x, y] `S.union` getFunctionalProofNames p `S.union` vars
         freshName = getFreshName allNamesConsidered
     in
         case p of
@@ -387,13 +424,13 @@ renameVarInProof vars p x y =
             VarRule z c -> VarRule (if z == y then x else z) (renameVarInFnCtx vars c x y)
             Pi1Rule z p1 -> if y == z then Pi1Rule z p1 -- y is captured
                 else if x == z then renameVarInProof vars (Pi1Rule freshName (renameVarInProof vars p1 freshName z)) x y -- x will get captured
-                else Pi1Rule z $ renameVarInProof vars p x y
+                else Pi1Rule z $ renameVarInProof vars p1 x y
             Pi2Rule z p1 p2 -> if y == z then Pi2Rule z (renameVarInProof vars p1 x y) p2 -- y is captured
                 else if x == z then renameVarInProof vars (Pi2Rule freshName p1 (renameVarInProof vars p2 freshName z)) x y -- x will get captured
                 else Pi2Rule z (renameVarInProof vars p1 x y) (renameVarInProof vars p2 x y)
             LambdaRule z p1 -> if y == z then LambdaRule z p1 -- y is captured
-                else if x == z then renameVarInProof vars (LambdaRule freshName (renameVarInProof vars p freshName z)) x y -- x will get captured
-                else LambdaRule z $ renameVarInProof vars p x y
+                else if x == z then renameVarInProof vars (LambdaRule freshName (renameVarInProof vars p1 freshName z)) x y -- x will get captured
+                else LambdaRule z $ renameVarInProof vars p1 x y
             AppRule p1 p2 -> AppRule (renameVarInProof vars p1 x y) (renameVarInProof vars p2 x y)
             SigmaRule z p1 p2 -> if y == z then SigmaRule z (renameVarInProof vars p1 x y) p2 -- y is captured
                 else if x == z then renameVarInProof vars (SigmaRule freshName p1 (renameVarInProof vars p2 freshName z)) x y -- x will get captured
@@ -406,7 +443,7 @@ renameVarInProof vars p x y =
             CumulativiyRule p1 p2 -> CumulativiyRule (renameVarInProof vars p1 x y) (renameVarInProof vars p2 x y))
     else
     (let
-        newFreshName = getFreshName $ S.fromList [x, y] `S.union` getFunctionalProofNames p
+        newFreshName = getFreshName $ S.fromList [x, y] `S.union` getFunctionalProofNames p `S.union` vars
     in
         renameVarInProof vars (renameVarInProof vars p newFreshName x) x y)
 {-| Take one beta reduction if possible. Nothing otherwise.
@@ -552,13 +589,12 @@ extractProofFromTermUnderCtx ctx (Pi a ty t) = do
     tyP <- extractProofFromTermUnderCtx ctx ty
     let tPConcl = fst tP
         tyPConcl = fst tyP
-    typeCheckedType <- (case (tPConcl, tyPConcl) of
+    case (tPConcl, tyPConcl) of
             (Prop, Prop) -> return (Prop, Pi1Rule a (snd tP))
             (Prop, Type i) -> return (Prop, Pi1Rule a (snd tP))
             (Type i, Type j) -> return $ (Type (max i j), Pi2Rule a (snd tyP) (snd tP))
             (Type i, Prop) -> return $ (Type i, Pi2Rule a (snd tyP) (CumulativiyRule (snd tP) (TRule i ctx)))
-            _ -> Left ("Pi type does not have types as expected. Got: " ++ ftToS ty ++ ":" ++ ftToS tyPConcl ++ " and " ++ ftToS t ++ ":" ++ ftToS tPConcl))
-    return typeCheckedType
+            _ -> Left ("Pi type does not have types as expected. Got: " ++ ftToS ty ++ ":" ++ ftToS tyPConcl ++ " and " ++ ftToS t ++ ":" ++ ftToS tPConcl)
 extractProofFromTermUnderCtx ctx (Lambda a ty t) = do
     newCtx <- safeInsert a ty ctx
     tP <- extractProofFromTermUnderCtx newCtx t
@@ -751,3 +787,11 @@ implication sfx = Pi ("_" ++ sfx)
 
 sigma :: String -> String -> FunctionalTerm -> FunctionalTerm -> FunctionalTerm
 sigma sfx x a b = Pi "_c" Prop (implication sfx (Pi x a (implication sfx b (Var "_c"))) (Var "_c"))
+
+alphaEquivalentContexts :: FunctionalContext -> FunctionalContext -> Bool
+alphaEquivalentContexts ctx1 ctx2 = let
+    ctx1Map = M.fromList $ judgments ctx1
+    ctx2Map = M.fromList $ judgments ctx2
+    ctx1Subset2 = M.foldlWithKey' (\acc k v -> case M.lookup k ctx2Map of Just res -> acc && alphaEquivalent v res; Nothing -> False) True ctx1Map
+    ctx2Subset1 = M.foldlWithKey' (\acc k v -> case M.lookup k ctx1Map of Just res -> acc && alphaEquivalent v res; Nothing -> False) True ctx2Map
+    in ctx1Subset2 && ctx2Subset1

@@ -40,8 +40,10 @@ done
 theorem allTogether: "1"
 apply CutTheorem sharedServer
 apply BangLA
-apply CutTheorem qclient
-apply CutTheorem bclient
+apply Copy b
+apply Copy b
+apply CutTheorem qclientbody
+apply CutTheorem bclientbody
 apply UnitLA+
 apply UnitR
 done

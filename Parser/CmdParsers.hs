@@ -318,13 +318,13 @@ parseByProc = do
 
 parsePi1 :: Parser (FunctionalTactic)
 parsePi1 = do
-    reserved "Pi1"
+    reserved "PiProp"
     a <- optionMaybe $ quotes fTerm
     return (_FPi1 a)
 
 parsePi2 :: Parser (FunctionalTactic)
 parsePi2 = do
-    reserved "Pi2"
+    reserved "Pi"
     a <- optionMaybe $ quotes fTerm
     return (_FPi2 a)
 

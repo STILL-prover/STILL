@@ -1,5 +1,8 @@
 -- R. Milner, Communicating and mobile systems: the pi-calculus, 7. print. Cambridge: Cambridge Univ. Press, 2010.
 module Semaphore begin
+
+assume signal is "Type 0"
+
 -- :theorem "unarytest" Forall "p" (Var "signal") (Forall "v" (Var "signal") (TyNu "Y" (Forall "p" (Var "signal") (Forall "v" (Var "signal") (TyVar "Y")))))
 theorem unarytest: "forall p:signal . forall v:signal . nu Y . forall p:signal . forall v:signal . Y"
 apply Intros
