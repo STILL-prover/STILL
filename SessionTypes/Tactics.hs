@@ -10,7 +10,35 @@ import qualified Data.List as L
 import Control.Monad (mplus, when, unless)
 import Text.Read (readMaybe)
 import Data.Maybe (isJust, fromMaybe, isNothing, fromJust, listToMaybe)
-import ECC.Kernel
+import ECC.Kernel (FunctionalSequent(functionalContext,goalType,goalTerm)
+    , FunctionalContext
+    , FunctionalTerm(..)
+    , FunctionalProof(..)
+    , ftToS
+    , ctxToList
+    , functionalNames
+    , getFunctionalContextNames
+    , emptyContext
+    , ctxLookup
+    , ctxEitherLookup
+    , ctxMember
+    , ctxKeys
+    , ctxDelete
+    , extractProofFromTermUnderCtx
+    , safeInsert
+    , functionalFreeVariables
+    , alphaConvert
+    , functionalSubst
+    , cumulativiyRelation
+    , allConversionSteps
+    , verifyFunctionalProofM
+    , abstTermFunctional
+    , functionalRename
+    , getFunctionalProofNames
+    , substVarFunctional
+    , foldFunctionalProof
+    , getFunctionalContextFreeNames
+    , renameVarInFnCtx)
 import qualified ECC.Tactics as FT
 import Utils.Misc
 import SessionTypes.Kernel
@@ -78,7 +106,7 @@ data ProofState = S {
     newSubgoalNameList :: [String],
     cachedVarNames :: [String],
     stypeDecls :: [(String, Proposition)],
-    fnAssumptions :: [(String, FunctionalTerm)],
+    fnAssumptions :: FunctionalContext,
     procAssumptions :: [(String, Proposition)],
     stypeAssumptions :: [String],
     errors :: [String]
@@ -180,13 +208,13 @@ invalidateNameCache = ST.modify (\s -> s { cachedProofStateNames = S.empty })
 lookupVarName :: String -> ProverState String
 lookupVarName x = return x
 
-initializeSequent :: [String] -> [(String, FunctionalTerm)] -> [Proposition] -> Proposition -> Sequent
+initializeSequent :: [String] -> FunctionalContext -> [Proposition] -> Proposition -> Sequent
 initializeSequent assumedSessionTypes assumedTerms consumedProps p = let
-    termNames = S.fromList (fst <$> assumedTerms) `S.union` S.unions (functionalNames . snd <$> assumedTerms)
+    termNames = getFunctionalContextNames assumedTerms
     currentAllNames = S.insert "z" $ S.fromList assumedSessionTypes `S.union` termNames `S.union` S.unions (propNames <$> (p:consumedProps))
     resourceNames = L.filter (\n -> not $ n `S.member` currentAllNames) namesInOrder
     linearProps = zip resourceNames consumedProps
-    in Sequent { tyVarContext = S.fromList assumedSessionTypes, fnContext = Data.Map.fromList assumedTerms, unrestrictedContext = Data.Map.empty, linearContext = Data.Map.fromList linearProps, recursiveBindings = Data.Map.empty, channel = "z", goalProposition = p }
+    in Sequent { tyVarContext = S.fromList assumedSessionTypes, fnContext = assumedTerms, unrestrictedContext = Data.Map.empty, linearContext = Data.Map.fromList linearProps, recursiveBindings = Data.Map.empty, channel = "z", goalProposition = p }
 
 initializeProof :: Sequent -> Subgoal
 initializeProof seq = Subgoal { sequent = seq, prevGoal = "", nextGoals = [], expanded = Nothing, subgoalJustification = tacError "No justification.", inProgressFunctionalProof = Nothing, reservedVars = S.empty }
@@ -344,18 +372,16 @@ idATac = do
         [] -> tacError $ "Could not find " ++ show (goalProposition seq) ++ " in the linear context."
 
 functionalTermRightTac :: FunctionalProof -> Tactic
-functionalTermRightTac fp = if verifyFunctionalProof fp
-    then (do
-        seq <- getCurrentSequent
-        fpConcl <- liftEither $ functionalConcl fp
-        case goalProposition seq of
-            Lift t -> if t == goalType fpConcl then (do
-                zName <- lookupVarName $ channel seq
-                useCurrentSubgoal Trunk (buildJustification0 $ FunctionalTermRightRule zName fp (tyVarContext seq) (unrestrictedContext seq) (recursiveBindings seq))
-                return "Functional term right side tactic applied")
-                else tacError $ "Mismatched proof result and goal term:\nEXPECTED: " ++ show t ++ "\nGOT: " ++ show (goalType fpConcl)
-            _ -> tacError "Cannot apply tactic to goal.")
-    else tacError "Invalid proof."
+functionalTermRightTac fp = do
+    seq <- getCurrentSequent
+    fpConcl <- liftEither $ verifyFunctionalProofM fp
+    case goalProposition seq of
+        Lift t -> if t == goalType fpConcl then (do
+            zName <- lookupVarName $ channel seq
+            useCurrentSubgoal Trunk (buildJustification0 $ FunctionalTermRightRule zName fp (tyVarContext seq) (unrestrictedContext seq) (recursiveBindings seq))
+            return "Functional term right side tactic applied")
+            else tacError $ "Mismatched proof result and goal term:\nEXPECTED: " ++ show t ++ "\nGOT: " ++ show (goalType fpConcl)
+        _ -> tacError "Cannot apply tactic to goal."
 
 functionalTermLeftTac :: S.Set String -> String -> Tactic
 functionalTermLeftTac unavailableVars x = do
@@ -366,8 +392,9 @@ functionalTermLeftTac unavailableVars x = do
             -- Reserve vars
             reserveVarsKnownUnavailable unavailableVars [x]
             x1Name <- lookupVarName x
+            newFnCtx <- liftEither $ safeInsert x1Name t $ fnContext seq
             -- Make new subgoals
-            freshGoal <- createNewSubgoal $ seq { fnContext = Data.Map.insert x1Name t $ fnContext seq, linearContext = Data.Map.delete x $ linearContext seq }
+            freshGoal <- createNewSubgoal $ seq { fnContext = newFnCtx, linearContext = Data.Map.delete x $ linearContext seq }
             -- Make justification lookup unique var names
             -- Mark subgoal as used and justify
             useCurrentSubgoal Trunk . buildJustification1 freshGoal $ FunctionalTermLeftRule x1Name
@@ -626,15 +653,16 @@ forallRightTac = do
     case goalProposition seq of
         Forall x t p -> do
             zName <- lookupVarName $ channel seq
-            newGoal <- createNewSubgoal $ seq { fnContext = Data.Map.insert x t $ fnContext seq, goalProposition = p }
+            newFnCtx <- liftEither $ safeInsert x t $ fnContext seq
+            newGoal <- createNewSubgoal $ seq { fnContext = newFnCtx, goalProposition = p }
             useCurrentSubgoal Trunk . buildJustification1 newGoal $ ForallRightRule x
             return "Forall right side tactic applied."
         _ -> tacError "Cannot apply to non-forall proposition."
 
 forallLeftTac :: String -> FunctionalProof -> Tactic
-forallLeftTac x fp = if verifyFunctionalProof fp then (do
+forallLeftTac x fp = do
     seq <- getCurrentSequent
-    fpConcl <- liftEither $ functionalConcl fp
+    fpConcl <- liftEither $ verifyFunctionalProofM fp
     case Data.Map.lookup x $ linearContext seq of
         Just (Forall y t p) -> if t == goalType fpConcl then (do
             reserveVars [x]
@@ -644,13 +672,12 @@ forallLeftTac x fp = if verifyFunctionalProof fp then (do
             return "Forall left side tactic applied.")
             else tacError $ "Mismatched proof result and goal term:\nEXPECTED: " ++ show t ++ "\nGOT: " ++ show (goalType fpConcl)
         Just _ -> tacError "Cannot apply to non-forall proposition."
-        _ -> tacError $ "Could not find " ++ x ++ " in the linear context.")
-    else tacError "Invalid proof."
+        _ -> tacError $ "Could not find " ++ x ++ " in the linear context."
 
 existsRightTac :: FunctionalProof -> Tactic
-existsRightTac fp = if verifyFunctionalProof fp then (do
+existsRightTac fp = do
     seq <- getCurrentSequent
-    fpConcl <- liftEither $ functionalConcl fp
+    fpConcl <- liftEither $ verifyFunctionalProofM fp
     case goalProposition seq of
         Exists x t p -> if t == goalType fpConcl then (do
             zName <- lookupVarName $ channel seq
@@ -658,10 +685,7 @@ existsRightTac fp = if verifyFunctionalProof fp then (do
             useCurrentSubgoal Trunk . buildJustification1 freshGoal $ ExistsRightRule x fp
             return "Exists right side tactic applied.")
             else tacError $ "Mismatched proof result and goal term:\nEXPECTED: " ++ show t ++ "\nGOT: " ++ show (goalType fpConcl)
-        _ -> tacError "Cannot apply to non-exists proposition.")
-    else (case verifyFunctionalProofM fp of
-        Right res -> tacError "Should not happen at all."
-        Left e -> tacError $ "Invalid proof: " ++ e)
+        _ -> tacError "Cannot apply to non-exists proposition."
 
 existsLeftTac :: S.Set String -> String -> Tactic
 existsLeftTac unavailableVars x = do
@@ -672,7 +696,8 @@ existsLeftTac unavailableVars x = do
             xName <- lookupVarName x
             freshY <- getFreshVarAttempt y
             let newP = substVarProp p freshY y
-            newGoal <- createNewSubgoal $ seq { fnContext = Data.Map.insert freshY t $ fnContext seq, linearContext = Data.Map.insert x newP $ linearContext seq }
+            newFnCtx <- liftEither $ safeInsert freshY t $ fnContext seq
+            newGoal <- createNewSubgoal $ seq { fnContext = newFnCtx, linearContext = Data.Map.insert x newP $ linearContext seq }
             useCurrentSubgoal Trunk . buildJustification1 newGoal $ ExistsLeftRule xName freshY
             return "Exists left side tactic applied."
         Just _ -> tacError "Cannot apply to non-exists proposition."
@@ -772,7 +797,7 @@ nuRightTac x ys zs = do
         TyNu y a -> (do
             let yzs = zip ys zs
                 newTyVarCtx = L.foldl (\acc (y, z) -> substVarTyVarContext acc y z) (tyVarContext seq) yzs
-                newFnCtx = L.foldl (\acc (y, z) -> substVarFunctionalContext acc y z) (fnContext seq) yzs
+                newFnCtx = L.foldl (\acc (y, z) -> renameVarInFnCtx S.empty acc y z) (fnContext seq) yzs
                 newUC = L.foldl (\acc (y, z) -> substVarContext acc y z) (unrestrictedContext seq) yzs
                 newLC = L.foldl (\acc (y, z) -> substVarContext acc y z) (linearContext seq) yzs
                 newChan = L.foldl (\acc (y, z) -> if acc == z then y else acc) (channel seq) yzs
@@ -807,12 +832,12 @@ tyVarTac x zs = do
             unavailVars <- getUnavailableVarsForSubgoal curSgName <$> ST.get
             let yzs = zip ys zs
                 boundSeqRenamedTyVarContext = L.foldl (\acc (y, z) -> substVarTyVarContext acc z y) (bindingTyVarContext xSeq) yzs
-                boundSeqRenamedFnContext = L.foldl (\acc (y, z) -> substVarFunctionalContext acc z y) (bindingFnContext xSeq) yzs
+                boundSeqRenamedFnContext = L.foldl (\acc (y, z) -> renameVarInFnCtx S.empty acc z y) (bindingFnContext xSeq) yzs
                 boundSeqRenamedUCContext = L.foldl (\acc (y, z) -> substVarContext acc z y) (bindingUC xSeq) yzs
                 boundSeqRenamedLCContext = L.foldl (\acc (y, z) -> substVarContext acc z y) (bindingLC xSeq) yzs
                 boundSeqRenamedChannel = L.foldl (\curVar (y, z) -> if curVar == y then z else curVar) (bindingChan xSeq) yzs
             when (boundSeqRenamedTyVarContext /= tyVarContext seq) $ tacError "Invalid tyvar contexts."
-            when (boundSeqRenamedFnContext /= fnContext seq) $ tacError "Invalid functional contexts."
+            when (boundSeqRenamedFnContext /= fnContext seq) $ tacError $ "Invalid functional contexts: " ++ show (ctxToList boundSeqRenamedFnContext) ++ " and " ++ show (ctxToList (fnContext seq))
             when (boundSeqRenamedUCContext /= unrestrictedContext seq) $ tacError "Invalid unrestricted contexts."
             when (boundSeqRenamedLCContext /= S.foldl (flip Data.Map.delete) (linearContext seq) unavailVars) $ tacError ("Invalid linear contexts:\n" ++ show boundSeqRenamedLCContext ++ "\n\n" ++ show (S.foldl (flip Data.Map.delete) (linearContext seq) unavailVars))
             when (boundSeqRenamedChannel /= channel seq) $ tacError "Invalid channel."
@@ -831,19 +856,21 @@ replWeakenTac u = do
 fnWeakenTac :: String -> Tactic
 fnWeakenTac t = do
     seq <- getCurrentSequent
-    _ <- (if Data.Map.member t (fnContext seq) then return () else tacError $ t ++ " is not a member of the functional context.")
-    newSgName <- createNewSubgoal $ seq { fnContext = Data.Map.delete t (fnContext seq) }
-    useCurrentSubgoal Trunk . buildJustification1 newSgName $ FnWeakening t (fnContext seq Data.Map.! t)
+    _ <- (if ctxMember t (fnContext seq) then return () else tacError $ t ++ " is not a member of the functional context.")
+    tTy <- liftEither $ ctxEitherLookup t $ fnContext seq
+    newFnCtx <- liftEither $ ctxDelete t $ fnContext seq
+    newSgName <- createNewSubgoal $ seq { fnContext = newFnCtx }
+    useCurrentSubgoal Trunk . buildJustification1 newSgName $ FnWeakening t tTy
     return "Functional weakening tactic applied."
 
 useProofTac :: String -> Tactic
 useProofTac tName = do
     seq <- getCurrentSequent
     ts <- Data.Map.map proofObject <$> ST.gets theorems
-    case concl <$> Data.Map.lookup tName ts of
+    case verifyProofM <$> Data.Map.lookup tName ts of
         Nothing -> tacError "Could not find the provided theorem."
         Just (Left e) -> tacError $ "Error in conclusion: " ++ e
-        Just (Right conclusion) -> (do
+        Just (Right (_, conclusion)) -> (do
             if conclusion == seq
             then useCurrentSubgoal Trunk . buildJustification0 $ ts Data.Map.! tName
             else tacError ("Conclusion of the theorem does not match the current goal:\nExpected: " ++ seqToS seq ++ "\nFound: " ++ seqToS conclusion)
@@ -854,14 +881,28 @@ useModuleProofTac mName tName = do
     seq <- getCurrentSequent
     ms <- ST.gets loadedModules
     let t = proofObject <$> (Data.Map.lookup mName ms >>= Data.Map.lookup tName)
-    case concl <$> t of
+    case verifyProofM <$> t of
         Nothing -> tacError "Could not find the provided theorem."
         Just (Left e) -> tacError $ "Error in conclusion: " ++ e
-        Just (Right conclusion) -> (do
+        Just (Right (_, conclusion)) -> (do
             if conclusion == seq
             then useCurrentSubgoal Trunk . buildJustification0 $ proofObject ((ms Data.Map.! mName) Data.Map.! tName)
             else tacError ("Conclusion of the theorem does not match the current goal:\nExpected: " ++ seqToS seq ++ "\nFound: " ++ seqToS conclusion)
             return $ "Applied theorem " ++ mName ++ "." ++ tName)
+
+{-|
+    Returns the renaming required for assumptions. The empty string is the
+    renaming if searching fails.
+-}
+getAssumptionRenamingForTheorem :: Sequent -> Sequent -> [(String, String)]
+getAssumptionRenamingForTheorem theoremSeq curSeq = Data.Map.foldlWithKey' (\acc k v -> (k, getMatch acc v):acc) [] $ linearContext theoremSeq
+        where
+            availAssumptions = linearContext curSeq
+            getMatches acc prop = Data.Map.toList (Data.Map.filterWithKey (\k v -> v == prop && (k `L.notElem` (fst <$> acc))) availAssumptions)
+            getMatch acc prop = if L.null (getMatches acc prop) then "" else fst . L.head $ getMatches acc prop
+
+applyAssumptionRenamingForTheorem :: [(String, String)] -> Proof -> Proof
+applyAssumptionRenamingForTheorem renaming p = L.foldl' (\newP (prev, next) -> renameVarInProof newP next prev) p renaming
 
 cutLinearTheoremTac :: String -> Tactic
 cutLinearTheoremTac theoremName = do
@@ -872,20 +913,26 @@ cutLinearTheoremTac theoremName = do
         tName = L.drop 1 . L.dropWhile (/= '.') $ theoremName
         maybeTheorem = if '.' `L.elem` theoremName then (proofObject <$> (Data.Map.lookup mName ms >>= Data.Map.lookup tName)) else (Data.Map.lookup theoremName (proofObject <$> ts))
     theorem <- case maybeTheorem of Nothing -> tacError "Could not find the theorem."; Just t -> return t
-    conclusion <- case concl theorem of Left e -> tacError ("Could not get conclusion of theorem: " ++ e); Right c -> return c
+    conclusion <- case verifyProofM theorem of Left e -> tacError ("Could not get conclusion of theorem: " ++ e); Right (_, c) -> return c
     curNames <- getProofStateNames
     let otherNames = getProofNames theorem
         allNames = S.union otherNames curNames
         freshName = getFreshName allNames
     newChan <- getFreshVarAttempt freshName
-    let newRenamedProof = renameVarInProof theorem newChan (channel conclusion)
+    let channelRenamedProof = renameVarInProof theorem newChan (channel conclusion)
+    (_, channelRenamedProofSeq) <- liftEither $ verifyProofM channelRenamedProof
+    let assumptionNamingRequirements = getAssumptionRenamingForTheorem channelRenamedProofSeq seq
+        newRenamedProof = applyAssumptionRenamingForTheorem assumptionNamingRequirements  channelRenamedProof
         weakenedUnrestrictedProof = L.foldl' (\proof (k, prop) -> ReplWeakening k prop proof) newRenamedProof (Data.Map.toList (unrestrictedContext seq)) -- Add everything needed for the unrestricted context.
-        weakenedFnProof = L.foldl' (\proof (k, term) -> FnWeakening k term proof) weakenedUnrestrictedProof (Data.Map.toList (fnContext seq)) -- Add everything needed for the functional context.
+        weakenedFnProof = L.foldl' (\proof (k, term) -> FnWeakening k term proof) weakenedUnrestrictedProof (reverse (ctxToList (fnContext seq))) -- Add everything needed for the functional context.
         weakenedTyVarProof = L.foldl' (\proof (k) -> TyVarWeakening k proof) weakenedFnProof (S.toList (tyVarContext seq)) -- Add everything needed for the type variable context.
         weakenedRecBindProof = L.foldl' (\proof (k, b) -> RecBindingWeakening k b proof) weakenedTyVarProof (Data.Map.toList (recursiveBindings seq)) -- Add everything needed for the recursive binding context.
-    newConclusion <- case concl weakenedRecBindProof of Left e -> tacError ("Could not get conclusion of the renamed variable theorem: " ++ e); Right c -> return c
-    freshGoal <- createNewSubgoal (seq { linearContext = Data.Map.insert newChan (goalProposition newConclusion) (linearContext seq) })
-    useCurrentSubgoal Multiplicative . buildJustification1 freshGoal $ CutRule newRenamedProof
+    when (L.any (\(prev, next) -> next == "") assumptionNamingRequirements) (tacError "Could not find the necessary assumptions to use for the theorem!")
+    newConclusion <- case verifyProofM weakenedRecBindProof of Left e -> tacError ("Could not get conclusion of the renamed variable theorem: " ++ e); Right (_, c) -> return c
+    reserveVars (snd <$> assumptionNamingRequirements)
+    let deletedReservedFromLinear = L.foldl' (flip Data.Map.delete) (linearContext seq) (snd <$> assumptionNamingRequirements)
+    freshGoal <- createNewSubgoal (seq { linearContext = Data.Map.insert newChan (goalProposition newConclusion) deletedReservedFromLinear })
+    useCurrentSubgoal Multiplicative . buildJustification1 freshGoal $ CutRule weakenedRecBindProof
     invalidateNameCache
     return $ "Linear theorem cut tactic applied: " ++ propToS (goalProposition conclusion)
 
@@ -917,8 +964,7 @@ byProcessTac p = do
         unavailableVars = getUnavailableVarsForSubgoal curSg curS
         typeCheckSeq = seq { linearContext = S.foldl (flip Data.Map.delete) (linearContext seq) unavailableVars}
     procProof <- case typeCheckProcessUnderSequent seq p of Right res -> return res; Left e -> tacError e
-    case verifyProofM procProof of Right True -> return (); Left e -> tacError ("Could not verify proof derived from process: " ++ e); _ -> tacError "Error verifying type derivation."
-    newSeq <- case concl procProof of Right newSeq -> return newSeq; Left e -> tacError ("Error getting conclusion of type derivation: " ++ e)
+    newSeq <- case verifyProofM procProof of Right (_, newSeq) -> return newSeq; Left e -> tacError ("Error verifying proof of type derivation: " ++ e)
     unless (newSeq == seq) $ tacError ("Sequents are not the same in subgoal and derivation: " ++ seqToS seq ++ "\n\n" ++ seqToS newSeq) -- TODO allow subset of linear context.
     useCurrentSubgoal Trunk . buildJustification0 $ procProof
     return "Process is the correct type."
@@ -976,7 +1022,7 @@ initCleanState mName =
         , newSubgoalNameList = tail allSubgoalNames
         , cachedVarNames = namesInOrder
         , stypeDecls = []
-        , fnAssumptions = []
+        , fnAssumptions = emptyContext
         , procAssumptions = []
         , errors = []
         , stypeAssumptions = [] }
@@ -1011,12 +1057,12 @@ theorem s ts n p =
 
 runAndVerifyJustification :: ProofState -> Either String (Proof, ProofState)
 runAndVerifyJustification s = case runProofState (subgoalJustification ( subgoals s ! "?a")) s of
-    Right (p, s) -> case verifyProofM p of Right True -> Right (p, s); Right False -> Left "Could not verify the proof." ; Left e ->  Left e
+    Right (p, s) -> case verifyProofM p of Right _ -> Right (p, s); Left e ->  Left e
     Left e -> Left e
 
 extractFromJustification :: ProofState -> Either String (Process, Sequent)
 extractFromJustification s = case runProofState (subgoalJustification ( subgoals s ! "?a")) s of
-    Right (p, s) -> extractProcess p
+    Right (p, s) -> verifyProofM p
     Left err -> Left err
 
 done :: ProofState -> ProofState
@@ -1041,7 +1087,7 @@ _QED = _Done
 _Extract :: ProofState -> String -> ProofState
 _Extract s tName =
     let
-        extractor p = case extractProcess p of
+        extractor p = case verifyProofM p of
             Left e -> s { outputs = e:outputs s }
             Right (prc, seq) -> s { outputs = pToS prc:outputs s }
     in
@@ -1054,7 +1100,7 @@ _Extract s tName =
             Just p -> extractor (proofObject p)
 
 getProofStateDeclNames :: ProofState -> [String]
-getProofStateDeclNames s = [curTheoremName s, curModuleName s] ++ Data.Map.keys (loadedModules s) ++ concatMap Data.Map.keys (loadedModules s) ++ Data.Map.keys (theorems s) ++ (fst <$> stypeDecls s) ++ (fst <$> fnAssumptions s) ++ (fst <$> procAssumptions s) ++ stypeAssumptions s
+getProofStateDeclNames s = [curTheoremName s, curModuleName s] ++ Data.Map.keys (loadedModules s) ++ concatMap Data.Map.keys (loadedModules s) ++ Data.Map.keys (theorems s) ++ (fst <$> stypeDecls s) ++ (fst <$> ctxToList (fnAssumptions s)) ++ (fst <$> procAssumptions s) ++ stypeAssumptions s
 
 declCheck n s res = if n `L.elem` getProofStateDeclNames s then s { errors = "Name already declared!":errors s } else res
 
@@ -1062,7 +1108,9 @@ _STypeDecl :: String -> Proposition -> ProofState -> ProofState
 _STypeDecl n ty s = declCheck n s (s { stypeDecls = (n, ty):stypeDecls s })
 
 _FAssumption :: String -> FunctionalTerm -> ProofState -> ProofState
-_FAssumption n ty s = declCheck n s (s { fnAssumptions = (n, ty):fnAssumptions s })
+_FAssumption n ty s = case safeInsert n ty (fnAssumptions s) of
+    Right newAssms -> declCheck n s (s { fnAssumptions = newAssms })
+    Left e -> s { errors = e:errors s }
 
 _PAssumption :: String -> Proposition -> ProofState -> ProofState
 _PAssumption n ty s = declCheck n s (s { procAssumptions = (n, substTyDecls (stypeDecls s) ty):procAssumptions s })
@@ -1403,8 +1451,8 @@ _Prefer curS i =
 
 _PrintTheorems :: ProofState -> ProofState
 _PrintTheorems s = let
-    localTs = L.intercalate "\n" $ L.filter (/= "") $ (\(n, p) -> case concl p of Right seq -> n ++ ": " ++ seqToS seq; Left e -> "") <$> Data.Map.toList (proofObject <$> theorems s)
-    modulePrint = L.intercalate "\n" $ L.filter (/= "") $ (\(mName, moduleTheorems) -> L.intercalate "\n" $ L.filter (/= "") $ (\(n, p) -> case concl p of Right seq -> mName ++ "." ++ n ++ ": " ++ seqToS seq; Left e -> "") <$> Data.Map.toList (proofObject <$> moduleTheorems)) <$> Data.Map.toList (loadedModules s)
+    localTs = L.intercalate "\n" $ L.filter (/= "") $ (\(n, p) -> case verifyProofM p of Right (_, seq) -> n ++ ": " ++ seqToS seq; Left e -> "") <$> Data.Map.toList (proofObject <$> theorems s)
+    modulePrint = L.intercalate "\n" $ L.filter (/= "") $ (\(mName, moduleTheorems) -> L.intercalate "\n" $ L.filter (/= "") $ (\(n, p) -> case verifyProofM p of Right (_, seq) -> mName ++ "." ++ n ++ ": " ++ seqToS seq; Left e -> "") <$> Data.Map.toList (proofObject <$> moduleTheorems)) <$> Data.Map.toList (loadedModules s)
     in s { outputs = (L.intercalate "\n" [modulePrint, localTs]):outputs s }
 
 _TestDisallowedVars :: Tactic

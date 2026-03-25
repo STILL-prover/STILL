@@ -21,6 +21,7 @@ import Data.Time (formatTime, defaultTimeLocale)
 import Numeric (showFFloat)
 import Utils.Misc (namesInOrder)
 import Control.Monad (unless)
+import ECC.Kernel (emptyContext)
 
 -- ==========================================
 -- State Initialization
@@ -39,7 +40,7 @@ emptyState = S {
     newSubgoalNameList = allSubgoalNames,
     cachedVarNames = namesInOrder,
     stypeDecls = [],
-    fnAssumptions = [],
+    fnAssumptions = emptyContext,
     procAssumptions = [],
     errors = [],
     stypeAssumptions = []

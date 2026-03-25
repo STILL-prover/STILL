@@ -55,7 +55,8 @@
 - FAx: Apply the axiom tactic. Proving Prop:Type 0
 - FVar: Provide the variable with the type in the context. 
 - FVarA: Automatically find the variable with the type in the context. 
-- FPi: For goals of the form (Pi x: A . B) : L. Supply the sort of A, and A if it is not known.  
+- Pi: For goals of the form (Pi x: A . B) : L. Supply the sort of A, and A if it is not known.
+- PiProp: For goals of the form (Pi x: A . B) that you wish to type as propositions.
 - FLambda: For goals of the form (\x:A.N):(Pi x:A.B) 
 - FApp: x, the type of x, and the maybe term that x was replaced with. Do not supply optional term if the extract term is known. 
 - FSigma: For goals of the form Sigma x : A . B : Type j 
