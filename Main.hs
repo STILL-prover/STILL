@@ -13,7 +13,7 @@ import Control.Monad.Identity (Identity, runIdentity)
 
 import SessionTypes.Tactics (ProofState(..), Theorem (proofObject, numberOfSubgoals), allSubgoalNames)
 import SessionTypes.Kernel
-import Parser.CmdParsers (parseFile, parseStringCommand)
+import Parser.CmdParsers (parseFile, parseStringCommand, CommandSpan (spanValue, spanRange, CommandSpan, spanText), Command, parseFileSpans, evalCommand, parseStringCommandSpan, Range (Range))
 import Utils.Display
 import Data.List (intercalate, transpose, foldl')
 import Data.Map (toList)
@@ -22,6 +22,8 @@ import Numeric (showFFloat)
 import Utils.Misc (namesInOrder)
 import Control.Monad (unless)
 import ECC.Kernel (emptyContext)
+import Text.Parsec (sourceLine, sourceColumn)
+import Text.Read (readMaybe)
 
 -- ==========================================
 -- State Initialization
@@ -125,6 +127,7 @@ main = do
         ("watch":[])          -> startWatcher "Scratch.still"
         ("repl":fnames)       -> startRepl fnames
         ("benchmark":fnames)  -> runDiagnostics fnames []
+        ("serve":[])          -> startServer
         (fname:fnames)        -> runScripts (fname:fnames)
         []                    -> startRepl []
     where
@@ -243,12 +246,12 @@ replLoop currentState = do
             "quit" -> putStrLn "Goodbye!"
             _ -> do
                 -- Parse and Execute
-                case parseStringCommand input of
+                case parseStringCommandSpan input of
                     Left err -> do
                         putStrLn $ "Parse Error: " ++ show err
                         replLoop currentState
-                    Right cmdFunc -> do
-                        let newState = cmdFunc currentState
+                    Right sp -> do
+                        let newState = evalCommand (spanValue sp) currentState
                         mainPrinter (Right newState)
                         replLoop newState
 
@@ -301,3 +304,193 @@ watchLoop filePath lastModified = do
 
 readFileSafe :: FilePath -> IO String
 readFileSafe path = catch (readFile path) (\e -> let _ = (e :: IOException) in return "")
+
+
+-- ===========================
+-- Editor Integration
+-- ===========================
+
+data Snapshot = Snapshot {
+    beforeState :: ProofState,
+    afterState :: ProofState
+}
+
+-- psCommands !! i corresponds to psSnaps !! i
+data ProcessedScript = ProcessedScript {
+    psModuleName :: String,
+    psImports :: [String],
+    psCommands :: [CommandSpan Command], 
+    psSnaps :: [Snapshot]
+}
+
+runProofScriptDetailed :: FilePath -> String -> IO (Either String ProcessedScript)
+runProofScriptDetailed fname content = do
+  case parseFileSpans fname content of
+    Left err ->
+      pure . Left $ "--------------------------------\nParse Error:\n" ++ show err
+
+    Right (moduleName, imports, cmds) -> do
+      stateWithImports <- loadImportsDetailed imports emptyState
+
+      let initialState = stateWithImports { curModuleName = moduleName }
+          step (st, acc) sp =
+            let st' = evalCommand (spanValue sp) st
+                snap = Snapshot { beforeState = st, afterState = st' }
+            in (st', acc ++ [snap])
+
+          (finalState, snaps) = foldl step (initialState, []) cmds
+
+      pure $ Right ProcessedScript
+        { psModuleName = moduleName
+        , psImports    = imports
+        , psCommands   = cmds
+        , psSnaps      = snaps
+        }
+
+loadImportsDetailed :: [String] -> ProofState -> IO ProofState
+loadImportsDetailed [] s = pure s
+loadImportsDetailed (m:ms) s =
+  if Map.member m (loadedModules s) then
+    loadImportsDetailed ms s
+  else do
+    let filename = m ++ ".still"
+    exists <- doesFileExist filename
+    if not exists then do
+      putStrLn $ "[Warning] Import not found: " ++ filename
+      loadImportsDetailed ms s
+    else do
+      content <- readFileSafe filename
+      case parseFileSpans filename content of
+        Left err -> do
+          putStrLn $ "[Error] Failed to parse import " ++ m ++ ": " ++ show err
+          loadImportsDetailed ms s
+        Right (_, subImports, subCmds) -> do
+          s' <- loadImportsDetailed subImports s
+          let modState0 = s'
+                { subgoals = Map.empty
+                , theorems = Map.empty
+                , curModuleName = m
+                , openGoalStack = []
+                }
+              modResult = foldl (\st sp -> evalCommand (spanValue sp) st) modState0 subCmds
+              newLoaded = Map.insert m (theorems modResult) (loadedModules s')
+          loadImportsDetailed ms
+            (s'
+              { subgoals = Map.empty
+              , theorems = Map.empty
+              , openGoalStack = []
+              , loadedModules = newLoaded
+              })
+
+containsPos :: Range -> Int -> Int -> Bool
+containsPos (Range s e) line col =
+    let
+        sl = sourceLine s
+        sc = sourceColumn s
+        el = sourceLine e
+        ec = sourceColumn e
+    in
+        (line > sl || line == sl && col >= sc) && (line < el || line == el && col <= ec)
+
+findSnapshotAt :: ProcessedScript -> Int -> Int -> Maybe (CommandSpan Command, Snapshot)
+findSnapshotAt ps line col = go (zip (psCommands ps) (psSnaps ps))
+    where
+        go :: [(CommandSpan Command, Snapshot)] -> Maybe (CommandSpan Command, Snapshot)
+        go [] = Nothing
+        go ((sp, snap):xs) | containsPos (spanRange sp) line col = Just (sp, snap)
+                           | otherwise = go xs
+
+data Request = ReqPing
+    | ReqStateAt {
+        reqPath :: FilePath,
+        reqText :: String,
+        reqLine :: Int, -- VSCode is 0-based
+        reqCharacter :: Int -- VSCode is 0-based
+    }
+    deriving (Read, Show)
+
+escapeField :: String -> String
+escapeField = concatMap go
+  where
+    go '\\' = "\\\\"
+    go ','  = "\\,"
+    go '\n' = "\\n"
+    go '\r' = "\\r"
+    go c    = [c]
+
+unescapeField :: String -> String
+unescapeField [] = []
+unescapeField ('\\':'n':xs)  = '\n' : unescapeField xs
+unescapeField ('\\':'r':xs)  = '\r' : unescapeField xs
+unescapeField ('\\':',':xs)  = ','  : unescapeField xs
+unescapeField ('\\':'\\':xs) = '\\' : unescapeField xs
+unescapeField ('\\':x:xs)    = x    : unescapeField xs
+unescapeField (x:xs)         = x    : unescapeField xs
+
+splitEscapedCommas :: String -> [String]
+splitEscapedCommas = go [] [] 
+  where
+    go acc cur [] = reverse (reverse cur : acc)
+    go acc cur ('\\':x:xs) = go acc (x:'\\':cur) xs
+    go acc cur (',':xs)    = go (reverse cur : acc) [] xs
+    go acc cur (x:xs)      = go acc (x:cur) xs
+
+parseRequestLine :: String -> Either String Request
+parseRequestLine line | line == "ping" = Right ReqPing
+                      | otherwise =
+    case splitEscapedCommas line of
+        ["stateAt", lineStr, colStr, pathField, contentField] ->
+            case (reads lineStr, reads colStr) of
+            ([(ln, "")], [(col, "")]) ->
+                Right $
+                ReqStateAt { reqPath = unescapeField pathField, reqText = unescapeField contentField, reqLine = ln, reqCharacter = col }
+            _ -> Left "Bad stateAt line/column"
+        _ -> Left "Unknown request"
+
+startServer :: IO ()
+startServer = do
+  hSetEncoding stdin utf8
+  hSetEncoding stdout utf8
+  hSetEncoding stderr utf8
+  hSetBuffering stdin LineBuffering
+  hSetBuffering stdout LineBuffering
+  loop
+  where
+    loop = do
+      done <- isEOF
+      if done then
+        pure ()
+      else do
+        line <- getLine
+        case parseRequestLine line of
+          Left err -> do
+            putStrLn ("error," ++ escapeField err)
+            loop
+          Right req -> do
+            resp <- handleRequestPlain req
+            putStrLn resp
+            loop
+
+handleRequestPlain :: Request -> IO String
+handleRequestPlain ReqPing = return "pong"
+handleRequestPlain (ReqStateAt path text line0 col0) = do
+  let line = line0 + 1
+      col  = col0 + 1
+  res <- runProofScriptDetailed path text
+  pure $ case res of
+    Left err -> "error," ++ escapeField err
+    Right ps ->
+      case findSnapshotAt ps line col of
+        Nothing ->
+          "error," ++ escapeField "No command found at this position."
+        Just (sp, snap) ->
+          let Range s e = spanRange sp
+          in intercalate ","
+               [ "ok"
+               , show (sourceLine s - 1)
+               , show (sourceColumn s - 1)
+               , show (sourceLine e - 1)
+               , show (sourceColumn e - 1)
+               , escapeField (spanText sp)
+               , escapeField (renderState (beforeState snap))
+               ]

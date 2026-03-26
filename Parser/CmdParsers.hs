@@ -15,10 +15,84 @@ import Parser.TermParsers (proposition, fTerm, process)
 import Data.Functor ((<&>))
 import ECC.Tactics (FunctionalTactic, _FAx, _FVarA, _FVar, _FRepeat, _FAlt, _FThen, _FPi1, _FPi2, _FLambda, _FApp, _FSigma, _FPair, _FProj1, _FProj2, _FCumulativity, _FSimp, _FExactKnown, _FExact, _FSkip)
 import Utils.Display (printCommands)
+import SessionTypes.Kernel (Proposition)
+import ECC.Kernel (FunctionalTerm)
+import Data.Char (isSpace)
+
+data Range = Range {
+    rangeStart :: SourcePos,
+    rangeEnd :: SourcePos
+}
+
+data CommandSpan a = CommandSpan {
+    spanRange :: Range,
+    spanText :: String,
+    spanValue :: a
+}
+
+data Command = CmdHelp
+    | CmdPrintTheorems
+    | CmdExtract String
+    | CmdSTypeDecl String Proposition
+    | CmdAssumption String FunctionalTerm
+    | CmdProcessAssumption String Proposition
+    | CmdSTypeAssumption String
+    | CmdTheorem String [Proposition] Proposition
+    | CmdApply Tactic
+    | CmdDefer
+    | CmdDone
+
+evalCommand :: Command -> ProofState -> ProofState
+evalCommand CmdHelp s = s { outputs = printCommands : outputs s }
+evalCommand CmdPrintTheorems s = _PrintTheorems s
+evalCommand (CmdExtract tName) s = _Extract s tName
+evalCommand (CmdSTypeDecl i ty) s = _STypeDecl i ty s
+evalCommand (CmdAssumption resI resTy) s = _FAssumption resI resTy s
+evalCommand (CmdProcessAssumption resI resTy) s = _PAssumption resI resTy s
+evalCommand (CmdSTypeAssumption resI) s = _STypeAssumption resI s
+evalCommand (CmdTheorem tName props p) s = _Theorem s props tName p
+evalCommand (CmdApply t) s = _Apply s t
+evalCommand CmdDefer s = _Defer s
+evalCommand CmdDone s = _Done s
 
 -- ==========================================
 -- Parser Entry Points
 -- ==========================================
+
+parseFileSpans :: String -> String -> Either ParseError (String, [String], [CommandSpan Command])
+parseFileSpans fileName content = parse parseFileStructureSpanned fileName content
+
+parseFileStructureSpanned :: Parser (String, [String], [CommandSpan Command])
+parseFileStructureSpanned = do
+    whiteSpace
+    reserved "module"
+    moduleName <- identifier
+    imps <- option [] parseImports
+    reserved "begin"
+    cmds <- many cmd
+    optional (reserved "end")
+    eof
+    return (moduleName, imps, cmds)
+
+trimRight :: String -> String
+trimRight = reverse . dropWhile isSpace . reverse
+
+withSpan :: Parser a -> Parser (CommandSpan a)
+withSpan p = do
+    startPos <- getPosition
+    startInput <- getInput
+    x <- p
+    endPos <- getPosition
+    endInput <- getInput
+    let consumedLen = length startInput - length endInput
+        consumed = trimRight (take consumedLen startInput)
+    return $ CommandSpan { spanRange = Range startPos endPos, spanText = consumed, spanValue = x }
+
+cmd :: Parser (CommandSpan Command)
+cmd = withSpan cmdCore
+
+parseStringCommandSpan :: String -> Either ParseError (CommandSpan Command)
+parseStringCommandSpan = parse (whiteSpace >> cmd <* eof) ""
 
 -- Parses a full file: Optional Module Header -> Imports -> Commands
 parseFile :: String -> String -> Either ParseError ([String], [ProofState -> ProofState])
@@ -34,20 +108,22 @@ parseFileStructure = do
     reserved "begin"
 
     -- Body: List of commands
-    cmds <- many cmd
+    cmds <- many cmdCore
     eof
-    return (imps, (\s -> (s { curModuleName = moduleName })):cmds)
+    return (imps, (\s -> (s { curModuleName = moduleName })):(evalCommand <$> cmds))
 
 -- Single command parser for REPL
 parseStringCommand :: String -> Either ParseError (ProofState -> ProofState)
-parseStringCommand = parse (whiteSpace >> cmd <* eof) ""
+parseStringCommand s = do
+  sp <- parseStringCommandSpan s
+  pure (evalCommand (spanValue sp))
 
 -- ==========================================
 -- 2. Command Parsers
 -- ==========================================
 
-cmd :: Parser (ProofState -> ProofState)
-cmd = parseTheorem
+cmdCore :: Parser Command
+cmdCore = parseTheorem
   <|> parseTypeDec
   <|> try parseProcessAssumption
   <|> try parseSTypeAssumption
@@ -58,87 +134,87 @@ cmd = parseTheorem
   <|> parsePrintTheorems
   <|> parseExtract
 
-parseHelp :: Parser (ProofState -> ProofState)
+parseHelp :: Parser Command
 parseHelp = do
     reserved "help"
-    return (\s -> s { outputs = printCommands:outputs s})
+    return CmdHelp
 
-parsePrintTheorems :: Parser (ProofState -> ProofState)
+parsePrintTheorems :: Parser Command
 parsePrintTheorems = do
     reserved "print_theorems"
-    return _PrintTheorems
+    return CmdPrintTheorems
 
-parseExtract :: Parser (ProofState -> ProofState)
+parseExtract :: Parser Command
 parseExtract = do
     reserved "extract"
     tName <- identifier
-    return (\s -> _Extract s tName)
+    return $ CmdExtract tName
 
 parseImports :: Parser [String]
 parseImports = do
     reserved "imports"
     sepBy identifier whiteSpace
 
-parseTypeDec :: Parser (ProofState -> ProofState)
+parseTypeDec :: Parser Command
 parseTypeDec = do
     reserved "stype"
     i <- identifier
     reservedOp "="
     ty <- quotes proposition
-    return (_STypeDecl i ty)
+    return (CmdSTypeDecl i ty)
 
-parseAssumption :: Parser (ProofState -> ProofState)
+parseAssumption :: Parser Command
 parseAssumption = do
     reserved "assume"
     resI <- identifier
     reserved "is"
     resTy <- quotes fTerm
-    return (_FAssumption resI resTy)
+    return (CmdAssumption resI resTy)
 
-parseProcessAssumption :: Parser (ProofState -> ProofState)
+parseProcessAssumption :: Parser Command
 parseProcessAssumption = do
     reserved "assume"
     reserved "process"
     resI <- identifier
     reserved "is"
     resTy <- quotes proposition
-    return (_PAssumption resI resTy)
+    return (CmdProcessAssumption resI resTy)
 
-parseSTypeAssumption :: Parser (ProofState -> ProofState)
+parseSTypeAssumption :: Parser Command
 parseSTypeAssumption = do
     reserved "assume"
     resI <- identifier
     reserved "is"
     reserved "stype"
-    return (_STypeAssumption resI)
+    return (CmdSTypeAssumption resI)
 
-parseTheorem :: Parser (ProofState -> ProofState)
+parseTheorem :: Parser Command
 parseTheorem = do
     reserved "theorem"
     tName <- identifier
     props <- option [] (reserved "consumes" >> sepBy (quotes proposition) whiteSpace)
     reservedOp ":"
     p <- quotes proposition
-    return (\s -> _Theorem s props tName p)
+    return (CmdTheorem tName props p)
 
-parseProvingCommand :: Parser (ProofState -> ProofState)
+parseProvingCommand :: Parser Command
 parseProvingCommand = parseApply
     <|> parseDefer
 
-parseApply :: Parser (ProofState -> ProofState)
+parseApply :: Parser Command
 parseApply = do
     reserved "apply"
     t <- parseTacticExpression
-    return (`_Apply` t)
+    return (CmdApply t)
 
 parseDefer = do
     reserved "defer"
-    return _Defer
+    return CmdDefer
 
-parseDone :: Parser (ProofState -> ProofState)
+parseDone :: Parser Command
 parseDone = do
     reserved "done"
-    return _Done
+    return CmdDone
 
 -- ==========================================
 -- 3. Tactic Parsers
