@@ -492,5 +492,5 @@ handleRequestPlain (ReqStateAt path text line0 col0) = do
                , show (sourceLine e - 1)
                , show (sourceColumn e - 1)
                , escapeField (spanText sp)
-               , escapeField (renderState (beforeState snap))
+               , escapeField (renderState (afterState snap))
                ]
