@@ -1,6 +1,12 @@
 module parseTest begin
 
-assume N is stype
+assume M is stype
+
+theorem mTest: "M -o exists X:stype.X"
+apply ImpliesR
+apply Exists2R "M"
+apply IdA
+done
 
 theorem testUnit: "1"
 apply UnitR

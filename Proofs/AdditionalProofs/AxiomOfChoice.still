@@ -1,6 +1,6 @@
 module AxiomOfChoice begin
 
--- P. Martin-Lof, “Intuitionistic Type Theory”.
+-- P. Martin-Lof, "Intuitionistic Type Theory".
 theorem AC: "forall A:Type 1.
     forall B:Type 1.
     forall P:(Pi x:A. Pi y:B. Type 1).
@@ -18,4 +18,5 @@ apply Simp
 apply Exact "(snd (a x))"
 done
 
--- extract AC
+extract AC
+-- z(A).z(B).z(P).z(a).z[(\v : A. proj1 (a v))].z(x).[ z <- proj2 (a x) ]
