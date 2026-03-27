@@ -40,8 +40,8 @@ apply UnitLA
 defer
 apply PlusR2
 apply IdA
-apply Weaken zeroB
 apply Weaken firstValid
+apply Weaken zeroB
 apply TyVar AUC (a, c, h, i, firstB, newB, nextValid)
 done
 -- z(ItemType).z(bid).z(zeroB).z(validNewB).z(currency).z(a).z(c).z(firstB).z(firstValid).z(d).z(e).(corec AUC(item, ownerC, curB, winnerC, oldB, lastB, curValid).z.case(inl z(newB).z(nextValid).z(h).z(i).((ν j) winnerC[j].(j.inr;[curB <-> j] | AUC(item, ownerC, h, i, lastB, newB, nextValid))), inr ownerC[lastB].((ν f) ownerC[f].([curB <-> f] | (ν g) winnerC[g].(g.inl;[item <-> g] | 0))) )) (a, c, d, e, zeroB, firstB, firstValid)

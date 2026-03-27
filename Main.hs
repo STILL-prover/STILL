@@ -13,7 +13,7 @@ import Control.Monad.Identity (Identity, runIdentity)
 
 import SessionTypes.Tactics (ProofState(..), Theorem (proofObject, numberOfSubgoals), allSubgoalNames)
 import SessionTypes.Kernel
-import Parser.CmdParsers (parseFile, parseStringCommand, CommandSpan (spanValue, spanRange, CommandSpan, spanText), Command, parseFileSpans, evalCommand, parseStringCommandSpan, Range (Range))
+import Parser.CmdParsers (parseFile, parseStringCommand, CommandSpan (spanValue, spanRange, CommandSpan, spanText, trimmedRange), Command, parseFileSpans, evalCommand, parseStringCommandSpan, Range (Range))
 import Utils.Display
 import Data.List (intercalate, transpose, foldl')
 import Data.Map (toList)
@@ -484,7 +484,7 @@ handleRequestPlain (ReqStateAt path text line0 col0) = do
         Nothing ->
           "error," ++ escapeField "No command found at this position."
         Just (sp, snap) ->
-          let Range s e = spanRange sp
+          let Range s e = trimmedRange sp
           in intercalate ","
                [ "ok"
                , show (sourceLine s - 1)

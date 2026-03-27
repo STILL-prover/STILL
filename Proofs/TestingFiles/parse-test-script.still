@@ -7,17 +7,25 @@ apply UnitR
 done
 
 theorem testMultiLine:
-    "forall a:nat.
-        forall b:nat.1"
+    "forall nat:Prop.
+        forall a:nat.
+            forall b:nat.1"
     apply ForallR
-    apply ForallR
+    apply ForallR+
     apply UnitR
 done
 
-theorem testTacticExpression: "forall a:nat. forall b:nat. 1"
+theorem testTacticExpression: "forall nat:Type 0. forall a:nat. forall b:nat. 1"
 apply ForallR+;UnitR
 done
 
-theorem testTacticExpression2: "forall a:nat. forall b:nat. 1"
+theorem testTacticExpression2: "forall nat:Prop.forall a:nat. forall b:nat. 1"
 apply (ForallR <|> UnitR)+
+done
+
+theorem myT: "1 -o 1"
+apply Intros
+apply UnitLA -- test comment
+apply UnitR {- test comment 
+ -}
 done

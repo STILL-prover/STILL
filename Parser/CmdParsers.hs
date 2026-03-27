@@ -18,6 +18,7 @@ import Utils.Display (printCommands)
 import SessionTypes.Kernel (Proposition)
 import ECC.Kernel (FunctionalTerm)
 import Data.Char (isSpace)
+import Text.Parsec.Pos (updatePosString)
 
 data Range = Range {
     rangeStart :: SourcePos,
@@ -26,6 +27,7 @@ data Range = Range {
 
 data CommandSpan a = CommandSpan {
     spanRange :: Range,
+    trimmedRange :: Range,
     spanText :: String,
     spanValue :: a
 }
@@ -74,8 +76,21 @@ parseFileStructureSpanned = do
     eof
     return (moduleName, imps, cmds)
 
+isWhiteSpace :: String -> Bool
+isWhiteSpace s = case parse (whiteSpace >> eof) "<layout>" s of
+    Left{} -> False
+    Right{} -> True
+
+stripTrailingWhiteSpace :: String -> String
+stripTrailingWhiteSpace s = case [i | i <- [0..length s - 1], isWhiteSpace (drop i s)] of
+    i:_ -> take i s
+    [] -> s
+
 trimRight :: String -> String
 trimRight = reverse . dropWhile isSpace . reverse
+
+trimLeft :: String -> String
+trimLeft = dropWhile isSpace
 
 withSpan :: Parser a -> Parser (CommandSpan a)
 withSpan p = do
@@ -86,7 +101,10 @@ withSpan p = do
     endInput <- getInput
     let consumedLen = length startInput - length endInput
         consumed = trimRight (take consumedLen startInput)
-    return $ CommandSpan { spanRange = Range startPos endPos, spanText = consumed, spanValue = x }
+        rawConsumed = take consumedLen startInput
+        coreText = stripTrailingWhiteSpace rawConsumed
+        trimmedEndPos = updatePosString startPos coreText
+    return $ CommandSpan { spanRange = Range { rangeStart = startPos, rangeEnd = endPos }, trimmedRange = Range { rangeStart = startPos, rangeEnd = trimmedEndPos }, spanText = coreText, spanValue = x }
 
 cmd :: Parser (CommandSpan Command)
 cmd = withSpan cmdCore
