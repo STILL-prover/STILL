@@ -1,0 +1,97 @@
+-- B. Toninho, L. Caires, and F. Pfenning, "Corecursion and Non-divergence in Session-Typed Processes," in Trustworthy Global Computing, M. Maffei and E. Tuosto, Eds., Berlin, Heidelberg: Springer, 2014, pp. 159–175. doi: 10.1007/978-3-662-45917-1_11.
+module CounterSession begin
+
+stype epsilonT = "forall int:Type 1.nu X. ((forall m:int.exists n:int.X) & (X + X) & 1)"
+stype NodeT = "forall int:Type 1.forall b:int.forall compute:(Pi m:int.Pi b:int.int). (nu X. ((forall m:int.exists n:int.X) & (X + X) & 1)) -o (nu X. ((forall m:int.exists n:int.X) & (X + X) & 1))"
+stype CounterT = "forall int:Type 1.forall compute:(Pi m:int.Pi b:int.int).forall zero:int.forall one:int.nu X. (X & X & 1)"
+
+-- CImpl = nu X. &{val: int => int /\ X, inc: + {carry:X, done:X}, halt:1}
+theorem epsilon: "epsilonT"
+apply Intros
+apply NuR X () ()
+apply WithR
+apply UnitR
+apply WithR
+apply PlusR1
+apply TyVar X ()
+apply ForallR
+apply ExistsR
+apply Exact "m"
+apply Weaken m
+apply TyVar X ()
+done
+
+-- CImpl -o CImpl
+theorem Node: "NodeT"
+apply Intros
+apply NuR N (x) (a)
+apply WithR
+apply NuLA
+apply WithL2A
+apply UnitLA
+apply UnitR
+apply WithR
+apply NuLA
+apply WithL1A
+apply WithL2A
+apply PlusLA
+apply PlusR2
+apply TyVar N (a)
+apply PlusR1
+apply TyVar N (a)
+apply NuLA
+apply WithL1A
+apply WithL1A
+apply ForallR
+apply ForallLA
+apply Exact "compute m b"
+apply ExistsLA
+apply ExistsR
+apply Exact "n"
+apply Weaken m
+apply Weaken n
+apply TyVar N (a)
+done
+
+-- Counter nu X. {val:int /\ X, inc:X, halt:1}
+theorem Counter: "CounterT"
+apply CutTheorem epsilon
+apply Intros
+apply ForallLA
+apply Exact "int"
+apply NuR COORD (x) (a)
+apply WithR
+apply NuLA
+apply WithL2A
+apply UnitLA
+apply UnitR
+apply WithR
+apply NuLA
+apply WithL1A
+apply WithL2A
+apply PlusLA
+apply TyVar COORD (a)
+apply CutTheorem Node
+apply ForallLA
+apply Exact "int"
+apply ForallLA
+apply Exact "one"
+apply ForallLA
+apply Exact "compute"
+apply ImpliesLA
+defer
+apply IdA
+defer
+apply TyVar COORD (c)
+apply NuLA
+apply WithL1A
+apply WithL1A
+apply ForallLA
+apply Exact "zero"
+apply ExistsLA
+apply Weaken n
+apply TyVar COORD (a)
+done
+
+extract Counter
+-- (nu a) (a(int).(corec X().a.case(inl: a.case(inl: a(m).a[m].X(), inr: a.inl;X() ), inr: 0 )) () | z(int).z(compute).z(zero).z(one).a[int].(corec COORD(x).z.case(inl: z.case(inl: x.inl;x.inl;x[zero].x(n).COORD(x), inr: x.inl;x.inr;x.case(inl: (nu c) (c(int).c(b).c(compute).c(a).(corec N(x).c.case(inl: c.case(inl: x.inl;x.inl;c(m).x[((compute m) b)].x(n).c[n].N(x), inr: x.inl;x.inr;x.case(inl: c.inl;N(x), inr: c.inr;N(x) ) ), inr: x.inr;0 )) (a) | c[int].c[one].c[compute].((nu d) c[d].([x <-> d] | COORD(c)))), inr: COORD(x) ) ), inr: x.inr;0 )) (a))

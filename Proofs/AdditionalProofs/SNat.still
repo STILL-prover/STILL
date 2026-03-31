@@ -1,58 +1,91 @@
--- Lfix X . F X = ALL X . F X -o X
--- Nat = Lfix X . 1 + X = ALL X . (1 + X -o X) -o X
--- In general the least fix point requires a replicating term. Toninho and Yoshida: ALL X . !(1 + X -o X) -o X.
--- But linear natural numbers seem to work.
+-- Toninho and Yoshida 2019: ALL X . !(1 + X -o X) -o X.
 -- Recursive Types for Free by Wadler 1990 https://homepages.inf.ed.ac.uk/wadler/papers/free-rectypes/free-rectypes.txt
 module SNat begin
 
-theorem z: "forall X : stype. (1 + X -o X) -o X"
--- :theorem "ztest" Forall2 "X" (Implication (Implication (Plus Unit (TyVar "X")) (TyVar "X")) (TyVar "X"))
-apply Intros
-apply ImpliesLA
-apply IdA
-apply PlusR1
-apply UnitR
-done
--- z(X).z(a).(ν b)a[b].(b.inl;0) | ([a <-> z])
+stype nat = "forall X : stype. !(1 + X -o X) -o X"
 
-theorem succ: "(forall X : stype. (1 + X -o X) -o X) -o (forall Y:stype. (1 + Y -o Y) -o Y)"
+-- Right eliminator .
+theorem foldNat: "forall X : stype. !(1 + X -o X) -o nat -o X"
+apply Intros
+apply BangLA
+apply Forall2L b "X"
+apply ImpliesL b
+apply IdA
+apply BangR
+apply Copy c
+apply IdA
+done
+
+extract foldNat
+-- z(X).z(a).z(b).b[X].((nu d) b[d].(!d(e).((nu f) a[f].[f <-> e]) | [b <-> z]))
+
+-- Initial algebra structure
+theorem inNat: "(1 + nat) -o nat"
 apply ImpliesR
 apply Forall2R
-apply Forall2L a "Y"
+apply ImpliesR
+apply BangLA
+apply Copy c
+apply ImpliesL d
 apply IdA
-done
--- z(a).z(Y).a[Y].[a <-> z]
-
-theorem one: "forall X:stype. (1 + X -o X) -o X"
-apply Cut "(forall X : stype. (1 + X -o X) -o X) -o (forall Y:stype. (1 + Y -o Y) -o Y)"
-apply Cut "forall X : stype. (1 + X -o X) -o X"
-apply ImpliesLA
-apply Forall2R
+apply PlusLA
 apply Forall2L a "X"
+apply ImpliesLA
+apply PlusR2
 apply IdA
+apply BangR
+apply Copy c
 apply IdA
--- z
-apply Intros
+apply PlusR1
+apply IdA
+done
+
+extract inNat
+-- z(a).z(X).z(b).((nu d) b[d].((nu e) d[e].(a.case(inl: e.inl;[a <-> e], inr: a[X].((nu f) a[f].(!f(g).((nu h) b[h].[h <-> g]) | e.inr;[a <-> e])) ) | [d <-> z])))
+
+theorem zero: "nat"
+apply CutTheorem inNat
 apply ImpliesLA
 apply IdA
 apply PlusR1
 apply UnitR
--- succ
+done
+
+extract zero
+-- (nu i) (i(a).i(X).i(b).((nu d) b[d].((nu e) d[e].(a.case(inl: e.inl;[a <-> e], inr: a[X].((nu f) a[f].(!f(g).((nu h) b[h].[h <-> g]) | e.inr;[a <-> e])) ) | [d <-> i]))) | (nu a) i[a].(a.inl;0 | [i <-> z]))
+
+theorem succ: "nat -o nat"
+apply CutTheorem inNat
 apply ImpliesR
-apply Forall2R
-apply Forall2L f "Y"
+apply ImpliesL i
+defer
+apply PlusR2
+apply IdA
 apply IdA
 done
--- one: ; ; ;  |- z:∀X. (1 ⊕ X ⊸ X) ⊸ X
--- (ν a)(a(b).a(Y).b[Y].[b <-> a]) | ((ν c)(c(X).c(d).(ν e)d[e].(e.inl;0) | ([d <-> c])) | ((ν f)a[f].([c <-> f]) | (z(X).a[X].[a <-> z])))
 
--- Use previous theorems.
-theorem two: "forall X:stype. (1 + X -o X) -o X"
+extract succ
+-- (nu i) (i(a).i(X).i(b).((nu d) b[d].((nu e) d[e].(a.case(inl: e.inl;[a <-> e], inr: a[X].((nu f) a[f].(!f(g).((nu h) b[h].[h <-> g]) | e.inr;[a <-> e])) ) | [d <-> i]))) | z(a).((nu b) i[b].(b.inr;[a <-> b] | [i <-> z])))
+
+theorem one: "nat"
+apply CutTheorem zero
+apply CutTheorem succ
+apply ImpliesLA
+apply Id k
+apply IdA
+done
+
+extract one
+-- (nu j) ((nu i) (i(a).i(X).i(b).((nu d) b[d].((nu e) d[e].(a.case(inl: e.inl;[a <-> e], inr: a[X].((nu f) a[f].(!f(g).((nu h) b[h].[h <-> g]) | e.inr;[a <-> e])) ) | [d <-> i]))) | (nu a) i[a].(a.inl;0 | [i <-> j])) | (nu k) ((nu i) (i(a).i(X).i(b).((nu d) b[d].((nu e) d[e].(a.case(inl: e.inl;[a <-> e], inr: a[X].((nu f) a[f].(!f(g).((nu h) b[h].[h <-> g]) | e.inr;[a <-> e])) ) | [d <-> i]))) | k(a).((nu b) i[b].(b.inr;[a <-> b] | [i <-> k]))) | (nu a) k[a].([j <-> a] | [k <-> z])))
+
+theorem two: "nat"
 apply CutTheorem one
 apply CutTheorem succ
 apply ImpliesLA
-apply Forall2R
-apply Forall2L b "X"
-apply IdA
+apply Id j
 apply IdA
 done
+
+extract two
+
+print_theorems
