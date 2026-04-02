@@ -167,6 +167,12 @@ getSubgoalNames sg = let
     fVars = maybe S.empty (FT.reservedVars . fst) (inProgressFunctionalProof sg)
     in S.union vars fVars
 
+getSubgoalFreeNames :: Subgoal -> S.Set String
+getSubgoalFreeNames sg = let
+    vars = getSequentFreeNames . sequent $ sg
+    fVars = maybe S.empty (FT.reservedVars . fst) (inProgressFunctionalProof sg)
+    in S.union vars fVars
+
 getProofStateNames :: ProverState (S.Set String)
 getProofStateNames = do
     cachedNames <- ST.gets cachedProofStateNames
@@ -177,6 +183,9 @@ getProofStateNames = do
         ST.modify (\s -> s { cachedProofStateNames = vars })
         return vars)
     else return cachedNames
+
+getProofStateFreeNames :: ProofState -> (S.Set String)
+getProofStateFreeNames s = S.unions (getSubgoalFreeNames <$> Data.Map.elems (subgoals s))
 
 getFreshVar :: ProverState String
 getFreshVar = do
@@ -190,10 +199,11 @@ getFreshVar = do
 getFreshVarAttempt :: String -> ProverState String
 getFreshVarAttempt z = do
     seq <- getCurrentSequent
-    let vars = getSequentFreeNames seq
+    allVars <- getProofStateNames -- Fill cache if invalidated
+    vars <- ST.gets getProofStateFreeNames
     let zs = z:[z ++ show i | i <- numbers]
         newVar = head $ Prelude.filter (\l -> not $ S.member l vars) zs
-    ST.modify (\s -> s { cachedProofStateNames = S.insert newVar (cachedProofStateNames s) })
+    ST.modify (\s -> s { cachedProofStateNames = S.insert newVar (cachedProofStateNames s) }) -- Add to newly filled cache
     return newVar
 
 getFreshSubgoalName :: ProverState String
@@ -598,7 +608,7 @@ tensorLeftTac unavailableVars x = do
             y <- getFreshVar
             freshGoal <- createNewSubgoal $ seq { linearContext = Data.Map.insert y a . Data.Map.insert x b . Data.Map.delete x $ linearContext seq }
             useCurrentSubgoal Trunk . buildJustification1 freshGoal $ TensorLeftRule xName y
-            return "Tensor left side tactic applied"
+            return $ "Tensor left side tactic applied. Created: " ++ y
         Just _ -> tacError "Not a tensor"
         _ -> tacError $ "Could not find " ++ x ++ "in the linear context"
 
@@ -669,6 +679,7 @@ forallLeftTac x fp = do
             xName <- lookupVarName x
             freshGoal <- createNewSubgoal $ seq { linearContext = Data.Map.insert x (substVarTerm p (goalTerm fpConcl) y) $ linearContext seq }
             useCurrentSubgoal Trunk . buildJustification1 freshGoal $ ForallLeftRule xName y fp
+            invalidateNameCache
             return "Forall left side tactic applied.")
             else tacError $ "Mismatched proof result and goal term:\nEXPECTED: " ++ show t ++ "\nGOT: " ++ show (goalType fpConcl)
         Just _ -> tacError "Cannot apply to non-forall proposition."
@@ -683,6 +694,7 @@ existsRightTac fp = do
             zName <- lookupVarName $ channel seq
             freshGoal <- createNewSubgoal $ seq { goalProposition = substVarTerm p (goalTerm fpConcl) x }
             useCurrentSubgoal Trunk . buildJustification1 freshGoal $ ExistsRightRule x fp
+            invalidateNameCache
             return "Exists right side tactic applied.")
             else tacError $ "Mismatched proof result and goal term:\nEXPECTED: " ++ show t ++ "\nGOT: " ++ show (goalType fpConcl)
         _ -> tacError "Cannot apply to non-exists proposition."
@@ -1051,7 +1063,7 @@ theorem s ts n p =
                 , outputs = "New theorem started":outputs s
                 , curTheoremName = n
                 , openGoalStack = ["?a"]
-                , cachedProofStateNames = S.empty
+                , cachedProofStateNames = getSubgoalNames goal
                 , newSubgoalNameList = tail allSubgoalNames
                 , cachedVarNames = namesInOrder })
 
@@ -1178,7 +1190,7 @@ _FTermR = do
     curState <- ST.get
     sg <- getCurrentSubgoal
     seq <- getCurrentSequent
-    names <- getProofStateNames
+    names <- ST.gets getProofStateFreeNames
     let fullTac p = do
             --ST.modify (\s1 -> s1 { curSubgoal = curSubgoal curState })
             functionalTermRightTac p
@@ -1297,7 +1309,7 @@ _ForallL x = do
     curState <- ST.get
     sg <- getCurrentSubgoal
     seq <- getCurrentSequent
-    names <- getProofStateNames
+    names <- ST.gets getProofStateFreeNames
     let fullTac p = do
             --ST.modify (\s1 -> s1 { curSubgoal = curSubgoal curState })
             forallLeftTac x p
@@ -1319,7 +1331,7 @@ _ExistsR = do
     curState <- ST.get
     sg <- getCurrentSubgoal
     seq <- getCurrentSequent
-    names <- getProofStateNames
+    names <- ST.gets getProofStateFreeNames
     let fullTac p = do
             --ST.modify (\s1 -> s1 { curSubgoal = curSubgoal curState })
             existsRightTac p

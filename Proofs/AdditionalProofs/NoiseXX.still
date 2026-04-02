@@ -1,0 +1,141 @@
+module NoiseXX begin
+
+assume principal is "Type 1"
+assume ephKey is "Type 1"
+assume sessionKey is "Type 1"
+
+-- Message 1 is plaintext in this simplified XX model: initiator ephemeral.
+assume msg1 is
+  "Pi A:principal. Pi Ei:ephKey. Type 1"
+
+-- Message 2 is treated as a ciphertext carrying the responder's reply.
+assume msg2 is
+  "Pi A:principal. Pi B:principal.
+   Pi Ei:ephKey. Pi Er:ephKey. Pi K:sessionKey.
+   Type 1"
+
+assume body2 is
+  "Pi A:principal. Pi B:principal.
+   Pi Ei:ephKey. Pi Er:ephKey. Pi K:sessionKey.
+   Type 1"
+
+assume enc2 is
+  "Pi A:principal. Pi B:principal.
+   Pi Ei:ephKey. Pi Er:ephKey. Pi K:sessionKey.
+   Pi p:body2 A B Ei Er K.
+   msg2 A B Ei Er K"
+
+assume dec2 is
+  "Pi A:principal. Pi B:principal.
+   Pi Ei:ephKey. Pi Er:ephKey. Pi K:sessionKey.
+   Pi c:msg2 A B Ei Er K.
+   body2 A B Ei Er K"
+
+-- Message 3 is treated as a ciphertext carrying the initiator's final reply.
+assume msg3 is
+  "Pi A:principal. Pi B:principal. Pi K:sessionKey. Type 1"
+
+assume body3 is
+  "Pi A:principal. Pi B:principal. Pi K:sessionKey. Type 1"
+
+assume enc3 is
+  "Pi A:principal. Pi B:principal. Pi K:sessionKey.
+   Pi p:body3 A B K.
+   msg3 A B K"
+
+assume dec3 is
+  "Pi A:principal. Pi B:principal. Pi K:sessionKey.
+   Pi c:msg3 A B K.
+   body3 A B K"
+
+-- Initiator:
+-- sends msg1, then accepts any responder ephemeral / session key pair in msg2,
+-- sends msg3, and terminates.
+stype initiatorViewXX =
+  "forall A:principal.
+   forall B:principal.
+   exists Ei:ephKey.
+     $msg1 A Ei *
+     (forall Er:ephKey.
+      forall K:sessionKey.
+        $msg2 A B Ei Er K -o
+        ($msg3 A B K * 1))"
+
+-- Responder:
+-- receives msg1, chooses Er and K, sends msg2, then waits for msg3.
+stype responderViewXX =
+  "forall A:principal.
+   forall B:principal.
+   forall Ei:ephKey.
+     $msg1 A Ei -o
+     (exists Er:ephKey.
+      exists K:sessionKey.
+        $msg2 A B Ei Er K *
+        ($msg3 A B K -o 1))"
+
+theorem honestNoiseXX consumes "initiatorViewXX" "responderViewXX":
+  "forall A:principal. forall B:principal. 1"
+apply Intros
+
+-- a : initiatorViewXX
+-- b : responderViewXX
+
+apply ForallL a
+apply Exact "A"
+apply ForallL a
+apply Exact "B"
+
+apply ExistsL a
+apply TensorL a
+
+-- c : $msg1 A Ei
+-- a : forall Er:ephKey. forall K:sessionKey.
+--       $msg2 A B Ei Er K -o ($msg3 A B K * 1)
+
+apply ForallL b
+apply Exact "A"
+apply ForallL b
+apply Exact "B"
+apply ForallL b
+apply Exact "Ei"
+
+apply ImpliesL b
+defer
+apply IdA
+
+apply ExistsL b
+apply ExistsL b
+apply TensorL b
+
+-- f : $msg2 A B Ei Er K
+-- b : $msg3 A B K -o 1
+
+apply ForallL a
+apply Exact "Er"
+apply ForallL a
+apply Exact "K"
+
+apply ImpliesL a
+defer
+apply FTermL f
+apply FTermR
+apply Exact "enc2 A B Ei Er K (dec2 A B Ei Er K f)"
+
+apply TensorL a
+
+-- h : $msg3 A B K
+-- a : 1
+
+apply ImpliesL b
+defer
+apply FTermL h
+apply FTermR
+apply Exact "enc3 A B K (dec3 A B K h)"
+
+apply UnitLA+
+apply UnitR
+done
+
+print_theorems
+
+extract honestNoiseXX

@@ -44,4 +44,8 @@ expr a ex = ex
 
 expr2 [] ex = ex
 expr2 (h1:[]) ex = ex
-expr2 (h1:h2:rest) ex = expr2 (h2:rest) $ ex ++ " -o (" ++ (h1 ++ " -o " ++ h2) ++ ")" 
+expr2 (h1:h2:rest) ex = expr2 (h2:rest) $ ex ++ " -o (" ++ (h1 ++ " -o " ++ h2) ++ ")"
+
+parensIf :: Bool -> String -> String
+parensIf True  s = "(" ++ s ++ ")"
+parensIf False s = s

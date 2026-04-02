@@ -25,3 +25,4 @@ cabal.project.local~
 tac
 .DS_Store
 still
+debug.log

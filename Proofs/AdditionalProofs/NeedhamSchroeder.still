@@ -1,0 +1,267 @@
+module NeedhamSchroederMITM begin
+
+assume principal is "Type 1"
+assume nonce is "Type 1"
+
+-- Ciphertext message families for the original NSPK:
+--   msg1 a b na  ~ {na,a} encrypted for b
+--   msg2 a na nb ~ {na,nb} encrypted for a   (note: responder identity missing)
+--   msg3 b nb    ~ {nb} encrypted for b
+assume msg1 is "Pi a:principal. Pi b:principal. Pi na:nonce. Type 1"
+assume msg2 is "Pi a:principal. Pi na:nonce. Pi nb:nonce. Type 1"
+assume msg3 is "Pi b:principal. Pi nb:nonce. Type 1"
+
+-- Plaintext payload families.
+assume body1 is "Pi a:principal. Pi na:nonce. Type 1"
+assume body2 is "Pi a:principal. Pi na:nonce. Pi nb:nonce. Type 1"
+assume body3 is "Pi nb:nonce. Type 1"
+
+-- Symbolic encryption/decryption operations.
+-- These are intentionally abstract: they express perfect cryptography
+-- at the symbolic level rather than computational security.
+
+assume enc1 is
+  "Pi a:principal. Pi b:principal. Pi na:nonce.
+   Pi p:body1 a na.
+   msg1 a b na"
+
+assume dec1 is
+  "Pi a:principal. Pi b:principal. Pi na:nonce.
+   Pi c:msg1 a b na.
+   body1 a na"
+
+assume enc2 is
+  "Pi a:principal. Pi na:nonce. Pi nb:nonce.
+   Pi p:body2 a na nb.
+   msg2 a na nb"
+
+assume dec2 is
+  "Pi a:principal. Pi na:nonce. Pi nb:nonce.
+   Pi c:msg2 a na nb.
+   body2 a na nb"
+
+assume enc3 is
+  "Pi b:principal. Pi nb:nonce.
+   Pi p:body3 nb.
+   msg3 b nb"
+
+assume dec3 is
+  "Pi b:principal. Pi nb:nonce.
+   Pi c:msg3 b nb.
+   body3 nb"
+
+-- View of NSPK from the peer interacting with the initiator.
+-- The peer first receives message 1, then sends message 2, then receives message 3.
+stype initiatorView =
+  "forall A:principal.
+   forall I:principal.
+   exists Na:nonce.
+     $msg1 A I Na *
+     (forall Nb:nonce.
+       $msg2 A Na Nb -o
+       ($msg3 I Nb * 1))"
+
+-- View of NSPK from the peer interacting with the responder.
+-- The peer first sends message 1, then receives message 2, then sends message 3.
+stype responderView =
+  "forall A:principal.
+   forall B:principal.
+   forall Na:nonce.
+     $msg1 A B Na -o
+     (exists Nb:nonce.
+       $msg2 A Na Nb *
+       ($msg3 B Nb -o 1))"
+
+-- Man-in-the-middle attack:
+-- consume one initiator session aimed at I and one responder session aimed at B,
+-- and complete both by mediating between them.
+theorem loweAttack consumes "initiatorView" "responderView":
+  "forall A:principal. forall I:principal. forall B:principal. 1"
+apply Intros
+
+-- Instantiate the initiator side with A and I.
+apply ForallL d
+apply Exact "A"
+apply ForallL d
+apply Exact "I"
+
+-- Learn Na and receive msg1(A,I,Na).
+apply ExistsL d
+apply TensorL d
+apply FTermL f
+
+-- Instantiate the responder side with A, B, and the same Na.
+apply ForallL e
+apply Exact "A"
+apply ForallL e
+apply Exact "B"
+apply ForallL e
+apply Exact "Na"
+
+-- Send responder message 1 by decrypting the ciphertext aimed at I
+-- and re-encrypting the recovered payload for B.
+apply ImpliesL e
+defer
+apply FTermR
+apply Exact "enc1 A B Na (dec1 A I Na f)"
+
+-- Get responder's second message and continuation waiting for message 3.
+apply ExistsL e
+apply TensorL e
+
+-- Feed responder's second message directly to the initiator.
+-- No attacker decryption is needed here; the attack only relays this ciphertext.
+apply ForallL d
+apply Exact "Nb" -- TODO figure out this renaming happening
+apply ImpliesL d
+defer
+apply IdA
+
+-- Receive initiator's third message and decrypt/re-encrypt it for B.
+apply TensorL d
+apply ImpliesLA
+defer
+apply FTermL j
+apply FTermR
+apply Exact "enc3 B Nb (dec3 I Nb j)"
+
+-- Discharge the final units.
+apply UnitLA+
+apply UnitR
+done
+
+------------------------------------------------------------------------
+-- Lowe's fix: message 2 includes the responder identity.
+------------------------------------------------------------------------
+
+assume msg2Fixed is
+  "Pi a:principal. Pi b:principal. Pi na:nonce. Pi nb:nonce. Type 1"
+
+assume body2Fixed is
+  "Pi a:principal. Pi b:principal. Pi na:nonce. Pi nb:nonce. Type 1"
+
+assume enc2Fixed is
+  "Pi a:principal. Pi b:principal. Pi na:nonce. Pi nb:nonce.
+   Pi p:body2Fixed a b na nb.
+   msg2Fixed a b na nb"
+
+assume dec2Fixed is
+  "Pi a:principal. Pi b:principal. Pi na:nonce. Pi nb:nonce.
+   Pi c:msg2Fixed a b na nb.
+   body2Fixed a b na nb"
+
+stype initiatorViewFixed =
+  "forall A:principal.
+   forall B:principal.
+   exists Na:nonce.
+     $msg1 A B Na *
+     (forall Nb:nonce.
+       $msg2Fixed A B Na Nb -o
+       ($msg3 B Nb * 1))"
+
+stype responderViewFixed =
+  "forall A:principal.
+   forall B:principal.
+   forall Na:nonce.
+     $msg1 A B Na -o
+     (exists Nb:nonce.
+       $msg2Fixed A B Na Nb *
+       ($msg3 B Nb -o 1))"
+
+-- Honest execution still works after Lowe's fix.
+theorem honestFixed consumes "initiatorViewFixed" "responderViewFixed":
+  "forall A:principal. forall B:principal. 1"
+apply Intros
+
+-- Instantiate the initiator side with A and B.
+apply ForallL d
+apply Exact "A"
+apply ForallL d
+apply Exact "B"
+
+-- Learn Na and receive msg1(A,B,Na).
+apply ExistsL d
+apply TensorL d
+
+-- Instantiate the responder side with A, B, and Na.
+apply ForallL e
+apply Exact "A"
+apply ForallL e
+apply Exact "B"
+apply ForallL e
+apply Exact "Na"
+
+-- Send message 1 honestly.
+apply ImpliesL e
+defer
+apply IdA
+
+-- Get responder's fixed message 2 and continuation waiting for message 3.
+apply ExistsL e
+apply TensorL e
+
+-- Feed the fixed message 2 to the initiator.
+apply ForallL d
+apply Exact "Nb"
+apply ImpliesL d
+defer
+apply IdA
+
+-- Receive message 3 and give it back to the responder.
+apply TensorL d
+apply ImpliesLA
+defer
+apply IdA
+
+-- Discharge the final units.
+apply UnitLA+
+apply UnitR
+done
+
+-- The old man-in-the-middle attack shape no longer works for the fixed protocol.
+-- The proof gets stuck when trying to relay message 2:
+--
+-- theorem loweAttackFixed consumes "initiatorViewFixed" "responderViewFixed":
+--   "forall A:principal. forall I:principal. forall B:principal. 1"
+-- apply Intros
+
+-- apply ForallL d
+-- apply Exact "A"
+-- apply ForallL d
+-- apply Exact "I"
+
+-- apply ExistsL d
+-- apply TensorL d
+-- apply FTermL a
+
+-- apply ForallL e
+-- apply Exact "A"
+-- apply ForallL e
+-- apply Exact "B"
+-- apply ForallL e
+-- apply Exact "Na"
+
+-- apply ImpliesL e
+-- defer
+-- apply FTermR
+-- apply Exact "enc1 A B Na (dec1 A I Na a)"
+
+-- apply ExistsL e
+-- apply TensorL e
+
+-- apply ForallL d
+-- apply Exact "Nb"
+-- apply ImpliesL d
+-- defer
+-- apply IdA
+--
+-- The last IdA fails because the responder provides
+--   $msg2Fixed A B Na Nb
+-- but the initiator expects
+--   $msg2Fixed A I Na Nb
+-- so the old relay proof is no longer typable unless I and B are the same principal.
+
+print_theorems
+
+extract loweAttack
+extract honestFixed

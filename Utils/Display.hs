@@ -47,8 +47,10 @@ renderState s =
             _ -> n
         messagePrinter = (if L.null $ outputs s then "" else head $ outputs s) ++ (if L.null (errors s) then "" else "\n" ++ unlines (reverse (errors s)))
         orderedSubgoals = L.reverse $ (\(sgn, sg) -> (sgn, fromJust sg)) <$> L.filter (\(sgn, sg) -> isJust sg) ((\sgn -> (sgn, Data.Map.lookup  (L.takeWhile (/= '.') sgn) (subgoals s))) <$> openGoalStack s)
+        cachedNames = show $ cachedProofStateNames s
+        freeNames = show $ getProofStateFreeNames s
     in
-        messagePrinter ++ L.foldl' (\acc kvp -> acc ++ "\n" ++ uncurry subgoalPrinter kvp) "" orderedSubgoals
+        freeNames ++ "\n\n" ++ cachedNames ++ "\n\n" ++ messagePrinter ++ L.foldl' (\acc kvp -> acc ++ "\n" ++ uncurry subgoalPrinter kvp) "" orderedSubgoals
 
 mainPrinter (Right s) =
         let

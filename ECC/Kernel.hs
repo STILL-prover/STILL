@@ -83,19 +83,46 @@ instance Eq FunctionalTerm where
     ft1 == ft2 = alphaEquivalent ft1 ft2
 
 ftToS :: FunctionalTerm -> String
-ftToS (Type i) = "Type " ++ show i
-ftToS Prop = "Prop"
-ftToS (Var x) = x
-ftToS (App t1 t2) = "(" ++ ftToS t1 ++ " " ++ ftToS t2 ++ ")"
-ftToS (Lambda x ty body) =
-    "(\\" ++ x ++ " : " ++ ftToS ty ++ ". " ++ ftToS body ++ ")"
-ftToS (Pi x ty body) =
-    "[" ++ x ++ " : " ++ ftToS ty ++ ". " ++ ftToS body ++ "]"
-ftToS FHoleTerm = "_"
-ftToS (Sigma x t1 t2) = "(" ++ x ++ ":" ++ ftToS t1 ++ ") * " ++ ftToS t2
-ftToS (Pair t1 t2 x ty1 ty2) = "(" ++ ftToS t1 ++ ", " ++ ftToS t2 ++ "):" ++ ftToS (Sigma x ty1 ty2)
-ftToS (Proj1 t) = "proj1 " ++ ftToS t
-ftToS (Proj2 t) = "proj2 " ++ ftToS t
+ftToS = go 0
+  where
+    binderPrec = 0
+    appPrec    = 1
+    -- Print something in function position of an application.
+    -- Applications themselves stay unparenthesized so chains print as f x y.
+    ppFun :: FunctionalTerm -> String
+    ppFun t@(App _ _) = go appPrec t
+    ppFun t           = go (appPrec + 1) t
+
+    -- Print something in argument position of an application/prefix operator.
+    ppArg :: FunctionalTerm -> String
+    ppArg = go (appPrec + 1)
+
+    go :: Int -> FunctionalTerm -> String
+    go _ (Type i) = "Type " ++ show i
+    go _ Prop = "Prop"
+    go _ (Var x) = x
+    go _ FHoleTerm = "_"
+    go p (App t1 t2) =
+      parensIf (p > appPrec) $
+        ppFun t1 ++ " " ++ ppArg t2
+    go p (Lambda x ty body) =
+      parensIf (p > binderPrec) $
+        "\\" ++ x ++ " : " ++ go 0 ty ++ ". " ++ go 0 body
+    go p (Pi x ty body) =
+      parensIf (p > binderPrec) $
+        "[" ++ x ++ " : " ++ go 0 ty ++ ". " ++ go 0 body ++ "]"
+    go p (Sigma x t1 t2) =
+      parensIf (p > binderPrec) $
+        "(" ++ x ++ " : " ++ go 0 t1 ++ ") * " ++ go 0 t2
+    go p (Pair t1 t2 x ty1 ty2) =
+      parensIf (p > binderPrec) $
+        "(" ++ go 0 t1 ++ ", " ++ go 0 t2 ++ ") : " ++ go 0 (Sigma x ty1 ty2)
+    go p (Proj1 t) =
+      parensIf (p > appPrec) $
+        "proj1 " ++ ppArg t
+    go p (Proj2 t) =
+      parensIf (p > appPrec) $
+        "proj2 " ++ ppArg t
 
 {-| Get free variables in a term.
 

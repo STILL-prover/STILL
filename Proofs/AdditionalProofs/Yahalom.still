@@ -1,0 +1,157 @@
+module Yahalom begin
+
+assume principal is "Type 1"
+assume nonce is "Type 1"
+assume sessionKey is "Type 1"
+
+-- Four-message Yahalom variant:
+-- 1. A -> B : A, Na
+-- 2. B -> S : B, {A, Na, Nb}_{Kbs}
+-- 3. S -> A : {B, Kab, Na, Nb}_{Kas}, {A, Kab}_{Kbs}
+-- 4. A -> B : {A, Kab}_{Kbs}, {Nb}_{Kab}
+
+-- Message 1: plaintext initiator identity and nonce.
+assume msg1 is
+  "Pi A:principal. Pi Na:nonce. Type 1"
+
+-- Message 2: responder request to the server.
+assume msg2 is
+  "Pi A:principal. Pi B:principal. Pi Na:nonce. Pi Nb:nonce. Type 1"
+
+-- First ciphertext from the server to the initiator.
+assume msg3A is
+  "Pi A:principal. Pi B:principal. Pi Kab:sessionKey. Pi Na:nonce. Pi Nb:nonce. Type 1"
+
+-- Ticket for B, forwarded by A in message 4.
+assume ticketB is
+  "Pi A:principal. Pi B:principal. Pi Kab:sessionKey. Type 1"
+
+-- Final ciphertext under the new session key.
+assume msg4 is
+  "Pi Kab:sessionKey. Pi Nb:nonce. Type 1"
+
+-- Initiator A:
+-- sends msg1, then after receiving the server's pair
+-- forwards the ticket and finishes the challenge-response.
+stype initiatorView =
+  "forall A:principal.
+   forall B:principal.
+   exists Na:nonce.
+     $msg1 A Na *
+     (forall Kab:sessionKey.
+      forall Nb:nonce.
+        ($msg3A A B Kab Na Nb * $ticketB A B Kab) -o
+        ($ticketB A B Kab * ($msg4 Kab Nb * 1)))"
+
+-- Responder B:
+-- receives msg1, chooses Nb and contacts the server,
+-- then later receives the forwarded ticket and the final proof under Kab.
+stype responderView =
+  "forall A:principal.
+   forall B:principal.
+   forall Na:nonce.
+     $msg1 A Na -o
+     (exists Nb:nonce.
+       $msg2 A B Na Nb *
+       (forall Kab:sessionKey.
+         ($ticketB A B Kab * $msg4 Kab Nb) -o 1))"
+
+-- Trusted server S:
+-- receives the responder's request and returns the initiator's ciphertext
+-- together with B's ticket.
+stype serverView =
+  "forall A:principal.
+   forall B:principal.
+   forall Na:nonce.
+   forall Nb:nonce.
+     $msg2 A B Na Nb -o
+     (exists Kab:sessionKey.
+       $msg3A A B Kab Na Nb * $ticketB A B Kab)"
+
+-- Honest execution of the Yahalom protocol.
+theorem honestYahalom consumes "initiatorView" "responderView" "serverView":
+  "forall A:principal. forall B:principal. 1"
+apply Intros
+
+-- Instantiate the initiator with A and B.
+apply ForallL a
+apply Exact "A"
+apply ForallL a
+apply Exact "B"
+
+-- Learn Na and obtain message 1.
+apply ExistsL a
+apply TensorL a
+
+-- Instantiate the responder with A, B, and Na.
+apply ForallL b
+apply Exact "A"
+apply ForallL b
+apply Exact "B"
+apply ForallL b
+apply Exact "Na"
+
+-- Feed message 1 from A to B.
+apply ImpliesL b
+defer
+apply IdA
+
+-- B chooses Nb and sends message 2 to the server.
+apply ExistsL b
+apply TensorL b
+
+-- Instantiate the server with A, B, Na, and Nb.
+apply ForallL c
+apply Exact "A"
+apply ForallL c
+apply Exact "B"
+apply ForallL c
+apply Exact "Na"
+apply ForallL c
+apply Exact "Nb"
+
+-- Feed message 2 from B to S.
+apply ImpliesL c
+defer
+apply IdA
+
+-- Server chooses Kab and returns message 3 plus B's ticket.
+apply ExistsL c
+apply TensorL c
+
+-- Instantiate the initiator continuation with Kab and Nb.
+apply ForallL a
+apply Exact "Kab"
+apply ForallL a
+apply Exact "Nb"
+-- apply FTermLA+
+-- Feed the server's pair to A.
+apply ImpliesL a
+defer
+apply TensorR
+apply IdA
+apply IdA
+
+-- A forwards the ticket and sends the final encrypted response.
+apply TensorL a
+apply TensorL a
+
+-- Instantiate B's final continuation with Kab.
+apply ForallL b
+apply Exact "Kab"
+
+-- Feed the forwarded ticket and final response to B.
+apply ImpliesL b
+defer
+apply TensorR
+apply IdA
+apply IdA
+
+-- Remove the unit assumptions and close.
+apply UnitLA+
+apply UnitR
+done
+
+print_theorems
+
+extract honestYahalom

@@ -49,7 +49,7 @@ initializeProof seq = Subgoal { sequent = seq, prevGoal = "", nextGoals = [], us
 initializeState :: Subgoal -> S.Set String -> ProofState
 initializeState goal additionalReservedVars =
     let
-        fnVars = getFunctionalContextNames . functionalContext . sequent $ goal
+        fnVars = getFunctionalContextFreeNames . functionalContext . sequent $ goal
     in
         S { subgoals = singleton "?a" goal, curSubgoal = "?a", reservedVars = additionalReservedVars `S.union` fnVars, usedSubgoalNames = S.singleton "?a" }
 
