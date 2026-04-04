@@ -50,7 +50,7 @@ renderState s =
         cachedNames = show $ cachedProofStateNames s
         freeNames = show $ getProofStateFreeNames s
     in
-        freeNames ++ "\n\n" ++ cachedNames ++ "\n\n" ++ messagePrinter ++ L.foldl' (\acc kvp -> acc ++ "\n" ++ uncurry subgoalPrinter kvp) "" orderedSubgoals
+        messagePrinter ++ L.foldl' (\acc kvp -> acc ++ "\n" ++ uncurry subgoalPrinter kvp) "" orderedSubgoals
 
 mainPrinter (Right s) =
         let
