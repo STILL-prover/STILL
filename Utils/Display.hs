@@ -46,7 +46,7 @@ renderState s =
             Nothing -> (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (curReservedVars n) sg
             _ -> n
         messagePrinter = (if L.null $ outputs s then "" else head $ outputs s) ++ (if L.null (errors s) then "" else "\n" ++ unlines (reverse (errors s)))
-        orderedSubgoals = L.reverse $ (\(sgn, sg) -> (sgn, fromJust sg)) <$> L.filter (\(sgn, sg) -> isJust sg) ((\sgn -> (sgn, Data.Map.lookup  (L.takeWhile (/= '.') sgn) (subgoals s))) <$> openGoalStack s)
+        orderedSubgoals = (\(sgn, sg) -> (sgn, fromJust sg)) <$> L.filter (\(sgn, sg) -> isJust sg) ((\sgn -> (sgn, Data.Map.lookup  (L.takeWhile (/= '.') sgn) (subgoals s))) <$> openGoalStack s)
         cachedNames = show $ cachedProofStateNames s
         freeNames = show $ getProofStateFreeNames s
     in

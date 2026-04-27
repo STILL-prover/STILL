@@ -999,7 +999,7 @@ thenTactical t1 t2 = do
             let i = L.elemIndex sgn curSgs
             ST.modify (\s -> _Prefer s (fromMaybe (-1 :: Int) i))
             t2)) toApplySubgoals
-    return (res1 ++ "\n" ++ L.intercalate "\n" t2Res)
+    return (res1 ++ "\n" ++ L.intercalate "\n\t" t2Res)
 
 skipTactical :: Tactic
 skipTactical = do
@@ -1432,7 +1432,7 @@ _Repeat = repeatTactical
 
 {-| Tactic: Apply all available introduction rules. -}
 _Intros :: Tactic
-_Intros = _Repeat (_ImpliesR `_Alt` _ForallR `_Alt` _Forall2R)
+_Intros = _Repeat (_ImpliesR `_Alt` _ForallR `_Alt` _Forall2R) >> return "Intros applied."
 
 _Defer :: ProofState -> ProofState
 _Defer curS =

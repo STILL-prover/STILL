@@ -2,7 +2,7 @@
 -- Recursive Types for Free by Wadler 1990 https://homepages.inf.ed.ac.uk/wadler/papers/free-rectypes/free-rectypes.txt
 module SNat begin
 
-stype nat = "forall X : stype. !(1 + X -o X) -o X"
+stype nat = "forall X : stype. !((1 + X) -o X) -o X"
 
 -- Right eliminator .
 theorem foldNat: "forall X : stype. !(1 + X -o X) -o nat -o X"

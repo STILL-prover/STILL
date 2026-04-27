@@ -545,7 +545,7 @@ data Sequent = Sequent {
 
 seqToS :: Sequent -> String
 seqToS seq =
-    if length singleLine > 80
+    if True --length singleLine > 80
     then multiLine
     else singleLine
   where
