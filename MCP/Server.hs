@@ -8,6 +8,8 @@ import SessionTypes.Tactics (ProofState (..))
 import System.IO
 import Utils.Display (renderState)
 import Utils.Server (ProcessedScript (..), Snapshot (afterState), emptyState, findSnapshotAt, runProofScript, runProofScriptDetailed)
+import System.Environment (getExecutablePath)
+import System.Directory (doesFileExist)
 
 -- ==========================================
 -- Types
@@ -97,7 +99,7 @@ initializeResult =
     ]
 
 toolsListResult :: Json
-toolsListResult = JObj [("tools", JArr [checkProofTool, getProofStateTool, listTheoremsTool])]
+toolsListResult = JObj [("tools", JArr [checkProofTool, getProofStateTool, listTheoremsTool, getTacticReferenceTool, getTutorialTool])]
 
 checkProofTool :: Json
 checkProofTool =
@@ -145,6 +147,22 @@ listTheoremsTool =
             ("required", JArr [JStr "text"])
           ]
       )
+    ]
+
+getTacticReferenceTool :: Json
+getTacticReferenceTool =
+  JObj
+    [ ("name", JStr "get_tactic_reference"),
+      ("description", JStr "Get the complete tactic reference for the STILL prover, including all session type tactics, ECC functional tactics, tacticals, and script-level commands."),
+      ("inputSchema", JObj [("type", JStr "object"), ("properties", JObj []), ("required", JArr [])])
+    ]
+
+getTutorialTool :: Json
+getTutorialTool =
+  JObj
+    [ ("name", JStr "get_tutorial"),
+      ("description", JStr "Get a tutorial for the STILL prover covering proof workflow, worked examples, common patterns, and MCP tool usage."),
+      ("inputSchema", JObj [("type", JStr "object"), ("properties", JObj []), ("required", JArr [])])
     ]
 
 -- ==========================================
@@ -200,6 +218,34 @@ handleListTheorems jid args = do
           body = if null names then "No theorems proven." else unlines names
        in makeToolResult jid False body
 
+readDocFile :: String -> IO String
+readDocFile filename = do
+  exePath <- getExecutablePath
+  let exeDir = reverse . dropWhile (\c -> c /= '/' && c /= '\\') . reverse $ exePath
+      exePath' = exeDir ++ filename
+  exeRelExists <- doesFileExist exePath'
+  if exeRelExists
+    then readFile exePath'
+    else do
+      cwdExists <- doesFileExist filename
+      if cwdExists
+        then readFile filename
+        else return ("Documentation file '" ++ filename ++ "' not found. Run 'still serve-mcp' from the STILL project root directory, or see the project repository.")
+
+handleGetTacticReference :: JId -> IO String
+handleGetTacticReference jid = do
+  result <- try (readDocFile "Tactics.md") :: IO (Either SomeException String)
+  return $ case result of
+    Left ex -> makeToolResult jid True ("Exception reading Tactics.md: " ++ show ex)
+    Right content -> makeToolResult jid False content
+
+handleGetTutorial :: JId -> IO String
+handleGetTutorial jid = do
+  result <- try (readDocFile "Tutorial.md") :: IO (Either SomeException String)
+  return $ case result of
+    Left ex -> makeToolResult jid True ("Exception reading Tutorial.md: " ++ show ex)
+    Right content -> makeToolResult jid False content
+
 handleToolCall :: JId -> Json -> IO String
 handleToolCall jid params =
   case lookupKey "name" params >>= getString of
@@ -212,6 +258,8 @@ handleToolCall jid params =
             "check_proof" -> handleCheckProof jid args
             "get_proof_state" -> handleGetProofState jid args
             "list_theorems" -> handleListTheorems jid args
+            "get_tactic_reference" -> handleGetTacticReference jid
+            "get_tutorial" -> handleGetTutorial jid
             _ -> return $ makeErrorResponse jid (-32601) ("Unknown tool: " ++ name)
 
 -- ==========================================
