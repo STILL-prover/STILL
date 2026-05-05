@@ -6,8 +6,9 @@ import Data.Map qualified as Map
 import MCP.Json
 import SessionTypes.Tactics (ProofState (..))
 import System.IO
-import Utils.Display (renderState)
-import Utils.Server (ProcessedScript (..), Snapshot (afterState), emptyState, findSnapshotAt, runProofScript, runProofScriptDetailed)
+import Parser.CmdParsers (Command (..), CommandSpan (spanText, spanValue))
+import Utils.Display (renderGoals, renderState)
+import Utils.Server (ProcessedScript (..), Snapshot (afterState, beforeState), emptyState, findSnapshotAt, runProofScript, runProofScriptDetailed)
 import System.Environment (getExecutablePath)
 import System.Directory (doesFileExist)
 
@@ -105,7 +106,7 @@ checkProofTool :: Json
 checkProofTool =
   JObj
     [ ("name", JStr "check_proof"),
-      ("description", JStr "Execute a STILL proof script and return outputs and any errors."),
+      ("description", JStr "Execute a STILL proof script and return a proof trace showing the goal state after each step, plus any errors. Call get_tactic_reference first to learn available tactics and their semantics before writing proofs."),
       ( "inputSchema",
         JObj
           [ ("type", JStr "object"),
@@ -169,24 +170,46 @@ getTutorialTool =
 -- Tool Handlers
 -- ==========================================
 
+isProvingCmd :: Command -> Bool
+isProvingCmd (CmdTheorem _ _ _) = True
+isProvingCmd (CmdApply _) = True
+isProvingCmd CmdDefer = True
+isProvingCmd CmdDone = True
+isProvingCmd _ = False
+
+stepNewList :: (ProofState -> [String]) -> Snapshot -> [String]
+stepNewList field snap =
+  let before = length (field (beforeState snap))
+      after = field (afterState snap)
+  in take (length after - before) after
+
+formatProofStep :: (CommandSpan Command, Snapshot) -> String
+formatProofStep (sp, snap) =
+  let s = afterState snap
+      newErrs = stepNewList errors snap
+      errLine = if null newErrs then "" else "\nError: " ++ head newErrs
+  in ">> " ++ spanText sp ++ "\n" ++ renderGoals s ++ errLine
+
 handleCheckProof :: JId -> [(String, Json)] -> IO String
 handleCheckProof jid args = do
   let text = case lookup "text" args >>= getString of Just t -> t; _ -> ""
   result <- try (runProofScriptDetailed "<mcp>" text) :: IO (Either SomeException (Either String ProcessedScript))
   return $ case result of
     Left ex -> makeToolResult jid True ("Exception: " ++ show ex)
-    Right (Left err) -> makeToolResult jid True err
+    Right (Left err) -> makeToolResult jid True
+        (err ++ "\n\nFor tactic names and descriptions, call get_tactic_reference.")
     Right (Right ps) ->
-      let finalState = case psSnaps ps of [] -> emptyState; snaps -> afterState (last snaps)
-          out = unlines . reverse $ outputs finalState
-          errs = unlines . reverse $ errors finalState
+      let steps = zip (psCommands ps) (psSnaps ps)
+          provingSteps = filter (isProvingCmd . spanValue . fst) steps
+          traceSection
+            | null provingSteps = ""
+            | otherwise = "=== Proof Trace ===\n\n"
+                ++ concatMap (\step -> formatProofStep step ++ "\n\n") provingSteps
+          finalState = case psSnaps ps of [] -> emptyState; snaps -> afterState (last snaps)
           hasErr = not (null (errors finalState))
-          body =
-            "Success: "
-              ++ show (not hasErr)
-              ++ "\n\nOutputs:\n"
-              ++ out
-              ++ if hasErr then "\nErrors:\n" ++ errs else ""
+          body = traceSection
+              ++ "Success: " ++ show (not hasErr)
+              ++ if hasErr then "\n\nErrors:\n" ++ unlines (reverse (errors finalState)) else ""
        in makeToolResult jid hasErr body
 
 handleGetProofState :: JId -> [(String, Json)] -> IO String

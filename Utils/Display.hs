@@ -52,6 +52,21 @@ renderState s =
     in
         messagePrinter ++ L.foldl' (\acc kvp -> acc ++ "\n" ++ uncurry subgoalPrinter kvp) "" orderedSubgoals
 
+renderGoals :: ProofState -> String
+renderGoals s =
+    let
+        sgNameSep = ">> "
+        curReservedVars sgn = getUnavailableVarsForSubgoal sgn s
+        subgoalPrinter n sg = case inProgressFunctionalProof sg of
+            Just (fs, p) | Data.Map.member (L.drop 1 (L.dropWhile (/= '.') n)) (FT.subgoals fs) -> (if [n] == L.take 1 (openGoalStack s) then "*" else " ") ++ n ++ sgNameSep ++ fsgToS (FT.subgoals fs Data.Map.! L.drop 1 (L.dropWhile (/= '.') n))
+            Nothing -> (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (curReservedVars n) sg
+            _ -> n
+        orderedSubgoals = (\(sgn, sg) -> (sgn, fromJust sg)) <$> L.filter (\(sgn, sg) -> isJust sg) ((\sgn -> (sgn, Data.Map.lookup (L.takeWhile (/= '.') sgn) (subgoals s))) <$> openGoalStack s)
+    in
+        if null orderedSubgoals
+          then "(no open goals)"
+          else L.intercalate "\n" (uncurry subgoalPrinter <$> orderedSubgoals)
+
 mainPrinter (Right s) =
         let
             sgNameSep = ">> "

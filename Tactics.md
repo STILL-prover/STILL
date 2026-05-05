@@ -40,11 +40,11 @@
 
 ### With (`&`)
 
-- `WithR` — Refine a with goal `A & B`. Creates two subgoals sharing the same context (additive split): one to prove `A`, one to prove `B`.
-- `WithL1 x` — Eliminate a with assumption `A & B` named `x`, selecting the left branch `A`.
-- `WithL1A` — Auto-apply `WithL1` to the first with assumption (`&`) in the linear context.
-- `WithL2 x` — Eliminate a with assumption `A & B` named `x`, selecting the right branch `B`.
-- `WithL2A` — Auto-apply `WithL2` to the first with assumption (`&`) in the linear context.
+- `WithR` — Refine a with goal `A & B`. Creates two subgoals sharing the same context (additive split): the **first subgoal proves `A`** (left) and the **second subgoal proves `B`** (right), ordered left-to-right matching the goal proposition. Each branch receives its own independent copy of the entire linear context; resources are not split between branches.
+- `WithL1 x` — Eliminate a with assumption `A & B` named `x`, selecting the left branch `A`. **Consumes** the assumption entirely; the right branch `B` is discarded.
+- `WithL1A` — Auto-apply `WithL1` to the first with assumption (`&`) in the linear context. **Consumes** the assumption, keeping only the left (`A`) branch. Note: unlike `WithR` (which copies the context additively), `WithL` eliminates the assumption — only one branch is chosen.
+- `WithL2 x` — Eliminate a with assumption `A & B` named `x`, selecting the right branch `B`. **Consumes** the assumption entirely; the left branch `A` is discarded.
+- `WithL2A` — Auto-apply `WithL2` to the first with assumption (`&`) in the linear context. **Consumes** the assumption, keeping only the right (`B`) branch.
 
 ### Plus (`+`)
 
