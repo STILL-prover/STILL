@@ -24,29 +24,8 @@ import Control.Monad (unless)
 import ECC.Kernel (emptyContext)
 import Text.Parsec (sourceLine, sourceColumn)
 import Text.Read (readMaybe)
-
--- ==========================================
--- State Initialization
--- ==========================================
-
-emptyState :: ProofState
-emptyState = S {
-    subgoals = Map.empty,
-    outputs = ["STILL Prover Initialized."],
-    theorems = Map.empty,
-    curTheoremName = "",
-    curModuleName = "Main",
-    loadedModules = Map.empty,
-    openGoalStack = [],
-    cachedProofStateNames = S.empty,
-    newSubgoalNameList = allSubgoalNames,
-    cachedVarNames = namesInOrder,
-    stypeDecls = [],
-    fnAssumptions = emptyContext,
-    procAssumptions = [],
-    errors = [],
-    stypeAssumptions = []
-}
+import Utils.Server
+import MCP.Server (startMcpServer)
 
 data DiagnosticInfo = DiagnosticInfo {
     moduleName :: String,
@@ -62,59 +41,6 @@ data DiagnosticInfo = DiagnosticInfo {
 }
 
 -- ==========================================
--- Script Execution
--- ==========================================
-
--- Parses and runs a file, handling imports recursively
-runProofScript :: FilePath -> String -> IO (Either String ProofState)
-runProofScript fname content = do
-    let res = parseFile fname content
-    case res of
-        Left err -> return . Left $ "--------------------------------\nParse Error:\n" ++ show err
-        Right (imports, commands) -> do
-            -- Load Imports (IO Action)
-            stateWithImports <- loadImports imports emptyState
-
-            -- Run Commands (Pure Fold)
-            let finalState = foldl (\s f -> f s) stateWithImports commands
-
-            -- Return Output Log (Reversed because logs act like a stack)
-            return . Right $ finalState -- unlines (reverse (outputs finalState))
-
--- Recursively load imported modules
-loadImports :: [String] -> ProofState -> IO ProofState
-loadImports [] s = return s
-loadImports (m:ms) s = do
-    if Map.member m (loadedModules s)
-    then loadImports ms s -- Already loaded
-    else do
-        let filename = m ++ ".still" -- Assumption: Module X is in X.still
-        exists <- doesFileExist filename
-        if not exists
-        then do
-            putStrLn $ "[Warning] Import not found: " ++ filename
-            loadImports ms s
-        else do
-            content <- readFileSafe filename
-            case parseFile filename content of
-                Left err -> do
-                    putStrLn $ "[Error] Failed to parse import " ++ m ++ ": " ++ show err
-                    loadImports ms s
-                Right (subImports, subCmds) -> do
-                    -- Load recursive imports for this module
-                    s' <- loadImports subImports s
-
-                    -- Run module commands on a clean slate (inheriting only loadedModules)
-                    let modState = s' { subgoals = Map.empty, theorems = Map.empty, curModuleName = m, openGoalStack = [] }
-                    let modResult = foldl (\st f -> f st) modState subCmds
-
-                    -- Store the resulting theorems in the global loadedModules map
-                    let newLoaded = Map.insert m (theorems modResult) (loadedModules s')
-
-                    -- Continue
-                    loadImports ms (s' { subgoals = Map.empty, theorems = Map.empty, openGoalStack = [], loadedModules = newLoaded })
-
--- ==========================================
 -- Main Entry Point
 -- ==========================================
 
@@ -128,6 +54,7 @@ main = do
         ("repl":fnames)       -> startRepl fnames
         ("benchmark":fnames)  -> runDiagnostics fnames []
         ("serve":[])          -> startServer
+        ("serve-mcp":[])      -> startMcpServer
         (fname:fnames)        -> runScripts (fname:fnames)
         []                    -> startRepl []
     where
@@ -302,103 +229,9 @@ watchLoop filePath lastModified = do
                 else
                     watchLoop filePath lastModified
 
-readFileSafe :: FilePath -> IO String
-readFileSafe path = catch (readFile path) (\e -> let _ = (e :: IOException) in return "")
-
-
 -- ===========================
 -- Editor Integration
 -- ===========================
-
-data Snapshot = Snapshot {
-    beforeState :: ProofState,
-    afterState :: ProofState
-}
-
--- psCommands !! i corresponds to psSnaps !! i
-data ProcessedScript = ProcessedScript {
-    psModuleName :: String,
-    psImports :: [String],
-    psCommands :: [CommandSpan Command], 
-    psSnaps :: [Snapshot]
-}
-
-runProofScriptDetailed :: FilePath -> String -> IO (Either String ProcessedScript)
-runProofScriptDetailed fname content = do
-  case parseFileSpans fname content of
-    Left err ->
-      pure . Left $ "--------------------------------\nParse Error:\n" ++ show err
-
-    Right (moduleName, imports, cmds) -> do
-      stateWithImports <- loadImportsDetailed imports emptyState
-
-      let initialState = stateWithImports { curModuleName = moduleName }
-          step (st, acc) sp =
-            let st' = evalCommand (spanValue sp) st
-                snap = Snapshot { beforeState = st, afterState = st' }
-            in (st', acc ++ [snap])
-
-          (finalState, snaps) = foldl step (initialState, []) cmds
-
-      pure $ Right ProcessedScript
-        { psModuleName = moduleName
-        , psImports    = imports
-        , psCommands   = cmds
-        , psSnaps      = snaps
-        }
-
-loadImportsDetailed :: [String] -> ProofState -> IO ProofState
-loadImportsDetailed [] s = pure s
-loadImportsDetailed (m:ms) s =
-  if Map.member m (loadedModules s) then
-    loadImportsDetailed ms s
-  else do
-    let filename = m ++ ".still"
-    exists <- doesFileExist filename
-    if not exists then do
-      putStrLn $ "[Warning] Import not found: " ++ filename
-      loadImportsDetailed ms s
-    else do
-      content <- readFileSafe filename
-      case parseFileSpans filename content of
-        Left err -> do
-          putStrLn $ "[Error] Failed to parse import " ++ m ++ ": " ++ show err
-          loadImportsDetailed ms s
-        Right (_, subImports, subCmds) -> do
-          s' <- loadImportsDetailed subImports s
-          let modState0 = s'
-                { subgoals = Map.empty
-                , theorems = Map.empty
-                , curModuleName = m
-                , openGoalStack = []
-                }
-              modResult = foldl (\st sp -> evalCommand (spanValue sp) st) modState0 subCmds
-              newLoaded = Map.insert m (theorems modResult) (loadedModules s')
-          loadImportsDetailed ms
-            (s'
-              { subgoals = Map.empty
-              , theorems = Map.empty
-              , openGoalStack = []
-              , loadedModules = newLoaded
-              })
-
-containsPos :: Range -> Int -> Int -> Bool
-containsPos (Range s e) line col =
-    let
-        sl = sourceLine s
-        sc = sourceColumn s
-        el = sourceLine e
-        ec = sourceColumn e
-    in
-        (line > sl || line == sl && col >= sc) && (line < el || line == el && col <= ec)
-
-findSnapshotAt :: ProcessedScript -> Int -> Int -> Maybe (CommandSpan Command, Snapshot)
-findSnapshotAt ps line col = go (zip (psCommands ps) (psSnaps ps))
-    where
-        go :: [(CommandSpan Command, Snapshot)] -> Maybe (CommandSpan Command, Snapshot)
-        go [] = Nothing
-        go ((sp, snap):xs) | containsPos (spanRange sp) line col = Just (sp, snap)
-                           | otherwise = go xs
 
 data Request = ReqPing
     | ReqStateAt {
