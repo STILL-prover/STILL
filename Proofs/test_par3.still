@@ -1,0 +1,23 @@
+module TestPar begin
+
+theorem id_thm: "A -o A"
+apply ImpliesR
+apply IdA
+done
+extract_par id_thm
+
+theorem tensor: "A * B -o A * B"
+apply ImpliesR
+apply TensorLA
+apply TensorR
+apply IdA
+apply IdA
+done
+extract_par tensor
+
+theorem with_thm: "A & B -o A"
+apply ImpliesR
+apply WithL1A
+apply IdA
+done
+extract_par with_thm

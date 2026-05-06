@@ -1,0 +1,9 @@
+module TestPar begin
+
+theorem id_thm: "A -o A"
+apply ImpliesR
+apply IdA
+done
+
+extract id_thm
+extract_par id_thm

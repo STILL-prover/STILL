@@ -46,6 +46,7 @@ import Debug.Trace
 import Control.Monad.Identity (Identity (runIdentity))
 import qualified Debug.Trace as DBG
 import GHC.Conc (par, pseq)
+import Utils.ParTranslation (translateToPar)
 
 data BranchType = Additive
     | Multiplicative -- Indicate the subgoal with the shared channel as root. The String allows unhiding a cut channel.
@@ -1110,6 +1111,22 @@ _Extract s tName =
                   s {outputs = "Could not find the supplied theorem." : outputs s}
                   extractor (proofObject <$> (Data.Map.lookup (L.tail $ L.dropWhile (/= '.') tName) m))
             Just p -> extractor (proofObject p)
+
+_ExtractPar :: ProofState -> String -> ProofState
+_ExtractPar s tName =
+    let
+        extractor name p = case verifyProofM p of
+            Left e -> s { outputs = e : outputs s }
+            Right (prc, seq) -> s { outputs = translateToPar name prc seq : outputs s }
+    in
+        case Data.Map.lookup tName (theorems s) of
+            Nothing -> case Data.Map.lookup (L.takeWhile (/= '.') tName) (loadedModules s) of
+                Nothing -> s { outputs = "Could not find the supplied theorem." : outputs s }
+                Just m -> maybe
+                    s { outputs = "Could not find the supplied theorem." : outputs s }
+                    (extractor tName)
+                    (proofObject <$> Data.Map.lookup (L.drop 1 $ L.dropWhile (/= '.') tName) m)
+            Just p -> extractor tName (proofObject p)
 
 getProofStateDeclNames :: ProofState -> [String]
 getProofStateDeclNames s = [curTheoremName s, curModuleName s] ++ Data.Map.keys (loadedModules s) ++ concatMap Data.Map.keys (loadedModules s) ++ Data.Map.keys (theorems s) ++ (fst <$> stypeDecls s) ++ (fst <$> ctxToList (fnAssumptions s)) ++ (fst <$> procAssumptions s) ++ stypeAssumptions s

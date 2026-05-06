@@ -35,6 +35,7 @@ data CommandSpan a = CommandSpan {
 data Command = CmdHelp
     | CmdPrintTheorems
     | CmdExtract String
+    | CmdExtractPar String
     | CmdSTypeDecl String Proposition
     | CmdAssumption String FunctionalTerm
     | CmdProcessAssumption String Proposition
@@ -48,6 +49,7 @@ evalCommand :: Command -> ProofState -> ProofState
 evalCommand CmdHelp s = s { outputs = printCommands : outputs s }
 evalCommand CmdPrintTheorems s = _PrintTheorems s
 evalCommand (CmdExtract tName) s = _Extract s tName
+evalCommand (CmdExtractPar tName) s = _ExtractPar s tName
 evalCommand (CmdSTypeDecl i ty) s = _STypeDecl i ty s
 evalCommand (CmdAssumption resI resTy) s = _FAssumption resI resTy s
 evalCommand (CmdProcessAssumption resI resTy) s = _PAssumption resI resTy s
@@ -151,6 +153,7 @@ cmdCore = parseTheorem
   <|> parseHelp
   <|> parsePrintTheorems
   <|> parseExtract
+  <|> parseExtractPar
 
 parseHelp :: Parser Command
 parseHelp = do
@@ -167,6 +170,12 @@ parseExtract = do
     reserved "extract"
     tName <- identifier
     return $ CmdExtract tName
+
+parseExtractPar :: Parser Command
+parseExtractPar = do
+    reserved "extract_par"
+    tName <- identifier
+    return $ CmdExtractPar tName
 
 parseImports :: Parser [String]
 parseImports = do
@@ -482,7 +491,7 @@ lexer :: Tok.TokenParser ()
 lexer = Tok.makeTokenParser style
   where
     ops = [":", "\"", ";", "+", "<|>"]
-    names = ["module", "imports", "begin", "end", "theorem", "done", "defer", "prefer", "apply", "help", "print_theorems", "consumes", "extract", "assume", "process"] ++ (fst <$> simpleTactics)
+    names = ["module", "imports", "begin", "end", "theorem", "done", "defer", "prefer", "apply", "help", "print_theorems", "consumes", "extract", "extract_par", "assume", "process"] ++ (fst <$> simpleTactics)
     style = emptyDef
         { Tok.commentLine = "--"
         , Tok.commentStart = "{-"
