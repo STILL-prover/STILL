@@ -1,0 +1,11 @@
+module Tensor
+
+def Tensor : [(A) B] (A) B = chan z {
+  z[a]
+  a[b]
+  let c = chan c {
+    c <> b
+  }
+  z(c)
+  z <> a
+}

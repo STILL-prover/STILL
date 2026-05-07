@@ -1,0 +1,7 @@
+module With_thm
+
+def With_thm : <a0, b0> [choice { .inl => a0 .inr => b0 }] a0 = chan z {
+  z<a0, b0>[a]
+  a.inl
+  z <> a
+}

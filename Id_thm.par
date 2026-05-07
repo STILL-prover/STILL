@@ -1,0 +1,6 @@
+module Id_thm
+
+def Id_thm : <A> [A] A = chan z {
+  z[a]
+  z <> a
+}

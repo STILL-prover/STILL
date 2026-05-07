@@ -1,0 +1,5 @@
+module Main
+
+import @core/Debug
+
+def Main : ! = Debug.Log("Hello, World!")

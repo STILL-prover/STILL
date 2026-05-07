@@ -3,20 +3,77 @@ module Utils.ParTranslation where
 import SessionTypes.Kernel (Process(..), Proposition(..), Sequent(..))
 import ECC.Kernel (ftToS)
 import qualified Data.List as L
+import Data.Char (toUpper, toLower)
+
+capitaliseName :: String -> String
+capitaliseName []     = []
+capitaliseName (c:cs) = toUpper c : cs
 
 -- | Translate a proven STILL theorem to a par language module.
 translateToPar :: String -> Process -> Sequent -> String
 translateToPar thmName proc seq =
-    "module " ++ thmName ++ "\n\n" ++
-    "def " ++ thmName ++ " = chan " ++ mainCh ++ " {\n" ++
-    go 1 mainCh proc ++ "\n}\n"
+    let capName = capitaliseName thmName
+        goal    = goalProposition seq
+        tvars   = L.nub (freeTyVars goal)
+        tyBase  = propToPar goal
+        ty      = if null tvars then tyBase
+                  else "<" ++ L.intercalate ", " tvars ++ "> " ++ tyBase
+    in  "module " ++ capName ++ "\n\n" ++
+        "def " ++ capName ++ " : " ++ ty ++ " = chan " ++ mainCh ++ " {\n" ++
+        goTop tvars 1 mainCh proc ++ "\n}\n"
   where mainCh = channel seq
+
+-- | Like 'go', but for the outermost level: prefixes type parameters onto the
+-- first Receive on the main channel using Par's combined "z<a0, b0>[x]" syntax.
+goTop :: [String] -> Int -> String -> Process -> String
+goTop [] n mc p = go n mc p
+goTop tvars n mc (Receive x y p) | x == mc =
+    ind n ++ mc ++ "<" ++ L.intercalate ", " tvars ++ ">[" ++ y ++ "]\n"
+    ++ go n mc p
+goTop tvars n mc p = go n mc p
+
+-- | Collect free session type variables from a proposition.
+freeTyVars :: Proposition -> [String]
+freeTyVars Unit              = []
+freeTyVars (TyVar x)         = [parTyVar x]
+freeTyVars (Lift _)          = []
+freeTyVars (Implication a b) = freeTyVars a ++ freeTyVars b
+freeTyVars (Tensor a b)      = freeTyVars a ++ freeTyVars b
+freeTyVars (With a b)        = freeTyVars a ++ freeTyVars b
+freeTyVars (Plus a b)        = freeTyVars a ++ freeTyVars b
+freeTyVars (Replication a)   = freeTyVars a
+freeTyVars (Forall2 x a)     = filter (/= x) (freeTyVars a)
+freeTyVars (TyNu x a)        = filter (/= x) (freeTyVars a)
+freeTyVars (Forall _ _ a)    = freeTyVars a
+freeTyVars (Exists _ _ a)    = freeTyVars a
+freeTyVars (Exists2 _ a)     = freeTyVars a
+
+-- | Map a STILL type variable name to a Par type parameter name.
+-- Lowercases and appends "0" to avoid clashing with process channel variable names.
+parTyVar :: String -> String
+parTyVar x = map toLower x ++ "0"
+
+-- | Translate a STILL proposition to a Par session type annotation.
+propToPar :: Proposition -> String
+propToPar Unit             = "!"
+propToPar (TyVar x)        = parTyVar x
+propToPar (Lift t)         = ftToS t
+propToPar (Implication a b) = "[" ++ propToPar a ++ "] " ++ propToPar b
+propToPar (Tensor a b)     = "(" ++ propToPar a ++ ") " ++ propToPar b
+propToPar (With a b)       = "choice { .inl => " ++ propToPar a ++ " .inr => " ++ propToPar b ++ " }"
+propToPar (Plus a b)       = "either { .inl " ++ propToPar a ++ " .inr " ++ propToPar b ++ " }"
+propToPar (Replication a)  = "!" ++ propToPar a
+propToPar (Forall2 x a)    = "<" ++ x ++ "> " ++ propToPar a
+propToPar (TyNu x a)       = propToPar a
+propToPar _                = "/* unsupported */"
 
 -- | Recursively translate a pi-calculus process to par process syntax.
 -- mc = name of the currently active goal channel (used to emit mc! for Halt).
 go :: Int -> String -> Process -> String
 go n mc Halt                    = ind n ++ mc ++ "!"
-go n mc (Link x y)              = ind n ++ x ++ " <> " ++ y
+go n mc (Link x y)
+    | y == mc   = ind n ++ mc ++ " <> " ++ x
+    | otherwise = ind n ++ x  ++ " <> " ++ y
 go n mc (LiftTerm x t)         = ind n ++ x ++ " <> " ++ ftToS t
 go n mc HoleTerm               = ind n ++ "_ // hole"
 go n mc (Call x zs)            = ind n ++ "loop // " ++ x ++ "(" ++ joinArgs zs ++ ")"
