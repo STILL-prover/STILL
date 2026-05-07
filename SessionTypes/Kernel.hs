@@ -306,6 +306,8 @@ data Process = Halt
     | Corec String [String] Process [String]
     | Call String [String]
     | HoleTerm
+    | Print FunctionalTerm Process
+    | ReadLine String Process
     deriving (Eq, Show, Read)
 
 pToS :: Process -> String
@@ -354,6 +356,10 @@ pToS = go 0
     go _ (Call x zs) =
         x ++ "(" ++ joinArgs zs ++ ")"
     go _ HoleTerm = "_"
+    go d (Print m p) =
+        parens (d > precPrefix) $ "print[" ++ ftToS m ++ "]." ++ go precPrefix p
+    go d (ReadLine x p) =
+        parens (d > precPrefix) $ "readline(" ++ x ++ ")." ++ go precPrefix p
 
 processNames :: Process -> S.Set String
 processNames Halt = S.empty
@@ -372,6 +378,8 @@ processNames (ParallelComposition p1 p2) = processNames p1 `S.union` processName
 processNames (Corec x ys p zs) = S.insert x $ S.fromList ys `S.union` processNames p `S.union` S.fromList zs
 processNames (Call x zs) = S.insert x . S.fromList $ zs
 processNames HoleTerm = S.empty
+processNames (Print m p) = functionalNames m `S.union` processNames p
+processNames (ReadLine x p) = S.insert x (processNames p)
 
 processFreeNames :: Process -> S.Set String
 processFreeNames Halt = S.empty
@@ -390,6 +398,8 @@ processFreeNames (ParallelComposition p1 p2) = processFreeNames p1 `S.union` pro
 processFreeNames (Corec x ys p zs) = S.difference (processFreeNames p `S.union` S.fromList zs) (S.insert x (S.fromList ys))
 processFreeNames (Call x zs) = S.insert x . S.fromList $ zs
 processFreeNames HoleTerm = S.empty
+processFreeNames (Print m p) = functionalFreeVariables m `S.union` processFreeNames p
+processFreeNames (ReadLine x p) = S.delete x (processFreeNames p)
 
 {-| Rename a var name in a process. P{x/u}. Replace the name u with x in P. Does not avoid capturing. -}
 renameVar :: Process -> String -> String -> Process
@@ -409,6 +419,8 @@ renameVar (ParallelComposition p1 p2) x u = ParallelComposition (renameVar p1 x 
 renameVar (Corec y ys p zs) x u = Corec (if y == u then x else y) ((\y -> if y == x then u else y) <$> ys) (renameVar p x u) ((\y -> if y == x then u else y) <$> zs)
 renameVar (Call y zs) x u = Call (if y == u then x else y) ((\y -> if y == x then u else y) <$> zs)
 renameVar HoleTerm x u = HoleTerm
+renameVar (Print m p) x u = Print (substVarFunctional m x u) (renameVar p x u)
+renameVar (ReadLine y p) x u = ReadLine (if y == u then x else y) (renameVar p x u)
 
 alphaConvertProcess :: Process -> S.Set String -> Process
 alphaConvertProcess (Nu y prop p) names =
@@ -426,6 +438,9 @@ alphaConvertProcess (ReplicateReceive x y p) names =
         z = getFreshName names
     in
         ReplicateReceive x z (renameVar p z y)
+alphaConvertProcess (ReadLine y p) names =
+    let z = getFreshName names
+    in ReadLine z (renameVar p z y)
 alphaConvertProcess (Corec x ys p zs) names =
     let
         newZProc = renameVar p z x
@@ -494,6 +509,12 @@ substVar outerP@(Corec y ys p zs) x u = let
     else Corec y ys (substVar p x u) newZs -- No issues. Do regular substitution.
 substVar (Call y zs) x u = Call (if y == u then x else y) ((\y -> if y == u then x else y) <$> zs)
 substVar HoleTerm x u = HoleTerm
+substVar (Print m p) x u = Print (substVarFunctional m x u) (substVar p x u)
+substVar outerP@(ReadLine y p) x u =
+    let allNamesConsidered = S.fromList [y, x, u] `S.union` processNames p
+    in if y == u then ReadLine y p
+    else if x == y then substVar (alphaConvertProcess outerP allNamesConsidered) x u
+    else ReadLine y (substVar p x u)
 
 type Context = Map String Proposition
 
@@ -632,6 +653,8 @@ data Proof = IdRule String String (S.Set String) FunctionalContext Context Recur
     | RecBindingWeakening String ([String], BindingSequent) Proof
     | ProcessFiatRule String String Proposition Proof -- ProcessName:x::Prop
     | HoleRule (S.Set String) FunctionalContext Context Context RecursiveBindings String Proposition
+    | PrintRule FunctionalProof Proof
+    | ReadLineRule String Proof
     deriving (Eq, Show, Read)
 
 -- Extracts children from Proof as Either FunctionalProof or Proof
@@ -675,6 +698,9 @@ subProofs rule = case rule of
     TyVarWeakening _ p -> [Right p]
     RecBindingWeakening _ _ p -> [Right p]
     ProcessFiatRule _ _ _ p -> [Right p]
+
+    PrintRule fp p -> [Left fp, Right p]
+    ReadLineRule _ p -> [Right p]
 
     -- Leaf cases
     IdRule{} -> []
@@ -738,6 +764,8 @@ getProofNames (TyVarWeakening a proof) = S.insert a $ getProofNames proof
 getProofNames (RecBindingWeakening a (ps, bs) proof) = S.fromList (a:ps) `S.union` getBindingSequentNames bs `S.union` getProofNames proof
 getProofNames (HoleRule tv fc uc lc eta z p) = tv `S.union` getFunctionalContextNames fc `S.union` getContextNames uc `S.union` getContextNames lc `S.union` propNames p `S.union` S.singleton z `S.union` getRecursiveBindingsNames eta
 getProofNames (ProcessFiatRule procName chanName prop p) = S.fromList [procName, chanName] `S.union` propNames prop `S.union` getProofNames p
+getProofNames (PrintRule fp p) = getFunctionalProofNames fp `S.union` getProofNames p
+getProofNames (ReadLineRule x p) = S.insert x (getProofNames p)
 
 isFreshInProof :: String -> Proof -> Bool
 isFreshInProof x p = not $ x `S.member` getProofNames p
@@ -817,6 +845,8 @@ renameVarInProof p x y {- DBG.trace "Renaming" True-} = if isFreshInProof x p
         go (RecBindingWeakening a (ps, bs) p) = RecBindingWeakening (swap a) ((swap <$> ps), (swapBinding bs)) (go p)
         go (HoleRule tv fc uc lc eta z p) = HoleRule (swapSet tv) (swapFn fc) (swapCtx uc) (swapCtx lc) (swapRec eta) (swap z) (swapProp p)
         go (ProcessFiatRule procName chanName prop p) = ProcessFiatRule (swap procName) (swap chanName) (swapProp prop) (go p)
+        go (PrintRule fp p) = PrintRule (swapFnProof fp) (go p)
+        go (ReadLineRule x p) = ReadLineRule (swap x) (go p)
 
 {-| A{y/N} replace N with y in A. -}
 abstTerm :: Proposition -> String -> FunctionalTerm -> Proposition
@@ -1269,6 +1299,17 @@ verifyProofM (ProcessFiatRule procName chanName prop p) = do
     (q, seq) <- verifyProofM p
     let finalProc = Nu chanName prop (ParallelComposition (Call procName [chanName]) q)
     return (finalProc, seq { linearContext = Data.Map.insert chanName prop (linearContext seq) })
+verifyProofM (PrintRule fProof contProof) = do
+    fConcl <- verifyFunctionalProofM fProof
+    (contProcess, contSeq) <- verifyProofM contProof
+    return (Print (goalTerm fConcl) contProcess,
+            contSeq { goalProposition = Tensor (Lift (goalType fConcl)) (goalProposition contSeq) })
+verifyProofM (ReadLineRule x contProof) = do
+    (contProcess, contSeq) <- verifyProofM contProof
+    xTy <- ctxEitherLookup x (fnContext contSeq)
+    newFnCtx <- ctxDelete x (fnContext contSeq)
+    return (ReadLine x contProcess,
+            contSeq { fnContext = newFnCtx, goalProposition = Implication (Lift xTy) (goalProposition contSeq) })
 {-|
 >>> verifyProof (HoleRule Data.Map.empty Data.Map.empty Data.Map.empty "z" Unit)
 False
@@ -1491,5 +1532,21 @@ typeCheckProcessUnderSequentAtom seq process = case process of
         when (boundSeqRenamedLCContext /= linearContext seq) $ Left ("Invalid linear contexts:\n" ++ show boundSeqRenamedLCContext ++ "\n\n" ++ show (linearContext seq))
         when (boundSeqRenamedChannel /= channel seq) $ Left "Invalid channel."
         return $ TyVarRule (recursiveBindings seq) x zs
+    Print m p -> do
+        (goalA, fTy) <- case goalProposition seq of
+            Tensor (Lift fTy) goalA -> return (goalA, fTy)
+            e -> Left $ "Print fail: expected ($T) A proposition, got " ++ propToS e
+        (inferredTy, fProof) <- extractProofFromTermUnderCtx (fnContext seq) m
+        fProofConcl <- verifyFunctionalProofM fProof
+        unless (fTy == goalType fProofConcl) $ Left $ "Print fail: type mismatch: expected " ++ ftToS fTy ++ " but got " ++ ftToS (goalType fProofConcl)
+        proof <- typeCheckProcessUnderSequent (seq { goalProposition = goalA }) p
+        return $ PrintRule fProof proof
+    ReadLine x p -> do
+        (goalA, fTy) <- case goalProposition seq of
+            Implication (Lift fTy) goalA -> return (goalA, fTy)
+            e -> Left $ "ReadLine fail: expected [$T] A proposition, got " ++ propToS e
+        newFnCtx <- safeInsert x fTy (fnContext seq)
+        proof <- typeCheckProcessUnderSequent (seq { fnContext = newFnCtx, goalProposition = goalA }) p
+        return $ ReadLineRule x proof
     e -> Left $ "Cannot determine how to type check: " ++ pToS e
         -- when (z /= channel seq) $ Left $ "Identity fail: Process channel " ++ z ++ " does not match goal " ++ channel seq

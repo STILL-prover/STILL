@@ -13,7 +13,7 @@ import Control.Monad.Identity (Identity, runIdentity)
 
 import SessionTypes.Tactics (ProofState(..), Theorem (proofObject, numberOfSubgoals), allSubgoalNames)
 import SessionTypes.Kernel
-import Parser.CmdParsers (parseFile, parseStringCommand, CommandSpan (spanValue, spanRange, CommandSpan, spanText, trimmedRange), Command, parseFileSpans, evalCommand, parseStringCommandSpan, Range (Range))
+import Parser.CmdParsers (parseFile, parseStringCommand, CommandSpan (spanValue, spanRange, CommandSpan, spanText, trimmedRange), Command, parseFileSpans, evalCommand, evalCommandM, parseStringCommandSpan, Range (Range))
 import Utils.Display
 import Data.List (intercalate, transpose, foldl')
 import Data.Map (toList)
@@ -178,7 +178,7 @@ replLoop currentState = do
                         putStrLn $ "Parse Error: " ++ show err
                         replLoop currentState
                     Right sp -> do
-                        let newState = evalCommand (spanValue sp) currentState
+                        newState <- evalCommandM (spanValue sp) currentState
                         mainPrinter (Right newState)
                         replLoop newState
 

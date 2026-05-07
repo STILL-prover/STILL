@@ -52,6 +52,11 @@ data FunctionalTerm = Type Integer
     | Proj1 FunctionalTerm
     | Proj2 FunctionalTerm
     | FHoleTerm
+    | IntTy              -- the type of integers; IntTy : Type 0
+    | StringTy           -- the type of strings;  StringTy : Type 0
+    | IntLit  Integer    -- n : IntTy
+    | StringLit String   -- s : StringTy
+    | BuiltinFn String   -- built-in function, e.g. "add", "show", "concat"
     deriving (Show, Read)
 
 alphaEquivalentWithRenamings :: [(String, String)] -> FunctionalTerm -> FunctionalTerm -> Bool
@@ -69,6 +74,11 @@ alphaEquivalentWithRenamings ren t1 t2 = go ren (t1, t2)
         go ren (Proj1 m1, Proj1 m2) = go ren (m1, m2)
         go ren (Proj2 m1, Proj2 m2) = go ren (m1, m2)
         go ren (FHoleTerm, FHoleTerm) = True
+        go _ (IntTy, IntTy) = True
+        go _ (StringTy, StringTy) = True
+        go _ (IntLit m, IntLit n) = m == n
+        go _ (StringLit a, StringLit b) = a == b
+        go _ (BuiltinFn a, BuiltinFn b) = a == b
         go ren _ = False
 
         eqName [] x1 x2                                     = x1 == x2
@@ -102,6 +112,14 @@ ftToS = go 0
     go _ Prop = "Prop"
     go _ (Var x) = x
     go _ FHoleTerm = "_"
+    go _ IntTy = "Int"
+    go _ StringTy = "String"
+    go _ (IntLit n) = show n
+    go _ (StringLit s) = "'" ++ concatMap esc s ++ "'"
+      where esc '\'' = "\\'"
+            esc '\\' = "\\\\"
+            esc c    = [c]
+    go _ (BuiltinFn nm) = "#" ++ nm
     go p (App t1 t2) =
       parensIf (p > appPrec) $
         ppFun t1 ++ " " ++ ppArg t2
@@ -141,6 +159,11 @@ functionalFreeVariables (Pair t1 t2 x ty1 ty2) = functionalFreeVariables t1 `S.u
 functionalFreeVariables (Proj1 t) = functionalFreeVariables t
 functionalFreeVariables (Proj2 t) = functionalFreeVariables t
 functionalFreeVariables FHoleTerm = S.empty
+functionalFreeVariables IntTy = S.empty
+functionalFreeVariables StringTy = S.empty
+functionalFreeVariables (IntLit _) = S.empty
+functionalFreeVariables (StringLit _) = S.empty
+functionalFreeVariables (BuiltinFn _) = S.empty
 
 {-| Get all names in a term bound and free. 
 
@@ -159,6 +182,11 @@ functionalNames (Pair t1 t2 x ty1 ty2) = functionalNames t1 `S.union` functional
 functionalNames (Proj1 t) = functionalNames t
 functionalNames (Proj2 t) = functionalNames t
 functionalNames FHoleTerm = S.empty
+functionalNames IntTy = S.empty
+functionalNames StringTy = S.empty
+functionalNames (IntLit _) = S.empty
+functionalNames (StringLit _) = S.empty
+functionalNames (BuiltinFn _) = S.empty
 
 {-| t{r/x} replace x with r in t. This is a naive replacement and not capture
 avoiding. 
@@ -180,6 +208,11 @@ functionalRename (Sigma y t1 t2) r x = if x == y then Sigma r (functionalRename 
 functionalRename (Pair t1 t2 y ty1 ty2) r x = if x == y then Pair (functionalRename t1 r x) (functionalRename t2 r x) r (functionalRename ty1 r x) (functionalRename ty2 r x) else Pair (functionalRename t1 r x) (functionalRename t2 r x) y (functionalRename ty1 r x) (functionalRename ty2 r x)
 functionalRename (Proj1 t) r x = Proj1 $ functionalRename t r x
 functionalRename (Proj2 t) r x = Proj2 $ functionalRename t r x
+functionalRename IntTy _ _ = IntTy
+functionalRename StringTy _ _ = StringTy
+functionalRename (IntLit n) _ _ = IntLit n
+functionalRename (StringLit s) _ _ = StringLit s
+functionalRename (BuiltinFn nm) _ _ = BuiltinFn nm
 
 {-| Convert a binding term to bind a fresh variable. Only works on lambda and pi
 terms.
@@ -275,6 +308,11 @@ functionalSubst b n x =
                     else Pair (functionalSubst t1 n x) (functionalSubst t2 n x) y (functionalSubst ty1 n x) (functionalSubst ty2 n x)
             Proj1 t -> Proj1 (functionalSubst t n x)
             Proj2 t -> Proj2 (functionalSubst t n x)
+            IntTy -> IntTy
+            StringTy -> StringTy
+            IntLit i -> IntLit i
+            StringLit s -> StringLit s
+            BuiltinFn nm -> BuiltinFn nm
 
 data SafeCtx
 data UnsafeCtx
@@ -372,6 +410,11 @@ data FunctionalProof = CRule (TaggedFunctionalContext SafeCtx) -- \vdash Prop:Ty
     | Proj1Rule FunctionalProof
     | Proj2Rule FunctionalProof
     | CumulativiyRule FunctionalProof FunctionalProof
+    | IntTyRule    (TaggedFunctionalContext SafeCtx)           -- ⊢ IntTy : Type 0
+    | StringTyRule (TaggedFunctionalContext SafeCtx)           -- ⊢ StringTy : Type 0
+    | IntLitRule    Integer (TaggedFunctionalContext SafeCtx)  -- ⊢ n : IntTy
+    | StringLitRule String  (TaggedFunctionalContext SafeCtx)  -- ⊢ s : StringTy
+    | BuiltinFnRule String  (TaggedFunctionalContext SafeCtx)  -- ⊢ #f : builtinType(f)
     deriving (Eq, Show, Read)
 
 subFunctionalProofs :: FunctionalProof -> [FunctionalProof]
@@ -388,6 +431,11 @@ subFunctionalProofs rule = case rule of
     AppRule fp1 fp2             -> [fp1, fp2]
     Proj1Rule fp                -> [fp]
     Proj2Rule fp                -> [fp]
+    IntTyRule{}                 -> []
+    StringTyRule{}              -> []
+    IntLitRule{}                -> []
+    StringLitRule{}             -> []
+    BuiltinFnRule{}             -> []
 
 foldFunctionalProof :: ([a] -> a) -> FunctionalProof -> a
 foldFunctionalProof fFunc rule = fFunc (map (foldFunctionalProof fFunc) (subFunctionalProofs rule))
@@ -412,6 +460,11 @@ getFunctionalProofNames (PairRule x p1 p2 p3) = S.singleton x `S.union` getFunct
 getFunctionalProofNames (Proj1Rule p) = getFunctionalProofNames p
 getFunctionalProofNames (Proj2Rule p) = getFunctionalProofNames p
 getFunctionalProofNames (CumulativiyRule p1 p2) = getFunctionalProofNames p1 `S.union` getFunctionalProofNames p2
+getFunctionalProofNames (IntTyRule ctx)       = getFunctionalContextNames ctx
+getFunctionalProofNames (StringTyRule ctx)    = getFunctionalContextNames ctx
+getFunctionalProofNames (IntLitRule _ ctx)    = getFunctionalContextNames ctx
+getFunctionalProofNames (StringLitRule _ ctx) = getFunctionalContextNames ctx
+getFunctionalProofNames (BuiltinFnRule _ ctx) = getFunctionalContextNames ctx
 
 getFunctionalProofFreeNames :: FunctionalProof -> S.Set String
 getFunctionalProofFreeNames (CRule ctx) = getFunctionalContextFreeNames ctx
@@ -426,6 +479,11 @@ getFunctionalProofFreeNames (PairRule x p1 p2 p3) = getFunctionalProofFreeNames 
 getFunctionalProofFreeNames (Proj1Rule p) = getFunctionalProofFreeNames p
 getFunctionalProofFreeNames (Proj2Rule p) = getFunctionalProofFreeNames p
 getFunctionalProofFreeNames (CumulativiyRule p1 p2) = getFunctionalProofFreeNames p1 `S.union` getFunctionalProofFreeNames p2
+getFunctionalProofFreeNames (IntTyRule ctx)       = getFunctionalContextFreeNames ctx
+getFunctionalProofFreeNames (StringTyRule ctx)    = getFunctionalContextFreeNames ctx
+getFunctionalProofFreeNames (IntLitRule _ ctx)    = getFunctionalContextFreeNames ctx
+getFunctionalProofFreeNames (StringLitRule _ ctx) = getFunctionalContextFreeNames ctx
+getFunctionalProofFreeNames (BuiltinFnRule _ ctx) = getFunctionalContextFreeNames ctx
 
 {-| renameVarInFnCtx ctx x y = ctx[x/y]. Rename y with x in ctx. Avoids capturing. -}
 renameVarInFnCtx :: S.Set String -> FunctionalContext -> String -> String -> FunctionalContext
@@ -467,12 +525,52 @@ renameVarInProof vars p x y =
                 else PairRule z (renameVarInProof vars p1 x y) (renameVarInProof vars p2 x y) (renameVarInProof vars p3 x y)
             Proj1Rule p1 -> Proj1Rule $ renameVarInProof vars p1 x y
             Proj2Rule p1 -> Proj2Rule $ renameVarInProof vars p1 x y
-            CumulativiyRule p1 p2 -> CumulativiyRule (renameVarInProof vars p1 x y) (renameVarInProof vars p2 x y))
+            CumulativiyRule p1 p2 -> CumulativiyRule (renameVarInProof vars p1 x y) (renameVarInProof vars p2 x y)
+            IntTyRule c    -> IntTyRule    $ renameVarInFnCtx vars c x y
+            StringTyRule c -> StringTyRule $ renameVarInFnCtx vars c x y
+            IntLitRule n c    -> IntLitRule n    $ renameVarInFnCtx vars c x y
+            StringLitRule s c -> StringLitRule s $ renameVarInFnCtx vars c x y
+            BuiltinFnRule nm c -> BuiltinFnRule nm $ renameVarInFnCtx vars c x y)
     else
     (let
         newFreshName = getFreshName $ S.fromList [x, y] `S.union` getFunctionalProofNames p `S.union` vars
     in
         renameVarInProof vars (renameVarInProof vars p newFreshName x) x y)
+applyBuiltin1 :: String -> FunctionalTerm -> Maybe FunctionalTerm
+applyBuiltin1 "show"   (IntLit n)    = Just (StringLit (show n))
+applyBuiltin1 "show"   (StringLit s) = Just (StringLit ("'" ++ s ++ "'"))
+applyBuiltin1 "strlen" (StringLit s) = Just (IntLit (fromIntegral (length s)))
+applyBuiltin1 "neg"    (IntLit n)    = Just (IntLit (negate n))
+applyBuiltin1 _        _             = Nothing
+
+applyBuiltin2 :: String -> FunctionalTerm -> FunctionalTerm -> Maybe FunctionalTerm
+applyBuiltin2 "add"    (IntLit m)    (IntLit n)    = Just (IntLit (m + n))
+applyBuiltin2 "sub"    (IntLit m)    (IntLit n)    = Just (IntLit (m - n))
+applyBuiltin2 "mul"    (IntLit m)    (IntLit n)    = Just (IntLit (m * n))
+applyBuiltin2 "div"    (IntLit m)    (IntLit n)    | n /= 0 = Just (IntLit (m `div` n))
+applyBuiltin2 "mod"    (IntLit m)    (IntLit n)    | n /= 0 = Just (IntLit (m `mod` n))
+applyBuiltin2 "eq"     (IntLit m)    (IntLit n)    = Just (IntLit (if m == n then 1 else 0))
+applyBuiltin2 "eq"     (StringLit a) (StringLit b) = Just (IntLit (if a == b then 1 else 0))
+applyBuiltin2 "lt"     (IntLit m)    (IntLit n)    = Just (IntLit (if m < n  then 1 else 0))
+applyBuiltin2 "le"     (IntLit m)    (IntLit n)    = Just (IntLit (if m <= n then 1 else 0))
+applyBuiltin2 "concat" (StringLit a) (StringLit b) = Just (StringLit (a ++ b))
+applyBuiltin2 _        _             _             = Nothing
+
+builtinType :: String -> Maybe FunctionalTerm
+builtinType "add"    = Just $ Pi "_a" IntTy (Pi "_b" IntTy IntTy)
+builtinType "sub"    = Just $ Pi "_a" IntTy (Pi "_b" IntTy IntTy)
+builtinType "mul"    = Just $ Pi "_a" IntTy (Pi "_b" IntTy IntTy)
+builtinType "div"    = Just $ Pi "_a" IntTy (Pi "_b" IntTy IntTy)
+builtinType "mod"    = Just $ Pi "_a" IntTy (Pi "_b" IntTy IntTy)
+builtinType "eq"     = Just $ Pi "_a" IntTy (Pi "_b" IntTy IntTy)
+builtinType "lt"     = Just $ Pi "_a" IntTy (Pi "_b" IntTy IntTy)
+builtinType "le"     = Just $ Pi "_a" IntTy (Pi "_b" IntTy IntTy)
+builtinType "show"   = Just $ Pi "_a" IntTy StringTy
+builtinType "strlen" = Just $ Pi "_a" StringTy IntTy
+builtinType "concat" = Just $ Pi "_a" StringTy (Pi "_b" StringTy StringTy)
+builtinType "neg"    = Just $ Pi "_a" IntTy IntTy
+builtinType _        = Nothing
+
 {-| Take one beta reduction if possible. Nothing otherwise.
     Implements the non-reflexive non-symmetric conversion rules
     of the calculus of constructions.
@@ -487,6 +585,12 @@ conversionStep :: FunctionalTerm -> Maybe FunctionalTerm
 conversionStep (App (Lambda x a b) n) = Just $ functionalSubst b n x
 conversionStep (Proj1 (Pair m n x a b)) = Just m
 conversionStep (Proj2 (Pair m n x a b)) = Just n
+-- Builtin one-argument application: reduce when arg is in normal form
+conversionStep (App (BuiltinFn nm) arg)
+    | Nothing <- conversionStep arg = applyBuiltin1 nm arg
+-- Builtin two-argument application: reduce when both args are in normal form
+conversionStep (App (App (BuiltinFn nm) a) b)
+    | Nothing <- conversionStep a, Nothing <- conversionStep b = applyBuiltin2 nm a b
 conversionStep (App t1 t2) = case conversionStep t1 of
     Just res -> Just $ App res t2
     Nothing -> case conversionStep t2 of
@@ -662,6 +766,13 @@ extractProofFromTermUnderCtx ctx (Proj2 m) = do
         Sigma x a b -> return (x, a, b)
         res -> Left $ "Found invalid type for application expect a Sigma type but got: " ++ ftToS (fst mProof)
     return (functionalSubst b (Proj1 m) x, Proj2Rule (snd mProof))
+extractProofFromTermUnderCtx ctx IntTy         = return (Type 0, IntTyRule ctx)
+extractProofFromTermUnderCtx ctx StringTy      = return (Type 0, StringTyRule ctx)
+extractProofFromTermUnderCtx ctx (IntLit n)    = return (IntTy, IntLitRule n ctx)
+extractProofFromTermUnderCtx ctx (StringLit s) = return (StringTy, StringLitRule s ctx)
+extractProofFromTermUnderCtx ctx (BuiltinFn nm) = case builtinType nm of
+    Just ty -> return (ty, BuiltinFnRule nm ctx)
+    Nothing -> Left $ "Unknown builtin function: #" ++ nm
 
 safeInsert :: String -> FunctionalTerm -> TaggedFunctionalContext SafeCtx -> Either String (TaggedFunctionalContext SafeCtx)
 safeInsert x ty ctx = do
@@ -773,6 +884,13 @@ verifyFunctionalProofM (CumulativiyRule p1 p2) = do
     unless (functionalContext seq1 == functionalContext seq2) $ Left $ "Contexts not equal: " ++ fcToS (functionalContext seq1) ++ " and " ++ fcToS (functionalContext seq2)
     unless (cumulativiyRelation (goalType seq1) (goalTerm seq2)) $ Left $ "Cumulativity doesn't hold. Expected " ++ ftToS (goalType seq1) ++ " to be smaller or equal to " ++ ftToS (goalTerm seq2)
     return (FunctionalSequent { functionalContext = functionalContext seq1, goalTerm = goalTerm seq1, goalType = goalTerm seq2 })
+verifyFunctionalProofM (IntTyRule ctx)        = return $ FunctionalSequent { functionalContext = ctx, goalTerm = IntTy,       goalType = Type 0 }
+verifyFunctionalProofM (StringTyRule ctx)     = return $ FunctionalSequent { functionalContext = ctx, goalTerm = StringTy,    goalType = Type 0 }
+verifyFunctionalProofM (IntLitRule n ctx)     = return $ FunctionalSequent { functionalContext = ctx, goalTerm = IntLit n,    goalType = IntTy  }
+verifyFunctionalProofM (StringLitRule s ctx)  = return $ FunctionalSequent { functionalContext = ctx, goalTerm = StringLit s, goalType = StringTy }
+verifyFunctionalProofM (BuiltinFnRule nm ctx) = case builtinType nm of
+    Just ty -> return $ FunctionalSequent { functionalContext = ctx, goalTerm = BuiltinFn nm, goalType = ty }
+    Nothing -> Left $ "Unknown builtin function: #" ++ nm
 
 verifyFunctionalProof :: FunctionalProof -> Bool
 verifyFunctionalProof p =  case verifyFunctionalProofM p of

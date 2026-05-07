@@ -15,8 +15,11 @@ import Parser.TermParsers (proposition, fTerm, process)
 import Data.Functor ((<&>))
 import ECC.Tactics (FunctionalTactic, _FAx, _FVarA, _FVar, _FRepeat, _FAlt, _FThen, _FPi1, _FPi2, _FLambda, _FApp, _FSigma, _FPair, _FProj1, _FProj2, _FCumulativity, _FSimp, _FExactKnown, _FExact, _FSkip)
 import Utils.Display (printCommands)
-import SessionTypes.Kernel (Proposition)
+import SessionTypes.Kernel (Proposition, typeCheckProcessUnderSequent, verifyProofM, Process)
 import ECC.Kernel (FunctionalTerm)
+import Interpreter.Runtime (runProcess)
+import qualified Control.Exception as Exc
+import Data.IORef (newIORef)
 import Data.Char (isSpace)
 import Text.Parsec.Pos (updatePosString)
 
@@ -44,6 +47,8 @@ data Command = CmdHelp
     | CmdApply Tactic
     | CmdDefer
     | CmdDone
+    | CmdRun String
+    | CmdProcessDef String Proposition Process
 
 evalCommand :: Command -> ProofState -> ProofState
 evalCommand CmdHelp s = s { outputs = printCommands : outputs s }
@@ -58,6 +63,40 @@ evalCommand (CmdTheorem tName props p) s = _Theorem s props tName p
 evalCommand (CmdApply t) s = _Apply s t
 evalCommand CmdDefer s = _Defer s
 evalCommand CmdDone s = _Done s
+evalCommand (CmdProcessDef name ty body) s = _ProcessDef s name ty body
+evalCommand (CmdRun _) s = s { errors = "run requires IO; use evalCommandM" : errors s }
+
+evalCommandM :: Command -> ProofState -> IO ProofState
+evalCommandM (CmdRun name) s = _Run s name
+evalCommandM cmd s = return (evalCommand cmd s)
+
+_ProcessDef :: ProofState -> String -> Proposition -> Process -> ProofState
+_ProcessDef s name ty body =
+    let ty' = substTyDecls (stypeDecls s) ty
+        seq = initializeSequent (stypeAssumptions s) (fnAssumptions s) [] ty'
+    in case typeCheckProcessUnderSequent seq body of
+        Left err    -> s { errors = err : errors s }
+        Right proof -> declCheck name s $
+            s { theorems = Map.insert name (Theorem proof 0) (theorems s) }
+
+_Run :: ProofState -> String -> IO ProofState
+_Run s tName =
+    let runExtractor p = case verifyProofM p of
+            Left e  -> return $ s { errors = e : errors s }
+            Right (prc, _) -> do
+                tids <- newIORef []
+                result <- (Exc.try (runProcess Map.empty Map.empty tids prc)) :: IO (Either Exc.SomeException ())
+                case result of
+                    Left ex -> return $ s { errors = show ex : errors s }
+                    Right () -> return s
+    in case Map.lookup tName (theorems s) of
+        Nothing -> case Map.lookup (takeWhile (/= '.') tName) (loadedModules s) of
+            Nothing -> return $ s { errors = "Could not find the supplied theorem." : errors s }
+            Just m  -> maybe
+                (return $ s { errors = "Could not find the supplied theorem." : errors s })
+                (runExtractor . proofObject)
+                (Map.lookup (tail $ dropWhile (/= '.') tName) m)
+        Just thm -> runExtractor (proofObject thm)
 
 -- ==========================================
 -- Parser Entry Points
@@ -145,6 +184,7 @@ parseStringCommand s = do
 cmdCore :: Parser Command
 cmdCore = parseTheorem
   <|> parseTypeDec
+  <|> try parseProcDef
   <|> try parseProcessAssumption
   <|> try parseSTypeAssumption
   <|> parseAssumption
@@ -154,6 +194,7 @@ cmdCore = parseTheorem
   <|> parsePrintTheorems
   <|> parseExtract
   <|> parseExtractPar
+  <|> parseRun
 
 parseHelp :: Parser Command
 parseHelp = do
@@ -176,6 +217,22 @@ parseExtractPar = do
     reserved "extract_par"
     tName <- identifier
     return $ CmdExtractPar tName
+
+parseRun :: Parser Command
+parseRun = do
+    reserved "run"
+    name <- identifier
+    return (CmdRun name)
+
+parseProcDef :: Parser Command
+parseProcDef = do
+    reserved "process"
+    name <- identifier
+    reservedOp ":"
+    ty <- quotes proposition
+    reservedOp "="
+    body <- quotes process
+    return (CmdProcessDef name ty body)
 
 parseImports :: Parser [String]
 parseImports = do
@@ -491,7 +548,7 @@ lexer :: Tok.TokenParser ()
 lexer = Tok.makeTokenParser style
   where
     ops = [":", "\"", ";", "+", "<|>"]
-    names = ["module", "imports", "begin", "end", "theorem", "done", "defer", "prefer", "apply", "help", "print_theorems", "consumes", "extract", "extract_par", "assume", "process"] ++ (fst <$> simpleTactics)
+    names = ["module", "imports", "begin", "end", "theorem", "done", "defer", "prefer", "apply", "help", "print_theorems", "consumes", "extract", "extract_par", "assume", "process", "run"] ++ (fst <$> simpleTactics)
     style = emptyDef
         { Tok.commentLine = "--"
         , Tok.commentStart = "{-"

@@ -12,10 +12,11 @@ lexer :: Tok.TokenParser ()
 lexer = Tok.makeTokenParser style
   where
     ops = ["->", ":", ".", ",", "=>", "-o", "*", "&", "+", "!", "_", "$", "\\"]
-    names = ["Type", "Prop", "fst", "snd", 
-             "Pi", "Sigma", 
-             "Unit", "1", "lift", 
-             "forall", "exists", "forall2", "exists2", "nu", "stype", "lambda"]
+    names = ["Type", "Prop", "fst", "snd",
+             "Pi", "Sigma",
+             "Unit", "1", "lift",
+             "forall", "exists", "forall2", "exists2", "nu", "stype", "lambda",
+             "Int", "String", "print", "readline"]
     style = emptyDef
         { Tok.commentLine = "--"
         , Tok.commentStart = "{-"
@@ -59,6 +60,8 @@ processTerm = try (parens process)
           <|> parseCorec
           <|> parseCall
           <|> parseReplicate
+          <|> parsePrint
+          <|> parseReadLine
           <|> parseAction -- Handles Send, Receive, Select, Case
           <|> try parseCallImplicit -- Fallback for "X(args)" without 'call' keyword if desired
 
@@ -142,6 +145,24 @@ parseReplicate = do
     reservedOp "."
     p <- process
     return (ReplicateReceive x args p)
+
+-- print[M].P
+parsePrint :: Parser Process
+parsePrint = do
+    reserved "print"
+    m <- between (reservedOp "[") (reservedOp "]") fTerm
+    reservedOp "."
+    p <- process
+    return (Print m p)
+
+-- readline(x).P
+parseReadLine :: Parser Process
+parseReadLine = do
+    reserved "readline"
+    x <- parens identifier
+    reservedOp "."
+    p <- process
+    return (ReadLine x p)
 
 -- Handles actions starting with an identifier:
 -- Send, Receive, Selection, Case
@@ -242,8 +263,20 @@ termAtom = parens fTerm
        <|> parseLambda
        <|> parsePi
        <|> parseSigma
+       <|> (reserved "Int"    >> return IntTy)
+       <|> (reserved "String" >> return StringTy)
+       <|> try (IntLit <$> Tok.integer lexer)
+       <|> try (StringLit <$> singleQuoteString)
+       <|> parseBuiltinFn
        <|> parsePairOrProj -- Handles Pairs, Proj1, Proj2, Var
        <|> (Var <$> identifier)
+
+-- Parses "#name" as BuiltinFn "name"
+parseBuiltinFn :: Parser FunctionalTerm
+parseBuiltinFn = do
+    Tok.lexeme lexer (char '#')
+    nm <- identifier
+    return (BuiltinFn nm)
 
 -- Parses "Type 0", "Type 1", etc.
 parseType :: Parser FunctionalTerm
@@ -415,6 +448,20 @@ parseNu = do
 -- -----------------------------------------------------------------------------
 -- 5. Helper Functions
 -- -----------------------------------------------------------------------------
+
+singleQuoteString :: Parser String
+singleQuoteString = Tok.lexeme lexer $ do
+    char '\''
+    chars <- many (noneOf "'\\" <|> escSeq)
+    char '\''
+    return chars
+  where
+    escSeq = char '\\' >> choice
+        [ char '\'' >> return '\''
+        , char '\\' >> return '\\'
+        , char 'n'  >> return '\n'
+        , char 't'  >> return '\t'
+        ]
 
 parseStringTerm :: String -> Either ParseError FunctionalTerm
 parseStringTerm = parse (whiteSpace >> fTerm <* eof) ""

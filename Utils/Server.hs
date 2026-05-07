@@ -4,7 +4,8 @@ import Control.Exception (IOException, catch)
 import Data.Map qualified as Map
 import Data.Set qualified as S
 import ECC.Kernel (emptyContext)
-import Parser.CmdParsers (Command, CommandSpan (CommandSpan, spanRange, spanValue), Range (Range), evalCommand, parseFile, parseFileSpans)
+import Parser.CmdParsers (Command, CommandSpan (CommandSpan, spanRange, spanValue), Range (Range), evalCommand, evalCommandM, parseFile, parseFileSpans)
+import Control.Monad (foldM)
 import SessionTypes.Kernel
 import SessionTypes.Tactics (ProofState (..), allSubgoalNames)
 import System.Directory (doesFileExist)
@@ -45,12 +46,12 @@ readFileSafe path = catch (readFile path) (\e -> let _ = (e :: IOException) in r
 
 runProofScript :: FilePath -> String -> IO (Either String ProofState)
 runProofScript fname content = do
-  let res = parseFile fname content
-  case res of
+  case parseFileSpans fname content of
     Left err -> return . Left $ "--------------------------------\nParse Error:\n" ++ show err
-    Right (imports, commands) -> do
+    Right (moduleName, imports, cmdSpans) -> do
       stateWithImports <- loadImports imports emptyState
-      let finalState = foldl (\s f -> f s) stateWithImports commands
+      let s0 = stateWithImports { curModuleName = moduleName }
+      finalState <- foldM (\s sp -> evalCommandM (spanValue sp) s) s0 cmdSpans
       return . Right $ finalState
 
 loadImports :: [String] -> ProofState -> IO ProofState
@@ -103,11 +104,11 @@ runProofScriptDetailed fname content = do
     Right (moduleName, imports, cmds) -> do
       stateWithImports <- loadImportsDetailed imports emptyState
       let initialState = stateWithImports {curModuleName = moduleName}
-          step (st, acc) sp =
-            let st' = evalCommand (spanValue sp) st
-                snap = Snapshot {beforeState = st, afterState = st'}
-             in (st', acc ++ [snap])
-          (_, snaps) = foldl step (initialState, []) cmds
+          step (st, acc) sp = do
+            st' <- evalCommandM (spanValue sp) st
+            let snap = Snapshot {beforeState = st, afterState = st'}
+            return (st', acc ++ [snap])
+      (_, snaps) <- foldM step (initialState, []) cmds
       pure $
         Right
           ProcessedScript
