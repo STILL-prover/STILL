@@ -173,5 +173,7 @@ These are top-level commands in a `.still` file, not tactic expressions.
 | `defer` | Move the current subgoal to the end of the subgoal queue. |
 | `done` | Assert the proof is complete (all subgoals closed). |
 | `extract Name` | Extract and display the process term synthesized for theorem `Name`. |
+| `process Name : "A" = "P"` | Parse process `P`, type-check it against session type `A`, and store it as a theorem named `Name`. No tactic proof required. |
+| `run Name` | Extract the process from theorem `Name` (via `verifyProofM`) and execute it. I/O side effects are performed immediately. |
 | `print_theorems` | Print all theorems proven so far in this module. |
 | `help` | Print a command reference. |

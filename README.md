@@ -36,7 +36,15 @@ After a theorem is started you can start proving it using the proving commands.
 The ```apply``` command must be followed by a tactic expression. Use ```defer```
 to move the current subgoal to the end.
 
+You can also define a process directly (without a tactic proof) and run it:
+
+```
+process Hello : "($String) * 1" = "print['Hello, World!'].stop"
+run Hello
+```
+
 See Tactics.md for the tactics in the system. See Syntax.md for tactic expressions.
+See Tutorial.md for a guided introduction including the interpreter and I/O commands.
 
 # Compiling
 

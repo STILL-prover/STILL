@@ -37,6 +37,20 @@ Session types are built from these proposition forms:
 - Unrestricted assumptions (from `!`) may be used any number of times.
 - Propositions must always be **double-quoted** in script syntax: `"A -o B"`.
 
+**Base types and literals:**
+
+| Syntax | Meaning |
+|--------|---------|
+| `Int` | The type of integers (`42`, `-7`). Lives at `Type 0`. |
+| `String` | The type of strings (`'hello'`). Lives at `Type 0`. |
+| `42` | Integer literal. Has type `Int`. |
+| `'hello'` | String literal (single-quoted). Has type `String`. Escapes: `\'` `\\` `\n` `\t`. |
+| `#add`, `#sub`, `#mul`, `#div`, `#mod`, `#neg` | Integer arithmetic built-ins. |
+| `#eq`, `#lt` | Comparison built-ins (return `1` for true, `0` for false). |
+| `#show` | Convert `Int` to `String`. |
+| `#strlen` | Length of a `String` as `Int`. |
+| `#concat` | Concatenate two `String`s. |
+
 ---
 
 ## 2. File Structure
@@ -381,17 +395,21 @@ The process `z(x).[x <-> z]` is type-checked against `A -o A`. Process syntax:
 
 | Process | Meaning |
 |---------|---------|
-| `0` | Halt |
+| `0` or `stop` | Halt |
 | `P \| Q` | Parallel composition |
 | `(nu x:A)P` | Restriction: fresh channel `x` of type `A` |
 | `x[y].P` | Send channel `y` on `x`, continue as `P` |
-| `x(y).P` | Receive channel `y` on `x`, continue as `P` |
+| `x[$M].P` | Send functional term `M` on `x`, continue as `P` |
+| `x(y).P` | Receive on `x`, bind to `y`, continue as `P` |
 | `x.inl;P` | Send left injection on `x` |
 | `x.inr;P` | Send right injection on `x` |
-| `x.case(P, Q)` | Receive injection on `x`; branch on inl→P, inr→Q |
+| `x.case(inl: P, inr: Q)` | Receive injection on `x`; branch on inl→P, inr→Q |
 | `[x <-> y]` | Link channels `x` and `y` (identity/forwarding) |
+| `[x <- M]` | Lift: bind result of evaluating term `M` to channel `x` |
 | `!x(y).P` | Replicated receive |
 | `(corec S(ys) P)(zs)` | Corecursive process |
+| `print[M].P` | Evaluate `M`, print it to stdout, continue as `P` |
+| `readline(x).P` | Read a line from stdin, bind as string `x`, continue as `P` |
 
 ---
 
@@ -586,3 +604,163 @@ assume resource is stype
 theorem token: "resource -o resource * 1"
 ...
 ```
+
+---
+
+## 21. Integer and String Literals
+
+STILL's functional layer supports integer and string base types directly.
+
+```
+module Literals begin
+
+-- Integer literal: type is Int
+-- String literal:  type is String (single-quoted)
+
+-- Proves the type Int lives at Type 0
+theorem intType: "exists x : Type 0 . $x"
+apply ExistsR
+apply Exact "Int"
+apply FTermR
+apply Exact "42"
+done
+```
+
+String literals use single quotes `'...'`. Supported escape sequences: `\'`, `\\`, `\n`, `\t`.
+
+**Built-in functions** are written `#name` and applied like ordinary functional terms:
+
+| Built-in | Type | Example |
+|----------|------|---------|
+| `#add` | `Int -> Int -> Int` | `#add 3 4` → `7` |
+| `#sub` | `Int -> Int -> Int` | `#sub 10 3` → `7` |
+| `#mul` | `Int -> Int -> Int` | `#mul 6 7` → `42` |
+| `#div` | `Int -> Int -> Int` | `#div 10 3` → `3` |
+| `#mod` | `Int -> Int -> Int` | `#mod 10 3` → `1` |
+| `#neg` | `Int -> Int` | `#neg 5` → `-5` |
+| `#eq` | `Int -> Int -> Int` | `#eq 3 3` → `1` (true) |
+| `#lt` | `Int -> Int -> Int` | `#lt 2 5` → `1` (true) |
+| `#show` | `Int -> String` | `#show 42` → `'42'` |
+| `#strlen` | `String -> Int` | `#strlen 'hi'` → `2` |
+| `#concat` | `String -> String -> String` | `#concat 'a' 'b'` → `'ab'` |
+
+Built-ins reduce automatically during term evaluation (`Simp`, `Exact`, `run`, etc.).
+
+---
+
+## 22. Console I/O: print and readline
+
+Two process constructors provide console I/O, each with a corresponding session type.
+
+### `print[M].P` — output
+
+Session type: `($T) * A`
+
+Evaluates `M : T`, prints it to stdout, then continues as `P` providing `A`.
+
+```
+module Hello begin
+
+process Hello : "($String) * 1" = "print['Hello, World!'].stop"
+run Hello
+```
+
+Output: `Hello, World!`
+
+The type `($String) * 1` reads: "send a string value, then terminate."
+
+### `readline(x).P` — input
+
+Session type: `$String -o A`
+
+Reads a line from stdin, binds it as `x : String`, then continues as `P`.
+
+```
+module Echo begin
+
+process Echo : "$String -o ($String) * 1" = "readline(x).print[x].stop"
+run Echo
+```
+
+This process reads a line and echoes it back.
+
+### Combining I/O
+
+```
+module Calc begin
+
+-- Reads a greeting prefix and appends "!" to it.
+process Exclaim : "$String -o ($String) * 1" =
+    "readline(x).print[#concat x '!'].stop"
+```
+
+### I/O in tactic proofs
+
+`print` and `readline` can also appear as sub-processes when using `ExactPi`:
+
+```
+theorem echo: "$String -o ($String) * 1"
+apply ExactPi "readline(x).print[x].stop"
+done
+```
+
+The type checker verifies:
+- `readline(x)` consumes the `$String -o` prefix and binds `x : String` in the functional context.
+- `print[x]` matches `$String` (since `x : String`), leaving goal `1`.
+- `stop` closes `1`.
+
+---
+
+## 23. The `process` and `run` Commands
+
+### `process Name : "A" = "P"`
+
+Defines a named process directly from a process term, without writing a tactic proof:
+
+```
+module Demo begin
+
+process Greet : "($String) * 1" = "print['Hi from STILL!'].stop"
+```
+
+The process body `P` is **parsed and type-checked** against session type `A`. If type-checking succeeds, `Name` is stored as a theorem exactly as if it had been proven with tactics. The theorem can then be used with `CutProc`, `run`, or `extract`.
+
+**Syntax reminder:** `A` and `P` are each wrapped in double quotes. String literals *inside* `P` use single quotes to avoid ambiguity.
+
+### `run Name`
+
+Executes the process extracted from a theorem:
+
+```
+module Demo begin
+
+process Hello : "($String) * 1" = "print['Hello, World!'].stop"
+run Hello
+```
+
+`run` calls `verifyProofM` on the theorem's stored proof to recover the process term, then runs it. Any `print` output appears immediately; any `readline` waits for user input.
+
+```
+module Demo begin
+
+theorem id_str: "$String -o ($String) * 1"
+apply ImpliesR
+apply FTermLA
+apply FTermR
+apply VarA
+apply IdA
+done
+
+process echo : "$String -o ($String) * 1" = "readline(x).print[x].stop"
+run echo
+```
+
+Both `theorem`-defined and `process`-defined theorems can be run.
+
+### Execution model
+
+- **Sequential within a process**: actions execute left-to-right.
+- **Parallel (`P | Q`)**: `P` and `Q` run concurrently. STILL uses Haskell MVars for channel communication; linear channels are synchronous rendezvous points.
+- **Replication (`!x(y).P`)**: spins up a persistent server loop; each incoming connection forks a new copy of `P`.
+- **Corecursion (`corec`)**: runs the body and loops via Haskell lazy knot-tying; use for infinite server processes.
+- **Exceptions**: if a runtime error occurs (stuck channel, unmatched pattern, etc.) it is caught and reported as an error in the proof state rather than crashing the process.
