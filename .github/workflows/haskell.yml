@@ -19,3 +19,13 @@ jobs:
       - run: |
           ghcup install ghc --set latest
           ghc Main.hs -o still
+  runtests:
+    name: Test
+    runs-on: ubuntu-latest # or macOS-latest, or windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: haskell/ghcup-setup@v1
+      - run: |
+          ghcup install ghc --set latest
+          ghc Tests/Main.hs -o still-test
+          ./still-test

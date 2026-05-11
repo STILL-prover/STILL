@@ -46,10 +46,37 @@ run Hello
 See Tactics.md for the tactics in the system. See Syntax.md for tactic expressions.
 See Tutorial.md for a guided introduction including the interpreter and I/O commands.
 
+# Running Tests
+
+The test suite covers unit tests for the ECC and session types kernels, parser tests, and integration tests that run complete `.still` proof scripts.
+
+Compile and run on Windows:
+
+```powershell
+.\run-tests.ps1
+```
+
+Or manually:
+
+```
+ghc -threaded -O1 Tests\Main.hs -o still-tests
+.\still-tests
+```
+
+On Unix:
+
+```bash
+bash run-tests.sh
+```
+
+The test binary exits with code 0 if all tests pass, or non-zero if any fail. Test results are printed with `PASS`/`FAIL` per test and a summary line at the end.
+
 # Compiling
 
 1. Use ghcup or another method to install ghc 9.6.7 (https://www.haskell.org/ghcup/)
-2. Run ```ghc -threaded -O2 Main.hs -o still``` in this folder
+2. Run ```ghc -threaded -O2 Main.hs -o still``` in this folder. You might want
+   to run ```ghc -threaded -O2 Main.hs -o still-new``` if the still executable
+   is in use due to the extension or mcp server running.
 3. Run the prover with ```./still``` (still.exe on Windows).
   - See above for the different modes.
 

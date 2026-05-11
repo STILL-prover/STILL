@@ -1,6 +1,6 @@
 module Scratch begin
 
-theorem test: "a -o b -o (a -o b -o c) -o c"
+theorem test: "forall a:stype. forall b:stype. forall c:stype. a -o b -o (a -o b -o c) -o c"
 apply Intros
 apply ImpliesLA
 defer

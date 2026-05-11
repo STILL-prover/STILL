@@ -55,7 +55,7 @@ processTerm = try (parens process)
           <|> parseHalt
           -- <|> parseHole
           <|> parseProcessNu
-          <|> parseLink
+          <|> try parseLink
           <|> parseProcessLift
           <|> parseCorec
           <|> parseCall

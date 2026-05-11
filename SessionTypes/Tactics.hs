@@ -1055,7 +1055,8 @@ theorem s ts n p =
         sessionsToConsume = substTyDecls typeSynonyms <$> ts
         goalProp = (substTyDecls typeSynonyms p)
         goal = initializeProof (initializeSequent (stypeAssumptions s) (fnAssumptions s) sessionsToConsume goalProp)
-        wellFormedGoal = wellFormedTypeWithFreeVars goalProp
+        initialTyVarCtx = S.fromList (stypeAssumptions s)
+        wellFormedGoal = wellFormedType initialTyVarCtx goalProp
     in
         case wellFormedGoal of
             Left e -> s { errors = ("Proposition is not well-formed! " ++ e):errors s }
@@ -1069,14 +1070,11 @@ theorem s ts n p =
                 , cachedVarNames = namesInOrder })
 
 runAndVerifyJustification :: ProofState -> Either String (Proof, ProofState)
-runAndVerifyJustification s = case runProofState (subgoalJustification ( subgoals s ! "?a")) s of
-    Right (p, s) -> case verifyProofM p of Right _ -> Right (p, s); Left e ->  Left e
-    Left e -> Left e
-
-extractFromJustification :: ProofState -> Either String (Process, Sequent)
-extractFromJustification s = case runProofState (subgoalJustification ( subgoals s ! "?a")) s of
-    Right (p, s) -> verifyProofM p
-    Left err -> Left err
+runAndVerifyJustification s = case Data.Map.lookup "?a" (subgoals s) of
+    Nothing -> Left "done: no active theorem (theorem creation may have failed)"
+    Just sg -> case runProofState (subgoalJustification sg) s of
+        Right (p, s) -> case verifyProofM p of Right _ -> Right (p, s); Left e -> Left e
+        Left e -> Left e
 
 done :: ProofState -> ProofState
 done res = case runAndVerifyJustification res of

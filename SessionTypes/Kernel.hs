@@ -1015,25 +1015,6 @@ isStrictlyPositive y p = go y p
         go y (TyNu x p1) | x /= y = go y p1
         go y _ = True -- Variable is shadowed or a lift/tyvar/unit is encountered
 
-wellFormedTypeWithFreeVars :: Proposition -> Either String ()
-wellFormedTypeWithFreeVars b = case b of
-    Unit -> return ()
-    Lift ft -> return ()
-    Implication p1 p2 -> wf2 p1 p2
-    Tensor p1 p2 -> wf2 p1 p2
-    Replication p -> wf p
-    With p1 p2 -> wf2 p1 p2
-    Plus p1 p2 -> wf2 p1 p2
-    Forall x p1 p2 -> wf p2
-    Exists x p1 p2 -> wf p2
-    Forall2 x p -> wellFormedTypeWithFreeVars p
-    Exists2 x p -> wellFormedTypeWithFreeVars p
-    TyNu x p -> unless (isStrictlyPositive x p) (Left (x ++ " is not strictly positive in " ++ propToS p)) >> wellFormedTypeWithFreeVars p
-    TyVar x -> return ()
-    where
-        wf2 p1 p2 = wellFormedTypeWithFreeVars p1 >> wellFormedTypeWithFreeVars p2
-        wf = wellFormedTypeWithFreeVars
-
 wellFormedType :: S.Set String -> Proposition -> Either String ()
 wellFormedType tyVarContext b = case b of
     Unit -> return ()
@@ -1047,7 +1028,14 @@ wellFormedType tyVarContext b = case b of
     Exists x p1 p2 -> wf p2
     Forall2 x p -> wellFormedType (S.insert x tyVarContext) p
     Exists2 x p -> wellFormedType (S.insert x tyVarContext) p
-    TyNu x p -> unless (isStrictlyPositive x p) (Left (x ++ " is not strictly positive in " ++ propToS p)) >> wellFormedType (S.insert x tyVarContext) p
+    TyNu x p ->
+        unless (x `S.member` freePropNames p)
+            (Left ("nu " ++ x ++ ". " ++ propToS p ++ " does not mention " ++ x
+                   ++ "; coinductive types must mention their bound variable")) >>
+        unless (p /= TyVar x)
+            (Left ("nu " ++ x ++ ". " ++ x ++ " is not a productive coinductive type")) >>
+        unless (isStrictlyPositive x p) (Left (x ++ " is not strictly positive in " ++ propToS p)) >>
+        wellFormedType (S.insert x tyVarContext) p
     TyVar x -> if S.member x tyVarContext then return () else Left (x ++ " is free in what should be a well-formed type.")
     where
         wf2 p1 p2 = wellFormedType tyVarContext p1 >> wellFormedType tyVarContext p2
