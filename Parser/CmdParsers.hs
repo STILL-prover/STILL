@@ -35,7 +35,8 @@ data CommandSpan a = CommandSpan {
     spanValue :: a
 }
 
-data Command = CmdHelp
+data TopLevelCommand
+    = CmdHelp
     | CmdPrintTheorems
     | CmdExtract String
     | CmdExtractPar String
@@ -44,31 +45,65 @@ data Command = CmdHelp
     | CmdProcessAssumption String Proposition
     | CmdSTypeAssumption String
     | CmdTheorem String [Proposition] Proposition
-    | CmdApply Tactic
+    | CmdProcessDef String Proposition Process
+    | CmdRun String
+
+data ProofCommand
+    = CmdApply Tactic
     | CmdDefer
     | CmdDone
-    | CmdRun String
-    | CmdProcessDef String Proposition Process
+
+data Command = TopLevel TopLevelCommand | Proof ProofCommand
+
+evalTopLevelCommand :: TopLevelCommand -> ProofState -> ProofState
+evalTopLevelCommand CmdHelp s = s { outputs = printCommands : outputs s }
+evalTopLevelCommand CmdPrintTheorems s = _PrintTheorems s
+evalTopLevelCommand (CmdExtract tName) s = _Extract s tName
+evalTopLevelCommand (CmdExtractPar tName) s = _ExtractPar s tName
+evalTopLevelCommand (CmdSTypeDecl i ty) s = _STypeDecl i ty s
+evalTopLevelCommand (CmdAssumption resI resTy) s = _FAssumption resI resTy s
+evalTopLevelCommand (CmdProcessAssumption resI resTy) s = _PAssumption resI resTy s
+evalTopLevelCommand (CmdSTypeAssumption resI) s = _STypeAssumption resI s
+evalTopLevelCommand (CmdTheorem tName props p) s = _Theorem s props tName p
+evalTopLevelCommand (CmdProcessDef name ty body) s = _ProcessDef s name ty body
+evalTopLevelCommand (CmdRun _) s = s { errors = "run requires IO; use evalTopLevelCommandM" : errors s }
+
+evalProofCommand :: ProofCommand -> ProofState -> ProofState
+evalProofCommand (CmdApply t) s = _Apply s t
+evalProofCommand CmdDefer s = _Defer s
+evalProofCommand CmdDone s = _Done s
 
 evalCommand :: Command -> ProofState -> ProofState
-evalCommand CmdHelp s = s { outputs = printCommands : outputs s }
-evalCommand CmdPrintTheorems s = _PrintTheorems s
-evalCommand (CmdExtract tName) s = _Extract s tName
-evalCommand (CmdExtractPar tName) s = _ExtractPar s tName
-evalCommand (CmdSTypeDecl i ty) s = _STypeDecl i ty s
-evalCommand (CmdAssumption resI resTy) s = _FAssumption resI resTy s
-evalCommand (CmdProcessAssumption resI resTy) s = _PAssumption resI resTy s
-evalCommand (CmdSTypeAssumption resI) s = _STypeAssumption resI s
-evalCommand (CmdTheorem tName props p) s = _Theorem s props tName p
-evalCommand (CmdApply t) s = _Apply s t
-evalCommand CmdDefer s = _Defer s
-evalCommand CmdDone s = _Done s
-evalCommand (CmdProcessDef name ty body) s = _ProcessDef s name ty body
-evalCommand (CmdRun _) s = s { errors = "run requires IO; use evalCommandM" : errors s }
+evalCommand (TopLevel cmd) s
+    | proofInProgress s = s { errors = ("Cannot use '" ++ topLevelCmdLabel cmd ++ "' while a proof is in progress. Complete the proof with 'done' first.") : errors s }
+    | otherwise = evalTopLevelCommand cmd s
+evalCommand (Proof cmd) s
+    | not (proofInProgress s) = s { errors = ("Cannot use '" ++ proofCmdLabel cmd ++ "' outside of a proof. Start a theorem with 'theorem Name: \"Prop\"' first.") : errors s }
+    | otherwise = evalProofCommand cmd s
 
 evalCommandM :: Command -> ProofState -> IO ProofState
-evalCommandM (CmdRun name) s = _Run s name
+evalCommandM (TopLevel (CmdRun name)) s
+    | proofInProgress s = return $ s { errors = "Cannot use 'run' while a proof is in progress. Complete the proof with 'done' first." : errors s }
+    | otherwise = _Run s name
 evalCommandM cmd s = return (evalCommand cmd s)
+
+topLevelCmdLabel :: TopLevelCommand -> String
+topLevelCmdLabel CmdHelp                    = "help"
+topLevelCmdLabel CmdPrintTheorems           = "print_theorems"
+topLevelCmdLabel (CmdExtract _)             = "extract"
+topLevelCmdLabel (CmdExtractPar _)          = "extract_par"
+topLevelCmdLabel (CmdSTypeDecl _ _)         = "stype"
+topLevelCmdLabel (CmdAssumption _ _)        = "assume"
+topLevelCmdLabel (CmdProcessAssumption _ _) = "assume process"
+topLevelCmdLabel (CmdSTypeAssumption _)     = "assume ... is stype"
+topLevelCmdLabel (CmdTheorem _ _ _)         = "theorem"
+topLevelCmdLabel (CmdProcessDef _ _ _)      = "process"
+topLevelCmdLabel (CmdRun _)                 = "run"
+
+proofCmdLabel :: ProofCommand -> String
+proofCmdLabel (CmdApply _) = "apply"
+proofCmdLabel CmdDefer     = "defer"
+proofCmdLabel CmdDone      = "done"
 
 _ProcessDef :: ProofState -> String -> Proposition -> Process -> ProofState
 _ProcessDef s name ty body =
@@ -181,50 +216,57 @@ parseStringCommand s = do
 -- 2. Command Parsers
 -- ==========================================
 
-cmdCore :: Parser Command
-cmdCore = parseTheorem
+parseTopLevelCommand :: Parser TopLevelCommand
+parseTopLevelCommand = parseTheorem
   <|> parseTypeDec
   <|> try parseProcDef
   <|> try parseProcessAssumption
   <|> try parseSTypeAssumption
   <|> parseAssumption
-  <|> parseProvingCommand
-  <|> parseDone
   <|> parseHelp
   <|> parsePrintTheorems
   <|> parseExtract
   <|> parseExtractPar
   <|> parseRun
 
-parseHelp :: Parser Command
+parseProofCommand :: Parser ProofCommand
+parseProofCommand = parseApply
+    <|> parseDefer
+    <|> parseDone
+
+cmdCore :: Parser Command
+cmdCore = (TopLevel <$> parseTopLevelCommand)
+      <|> (Proof <$> parseProofCommand)
+
+parseHelp :: Parser TopLevelCommand
 parseHelp = do
     reserved "help"
     return CmdHelp
 
-parsePrintTheorems :: Parser Command
+parsePrintTheorems :: Parser TopLevelCommand
 parsePrintTheorems = do
     reserved "print_theorems"
     return CmdPrintTheorems
 
-parseExtract :: Parser Command
+parseExtract :: Parser TopLevelCommand
 parseExtract = do
     reserved "extract"
     tName <- identifier
     return $ CmdExtract tName
 
-parseExtractPar :: Parser Command
+parseExtractPar :: Parser TopLevelCommand
 parseExtractPar = do
     reserved "extract_par"
     tName <- identifier
     return $ CmdExtractPar tName
 
-parseRun :: Parser Command
+parseRun :: Parser TopLevelCommand
 parseRun = do
     reserved "run"
     name <- identifier
     return (CmdRun name)
 
-parseProcDef :: Parser Command
+parseProcDef :: Parser TopLevelCommand
 parseProcDef = do
     reserved "process"
     name <- identifier
@@ -239,7 +281,7 @@ parseImports = do
     reserved "imports"
     sepBy identifier whiteSpace
 
-parseTypeDec :: Parser Command
+parseTypeDec :: Parser TopLevelCommand
 parseTypeDec = do
     reserved "stype"
     i <- identifier
@@ -247,7 +289,7 @@ parseTypeDec = do
     ty <- quotes proposition
     return (CmdSTypeDecl i ty)
 
-parseAssumption :: Parser Command
+parseAssumption :: Parser TopLevelCommand
 parseAssumption = do
     reserved "assume"
     resI <- identifier
@@ -255,7 +297,7 @@ parseAssumption = do
     resTy <- quotes fTerm
     return (CmdAssumption resI resTy)
 
-parseProcessAssumption :: Parser Command
+parseProcessAssumption :: Parser TopLevelCommand
 parseProcessAssumption = do
     reserved "assume"
     reserved "process"
@@ -264,7 +306,7 @@ parseProcessAssumption = do
     resTy <- quotes proposition
     return (CmdProcessAssumption resI resTy)
 
-parseSTypeAssumption :: Parser Command
+parseSTypeAssumption :: Parser TopLevelCommand
 parseSTypeAssumption = do
     reserved "assume"
     resI <- identifier
@@ -272,7 +314,7 @@ parseSTypeAssumption = do
     reserved "stype"
     return (CmdSTypeAssumption resI)
 
-parseTheorem :: Parser Command
+parseTheorem :: Parser TopLevelCommand
 parseTheorem = do
     reserved "theorem"
     tName <- identifier
@@ -281,21 +323,18 @@ parseTheorem = do
     p <- quotes proposition
     return (CmdTheorem tName props p)
 
-parseProvingCommand :: Parser Command
-parseProvingCommand = parseApply
-    <|> parseDefer
-
-parseApply :: Parser Command
+parseApply :: Parser ProofCommand
 parseApply = do
     reserved "apply"
     t <- parseTacticExpression
     return (CmdApply t)
 
+parseDefer :: Parser ProofCommand
 parseDefer = do
     reserved "defer"
     return CmdDefer
 
-parseDone :: Parser Command
+parseDone :: Parser ProofCommand
 parseDone = do
     reserved "done"
     return CmdDone

@@ -1040,6 +1040,9 @@ initCleanState mName =
         , errors = []
         , stypeAssumptions = [] }
 
+proofInProgress :: ProofState -> Bool
+proofInProgress s = curTheoremName s /= ""
+
 runProofState :: ProverState a -> ProofState -> (Either String (a, ProofState))
 runProofState a s = runIdentity $ E.runExceptT $ ST.runStateT a s
 
@@ -1078,7 +1081,10 @@ runAndVerifyJustification s = case Data.Map.lookup "?a" (subgoals s) of
 
 done :: ProofState -> ProofState
 done res = case runAndVerifyJustification res of
-    Right (p, s) -> s { theorems = Data.Map.insert (curTheoremName s) (Theorem p (fromIntegral . L.length . Data.Map.keys $ subgoals s)) (theorems s),  outputs = ("Theorem complete: " ++ curTheoremName s):outputs res}
+    Right (p, s) -> s { theorems = Data.Map.insert (curTheoremName s) (Theorem p (fromIntegral . L.length . Data.Map.keys $ subgoals s)) (theorems s)
+                      , outputs = ("Theorem complete: " ++ curTheoremName s):outputs res
+                      , curTheoremName = ""
+                      , openGoalStack = [] }
     Left err -> res { outputs = ("Could not verify proof: " ++ err):outputs res, errors = ("Could not verify proof: " ++ err):errors res }
 
 -- DSL

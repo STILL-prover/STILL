@@ -6,7 +6,7 @@ import Data.Map qualified as Map
 import MCP.Json
 import SessionTypes.Tactics (ProofState (..))
 import System.IO
-import Parser.CmdParsers (Command (..), CommandSpan (spanText, spanValue))
+import Parser.CmdParsers (Command (..), TopLevelCommand (..), ProofCommand (..), CommandSpan (spanText, spanValue))
 import Utils.Display (renderGoals, renderState)
 import Utils.Server (ProcessedScript (..), Snapshot (afterState, beforeState), emptyState, findSnapshotAt, runProofScript, runProofScriptDetailed)
 import System.Environment (getExecutablePath)
@@ -171,10 +171,8 @@ getTutorialTool =
 -- ==========================================
 
 isProvingCmd :: Command -> Bool
-isProvingCmd (CmdTheorem _ _ _) = True
-isProvingCmd (CmdApply _) = True
-isProvingCmd CmdDefer = True
-isProvingCmd CmdDone = True
+isProvingCmd (TopLevel (CmdTheorem _ _ _)) = True
+isProvingCmd (Proof _) = True
 isProvingCmd _ = False
 
 stepNewList :: (ProofState -> [String]) -> Snapshot -> [String]

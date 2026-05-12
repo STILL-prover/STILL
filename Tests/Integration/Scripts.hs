@@ -269,6 +269,63 @@ run ref = group ref "Integration.runProofScript" $ do
         , "done"
         ]
 
+    -- ===== Command context guards =====
+
+    assertFails ref "apply outside proof" $ unlines
+        [ "module T begin"
+        , "apply UnitR"
+        ]
+
+    assertFails ref "defer outside proof" $ unlines
+        [ "module T begin"
+        , "defer"
+        ]
+
+    assertFails ref "done outside proof" $ unlines
+        [ "module T begin"
+        , "done"
+        ]
+
+    assertFails ref "nested theorem during proof" $ unlines
+        [ "module T begin"
+        , "theorem outer: \"1\""
+        , "theorem inner: \"1\""
+        , "apply UnitR"
+        , "done"
+        ]
+
+    assertFails ref "assume during proof" $ unlines
+        [ "module T begin"
+        , "theorem t: \"1\""
+        , "assume x is \"Int\""
+        , "apply UnitR"
+        , "done"
+        ]
+
+    assertFails ref "extract during proof" $ unlines
+        [ "module T begin"
+        , "theorem t: \"1\""
+        , "extract t"
+        , "apply UnitR"
+        , "done"
+        ]
+
+    assertFails ref "stype during proof" $ unlines
+        [ "module T begin"
+        , "theorem t: \"1\""
+        , "stype S = \"1\""
+        , "apply UnitR"
+        , "done"
+        ]
+
+    assertProves ref "top-level commands allowed after done" $ unlines
+        [ "module T begin"
+        , "theorem unit: \"1\""
+        , "apply UnitR"
+        , "done"
+        , "extract unit"
+        ]
+
     -- ===== File-based integration tests =====
 
     runFileTest ref "Proofs/TestingFiles/Scratch.still"
