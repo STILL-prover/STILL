@@ -7,10 +7,10 @@ import qualified ECC.Tactics as FT
 import qualified Data.Map
 import qualified Data.Map as M
 import Data.Maybe (isNothing, isJust, fromJust)
-import SessionTypes.Kernel (Process (..), Proposition (..), Sequent (fnContext, unrestrictedContext, linearContext, channel, goalProposition), pToS, propToS, seqToS)
+import SessionTypes.Kernel (Process (..), Proposition (..), Sequent (tyVarContext, fnContext, unrestrictedContext, linearContext, channel, goalProposition), pToS, propToS, seqToS)
 import qualified Data.Set as S
 import qualified Data.String
-import ECC.Kernel (ftToS)
+import ECC.Kernel (ftToS, ctxToList)
 import ECC.Tactics (ftseqToSHelper)
 
 ftseqToS :: FT.FunctionalTacticsSequent -> String
@@ -26,24 +26,37 @@ sgsToS :: [Subgoal] -> String
 sgsToS (sg:sgs) = sgToS sg ++ "\n" ++ sgsToS sgs
 sgsToS [] = ""
 
-showFiltered :: S.Set String -> Subgoal -> String
-showFiltered reservedVars sg =
+ansiRed :: String -> String
+ansiRed s = "\ESC[31m" ++ s ++ "\ESC[0m"
+
+showFiltered :: (S.Set String, S.Set String) -> Subgoal -> String
+showFiltered (hiddenVars, blackVars) sg =
     let
-        actualSequent = (sequent sg) {
-            fnContext = fnContext . sequent $ sg,
-            unrestrictedContext = unrestrictedContext . sequent $ sg,
-            linearContext = Data.Map.filterWithKey (\k v -> not (k `S.member` reservedVars)) (linearContext . sequent $ sg)
-        }
-    in seqToS actualSequent
+        seq' = sequent sg
+        formatBlock [] = ""
+        formatBlock items = "\n    " ++ L.intercalate ",\n    " items
+        tyVars = S.toList (tyVarContext seq')
+        fns    = [k ++ ":" ++ ftToS v | (k, v) <- ctxToList (fnContext seq')]
+        unres  = [k ++ ":" ++ propToS v | (k, v) <- Data.Map.toList (unrestrictedContext seq')]
+        lin    = [ let entry = k ++ ":" ++ propToS v
+                   in (if k `S.member` blackVars then entry else ansiRed entry)
+                 | (k, v) <- L.filter (\(k, v) -> not (k `S.member` hiddenVars)) (Data.Map.toList (linearContext seq')) ]
+        goal   = channel seq' ++ ":" ++ propToS (goalProposition seq')
+    in
+        "\n  Ω: " ++ (if L.null tyVars then "" else formatBlock tyVars) ++ ";" ++
+        "\n  Ψ:  " ++ (if L.null fns then "" else formatBlock fns) ++ ";" ++
+        "\n  Γ:  " ++ (if L.null unres then "" else formatBlock unres) ++ ";" ++
+        "\n  Δ: " ++ (if L.null lin then "" else formatBlock lin) ++
+        "\n  |- " ++ goal
 
 renderState :: ProofState -> String
 renderState s =
     let
         sgNameSep = ">> "
-        curReservedVars sgn = getUnavailableVarsForSubgoal sgn s
+        curUnavailable sgn = getContextAvailability sgn s
         subgoalPrinter n sg = case inProgressFunctionalProof sg of
             Just (fs, p) | Data.Map.member (L.drop 1 (L.dropWhile (/= '.') n)) (FT.subgoals fs) -> (if [n] == L.take 1 (openGoalStack s) then "*" else " ") ++ n ++ sgNameSep ++ fsgToS (FT.subgoals fs Data.Map.! L.drop 1 (L.dropWhile (/= '.') n))
-            Nothing -> (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (curReservedVars n) sg
+            Nothing -> (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (curUnavailable n) sg
             _ -> n
         messagePrinter = (if L.null $ outputs s then "" else head $ outputs s) ++ (if L.null (errors s) then "" else "\n" ++ unlines (reverse (errors s)))
         orderedSubgoals = (\(sgn, sg) -> (sgn, fromJust sg)) <$> L.filter (\(sgn, sg) -> isJust sg) ((\sgn -> (sgn, Data.Map.lookup  (L.takeWhile (/= '.') sgn) (subgoals s))) <$> openGoalStack s)
@@ -56,10 +69,10 @@ renderGoals :: ProofState -> String
 renderGoals s =
     let
         sgNameSep = ">> "
-        curReservedVars sgn = getUnavailableVarsForSubgoal sgn s
+        curUnavailable sgn = getContextAvailability sgn s
         subgoalPrinter n sg = case inProgressFunctionalProof sg of
             Just (fs, p) | Data.Map.member (L.drop 1 (L.dropWhile (/= '.') n)) (FT.subgoals fs) -> (if [n] == L.take 1 (openGoalStack s) then "*" else " ") ++ n ++ sgNameSep ++ fsgToS (FT.subgoals fs Data.Map.! L.drop 1 (L.dropWhile (/= '.') n))
-            Nothing -> (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (curReservedVars n) sg
+            Nothing -> (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (curUnavailable n) sg
             _ -> n
         orderedSubgoals = (\(sgn, sg) -> (sgn, fromJust sg)) <$> L.filter (\(sgn, sg) -> isJust sg) ((\sgn -> (sgn, Data.Map.lookup (L.takeWhile (/= '.') sgn) (subgoals s))) <$> openGoalStack s)
     in
@@ -70,10 +83,10 @@ renderGoals s =
 mainPrinter (Right s) =
         let
             sgNameSep = ">> "
-            curReservedVars sgn = getUnavailableVarsForSubgoal sgn s
+            curUnavailable sgn = (getContextAvailability sgn s)
             subgoalPrinter n sg = case inProgressFunctionalProof sg of
                 Just (fs, p) | Data.Map.member (L.drop 1 (L.dropWhile (/= '.') n)) (FT.subgoals fs) -> (if [n] == L.take 1 (openGoalStack s) then "*" else " ") ++ n ++ sgNameSep ++ fsgToS (FT.subgoals fs Data.Map.! L.drop 1 (L.dropWhile (/= '.') n))
-                Nothing -> (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (curReservedVars n) sg
+                Nothing -> (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (curUnavailable n) sg
                 _ -> n
             messagePrinter = (if L.null $ outputs s then "" else head $ outputs s) ++ (if L.null (errors s) then "" else "\n" ++ unlines (reverse (errors s)))
             orderedSubgoals = L.reverse $ (\(sgn, sg) -> (sgn, fromJust sg)) <$> L.filter (\(sgn, sg) -> isJust sg) ((\sgn -> (sgn, Data.Map.lookup  (L.takeWhile (/= '.') sgn) (subgoals s))) <$> openGoalStack s)

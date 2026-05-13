@@ -72,23 +72,28 @@ getVarsReservedInSubgoalBranches s sgName = case Data.Map.lookup sgName (subgoal
     Just curSg -> S.unions (getVarsReservedInSubgoalBranches s <$> nextGoals curSg) `S.union` reservedVars curSg
     Nothing -> S.empty
 
-getUnavailableVarsForSubgoal :: String -> ProofState -> S.Set String
-getUnavailableVarsForSubgoal sgName s = case Data.Map.lookup sgName (subgoals s) of
-    Just curSg -> (if prevGoal curSg == ""
-        then S.empty
-        else (case Data.Map.lookup (prevGoal curSg) (subgoals s) of
-            Just prevSg -> case expanded prevSg of--DBG.trace (show $ used prevSg) (used prevSg) of
-                Just Multiplicative -> let
-                        unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
-                        unavailableForPrev = getUnavailableVarsForSubgoal (prevGoal curSg) s
-                    in unavailableForPrev `par` (unavailableInBranches `pseq` (unavailableForPrev `S.union` unavailableInBranches))
-                Just Cut -> let
-                        unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
-                        unavailableForPrev = getUnavailableVarsForSubgoal (prevGoal curSg) s
-                    in unavailableForPrev `par` (unavailableInBranches `pseq` S.delete (channel (sequent prevSg)) (unavailableForPrev `S.union` unavailableInBranches))
-                _ -> getUnavailableVarsForSubgoal (prevGoal curSg) s
-            _ -> S.empty))
-    Nothing -> S.empty
+-- Returns (siblingUnavailable, committedToThisBranch).
+-- siblingUnavailable: vars committed in sibling branches, unavailable for use here.
+-- committedToThisBranch: vars this subgoal has already reserved (may still appear in refined form).
+getContextAvailability :: String -> ProofState -> (S.Set String, S.Set String)
+getContextAvailability sgName s = case Data.Map.lookup sgName (subgoals s) of
+    Just curSg ->
+        let (siblingUnavail, reservedInCurrentBranch) = if prevGoal curSg == ""
+              then (S.empty, S.empty)
+              else case Data.Map.lookup (prevGoal curSg) (subgoals s) of
+                Just prevSg -> case expanded prevSg of
+                  Just Multiplicative -> let
+                          unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
+                          unavailableForPrev    = getContextAvailability (prevGoal curSg) s
+                      in unavailableForPrev `par` (unavailableInBranches `pseq` (fst unavailableForPrev `S.union` unavailableInBranches, snd unavailableForPrev `S.union` reservedVars prevSg))
+                  Just Cut -> let
+                          unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
+                          unavailableForPrev    = getContextAvailability (prevGoal curSg) s
+                      in unavailableForPrev `par` (unavailableInBranches `pseq` (S.delete (channel (sequent prevSg)) (fst unavailableForPrev `S.union` unavailableInBranches), snd unavailableForPrev `S.union` reservedVars prevSg))
+                  _ -> getContextAvailability (prevGoal curSg) s
+                _ -> (S.empty, S.empty)
+        in (siblingUnavail, reservedInCurrentBranch `S.union` reservedVars curSg)
+    Nothing -> (S.empty, S.empty)
 
 data Theorem = Theorem {
     proofObject :: Proof,
@@ -282,7 +287,7 @@ reserveVarsKnownUnavailable :: S.Set String -> [String] -> ProverState ()
 reserveVarsKnownUnavailable unavailableVarsArg varsToRes = do
     curSubgoalName <- ST.gets curSubgoal
     curSubgoalData <- getCurrentSubgoal
-    unavailableVars <- if unavailableVarsArg == S.empty then ST.gets (getUnavailableVarsForSubgoal curSubgoalName) else return unavailableVarsArg
+    unavailableVars <- if unavailableVarsArg == S.empty then fst <$> ST.gets (getContextAvailability curSubgoalName) else return unavailableVarsArg
     let newSgData = curSubgoalData { reservedVars = reservedVars curSubgoalData `S.union` S.fromList varsToRes}
     if L.any (`S.member` unavailableVars) varsToRes
     then tacError "Variables already reserved, and should not be available to use."
@@ -372,7 +377,7 @@ idATac :: Tactic
 idATac = do
     seq <- getCurrentSequent
     curSg <- ST.gets curSubgoal
-    unavailableVars <- getUnavailableVarsForSubgoal curSg <$> ST.get
+    unavailableVars <- fst . getContextAvailability curSg <$> ST.get
     case L.filter (\(k, p) -> not (S.member k unavailableVars) && p == goalProposition seq) . Data.Map.toList $ linearContext seq of
         ((x,p):rest) -> do
             reserveVarsKnownUnavailable unavailableVars [x]
@@ -446,7 +451,7 @@ leftTacA :: (S.Set String -> String -> Tactic) -> (Proposition -> Bool) -> Tacti
 leftTacA tac test = do
     seq <- getCurrentSequent
     sgName <- ST.gets curSubgoal
-    unavailableVars <- ST.gets (getUnavailableVarsForSubgoal sgName)
+    unavailableVars <- fst <$> ST.gets (getContextAvailability sgName)
     let candidateProps = Data.Map.keys (Data.Map.filterWithKey (\k v -> not . S.member k $ unavailableVars) (Data.Map.filter test (linearContext seq)))
     if L.null candidateProps then tacError "No propositions in the linear context of the correct form!" else tac unavailableVars (head candidateProps)
 
@@ -842,7 +847,7 @@ tyVarTac x zs = do
     case Data.Map.lookup x (recursiveBindings seq) of
         Just (ys, xSeq) -> (do
             when (L.length zs /= L.length ys) (tacError "Invalid number of arguments")
-            unavailVars <- getUnavailableVarsForSubgoal curSgName <$> ST.get
+            unavailVars <- fst . getContextAvailability curSgName <$> ST.get
             let yzs = zip ys zs
                 boundSeqRenamedTyVarContext = L.foldl (\acc (y, z) -> substVarTyVarContext acc z y) (bindingTyVarContext xSeq) yzs
                 boundSeqRenamedFnContext = L.foldl (\acc (y, z) -> renameVarInFnCtx S.empty acc z y) (bindingFnContext xSeq) yzs
@@ -974,7 +979,7 @@ byProcessTac p = do
     curSg <- ST.gets curSubgoal
     curS <- ST.get
     let
-        unavailableVars = getUnavailableVarsForSubgoal curSg curS
+        unavailableVars = fst (getContextAvailability curSg curS)
         typeCheckSeq = seq { linearContext = S.foldl (flip Data.Map.delete) (linearContext seq) unavailableVars}
     procProof <- case typeCheckProcessUnderSequent seq p of Right res -> return res; Left e -> tacError e
     newSeq <- case verifyProofM procProof of Right (_, newSeq) -> return newSeq; Left e -> tacError ("Error verifying proof of type derivation: " ++ e)
@@ -1491,7 +1496,7 @@ _PrintTheorems s = let
 _TestDisallowedVars :: Tactic
 _TestDisallowedVars = do
     s <- ST.get
-    return $ show (getUnavailableVarsForSubgoal (curSubgoal s) s)
+    return $ show (fst (getContextAvailability (curSubgoal s) s))
 
 _TestBranchReserved :: Tactic
 _TestBranchReserved = do

@@ -12,6 +12,7 @@ import qualified Tests.SessionTypes.FreeNamesSpec  as SFree
 import qualified Tests.SessionTypes.SubstSpec      as SSubst
 import qualified Tests.SessionTypes.TypeCheckSpec  as SCheck
 import qualified Tests.SessionTypes.WellFormedSpec as SWellFormed
+import qualified Tests.SessionTypes.CommittedVarsSpec as SCommitted
 import qualified Tests.Parser.FTermSpec            as PFTerm
 import qualified Tests.Parser.PropositionSpec      as PProp
 import qualified Tests.Parser.ProcessSpec          as PProc
@@ -33,6 +34,7 @@ main = do
     SSubst.run ref
     SCheck.run ref
     SWellFormed.run ref
+    SCommitted.run ref
 
     PFTerm.run ref
     PProp.run ref
