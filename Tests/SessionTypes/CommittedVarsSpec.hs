@@ -101,7 +101,7 @@ run ref = do
         let linCtx = Map.fromList [("x", Unit), ("y", Unit)]
             seq'   = emptySeq { linearContext = linCtx }
             sg     = rootSubgoal seq'
-            rendered = showFiltered (DS.empty, DS.empty) sg
+            rendered = showFiltered (DS.empty, DS.singleton "y") sg
 
         assert ref "showFiltered: red var x contains ANSI red prefix"
             (ansiRed "x:1" `isInfixOf` rendered)
@@ -110,8 +110,8 @@ run ref = do
         assert ref "showFiltered: plain y:1 still present"
             ("y:1" `isInfixOf` rendered)
 
-        -- With an empty red set, no vars are coloured.
-        let renderedNoRed = showFiltered (DS.empty, DS.singleton "x") sg
+        -- With an full black set, no vars are coloured.
+        let renderedNoRed = showFiltered (DS.empty, DS.fromList ["x", "y"]) sg
         assert ref "showFiltered (empty red set): x:1 plain"
             (not (ansiRed "x:1" `isInfixOf` renderedNoRed))
         assert ref "showFiltered (empty red set): x:1 still present"
