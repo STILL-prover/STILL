@@ -72,28 +72,57 @@ getVarsReservedInSubgoalBranches s sgName = case Data.Map.lookup sgName (subgoal
     Just curSg -> S.unions (getVarsReservedInSubgoalBranches s <$> nextGoals curSg) `S.union` reservedVars curSg
     Nothing -> S.empty
 
--- Returns (siblingUnavailable, committedToThisBranch).
--- siblingUnavailable: vars committed in sibling branches, unavailable for use here.
--- committedToThisBranch: vars this subgoal has already reserved (may still appear in refined form).
-getContextAvailability :: String -> ProofState -> (S.Set String, S.Set String)
-getContextAvailability sgName s = case Data.Map.lookup sgName (subgoals s) of
+-- Compute all context information for a subgoal in a single upward traversal.
+-- Returns (siblingUnavailable, committedToThisBranch, inMultiplicativeCtx) where:
+--   siblingUnavailable:    vars committed in sibling branches, unavailable for use here.
+--   committedToThisBranch: vars this branch has already reserved (may still appear in refined form).
+--   inMultiplicativeCtx:   True when a Multiplicative/Cut ancestor has pending (open, unexpanded) siblings.
+getContextInfo :: String -> ProofState -> (S.Set String, S.Set String, Bool)
+getContextInfo sgName s = case Data.Map.lookup sgName (subgoals s) of
     Just curSg ->
-        let (siblingUnavail, reservedInCurrentBranch) = if prevGoal curSg == ""
-              then (S.empty, S.empty)
+        let (siblingUnavail, reservedInCurrentBranch, inMultCtx) =
+              if prevGoal curSg == ""
+              then (S.empty, S.empty, False)
               else case Data.Map.lookup (prevGoal curSg) (subgoals s) of
                 Just prevSg -> case expanded prevSg of
-                  Just Multiplicative -> let
-                          unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
-                          unavailableForPrev    = getContextAvailability (prevGoal curSg) s
-                      in unavailableForPrev `par` (unavailableInBranches `pseq` (fst unavailableForPrev `S.union` unavailableInBranches, snd unavailableForPrev `S.union` reservedVars prevSg))
-                  Just Cut -> let
-                          unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
-                          unavailableForPrev    = getContextAvailability (prevGoal curSg) s
-                      in unavailableForPrev `par` (unavailableInBranches `pseq` (S.delete (channel (sequent prevSg)) (fst unavailableForPrev `S.union` unavailableInBranches), snd unavailableForPrev `S.union` reservedVars prevSg))
-                  _ -> getContextAvailability (prevGoal curSg) s
-                _ -> (S.empty, S.empty)
-        in (siblingUnavail, reservedInCurrentBranch `S.union` reservedVars curSg)
-    Nothing -> (S.empty, S.empty)
+                    Just Multiplicative ->
+                        let unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
+                            (prevUnavail, prevCommitted, prevMultCtx) = getContextInfo (prevGoal curSg) s
+                            pendingSibs = hasPendingSiblings prevSg sgName
+                        in ( prevUnavail `S.union` unavailableInBranches
+                           , prevCommitted `S.union` reservedVars prevSg
+                           , pendingSibs || prevMultCtx
+                           )
+                    Just Cut ->
+                        let unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
+                            (prevUnavail, prevCommitted, prevMultCtx) = getContextInfo (prevGoal curSg) s
+                            pendingSibs = hasPendingSiblings prevSg sgName
+                        in ( S.delete (channel (sequent prevSg)) (prevUnavail `S.union` unavailableInBranches)
+                           , prevCommitted `S.union` reservedVars prevSg
+                           , pendingSibs || prevMultCtx
+                           )
+                    _ -> getContextInfo (prevGoal curSg) s
+                _ -> (S.empty, S.empty, False)
+        in (siblingUnavail, reservedInCurrentBranch `S.union` reservedVars curSg, inMultCtx)
+    Nothing -> (S.empty, S.empty, False)
+  where
+    -- A sibling has pending work when it, or any of its descendants, still
+    -- appears in the open goal stack. This handles the case where a sibling
+    -- has itself been expanded: its own children count as pending.
+    hasPendingSiblings prevSg curName =
+        let siblings = L.filter (/= curName) (nextGoals prevSg)
+            hasOpenDescendant sibName =
+                L.any (\e -> L.takeWhile (/= '.') e == sibName) (openGoalStack s)
+                || case Data.Map.lookup sibName (subgoals s) of
+                    Just sibSg -> L.any hasOpenDescendant (nextGoals sibSg)
+                    Nothing    -> False
+        in L.any hasOpenDescendant siblings
+
+getContextAvailability :: String -> ProofState -> (S.Set String, S.Set String)
+getContextAvailability sgName s = let (a, b, _) = getContextInfo sgName s in (a, b)
+
+isInMultiplicativeContext :: String -> ProofState -> Bool
+isInMultiplicativeContext sgName s = let (_, _, c) = getContextInfo sgName s in c
 
 data Theorem = Theorem {
     proofObject :: Proof,

@@ -94,25 +94,95 @@ run ref = do
                 assert ref "after TensorR + IdA: remaining subgoal has non-empty sibling-unavailable set"
                     (not (DS.null unavail))
 
+    group ref "SessionTypes.isInMultiplicativeContext" $ do
+
+        -- Root subgoal has no ancestor, so never in a multiplicative context.
+        let ps0 = singletonPS "?a" (rootSubgoal emptySeq)
+        assert ref "root: isInMultiplicativeContext = False"
+            (not (isInMultiplicativeContext "?a" ps0))
+
+        -- Unknown subgoal: not in multiplicative context.
+        assert ref "unknown subgoal: isInMultiplicativeContext = False"
+            (not (isInMultiplicativeContext "?missing" ps0))
+
+        -- Integration: after TensorR (both siblings still open), the current
+        -- subgoal IS in a multiplicative context.
+        resultTR <- runProofScript "<test:mult-ctx-open>" $ unlines
+            [ "module T begin"
+            , "theorem t: \"forall A:stype. forall B:stype. A -o B -o A * B\""
+            , "apply Intros"
+            , "apply TensorR"
+            ]
+        case resultTR of
+            Left err ->
+                assert ref ("TensorR proof step failed: " ++ err) False
+            Right ps ->
+                assert ref "after TensorR: current subgoal is in multiplicative context (sibling still open)"
+                    (isInMultiplicativeContext (curSubgoal ps) ps)
+
+        -- Integration: after TensorR + IdA, the first sibling is closed so the
+        -- remaining subgoal's sibling is gone — no longer in multiplicative context.
+        resultTRIdA <- runProofScript "<test:mult-ctx-closed>" $ unlines
+            [ "module T begin"
+            , "theorem t: \"forall A:stype. forall B:stype. A -o B -o A * B\""
+            , "apply Intros"
+            , "apply TensorR"
+            , "apply IdA"
+            ]
+        case resultTRIdA of
+            Left err ->
+                assert ref ("TensorR/IdA proof step failed: " ++ err) False
+            Right ps ->
+                assert ref "after TensorR + IdA: remaining subgoal no longer in multiplicative context (sibling closed)"
+                    (not (isInMultiplicativeContext (curSubgoal ps) ps))
+
+        -- Integration: sibling expanded into grandchildren.
+        -- Outer TensorR on A*(B*C) creates ?z(B*C) [current] and ?y(A).
+        -- Inner TensorR on ?z creates ?e(C) [current], ?d(B), leaving ?y still in stack.
+        -- Two defers cycle past ?d and ?e, landing on ?y(A) as current.
+        -- ?y's sibling ?z is expanded but has open descendants ?d and ?e, so
+        -- isInMultiplicativeContext should still be True.
+        resultNested <- runProofScript "<test:mult-ctx-grandchild>" $ unlines
+            [ "module T begin"
+            , "theorem t: \"forall A:stype. forall B:stype. forall C:stype. A -o B -o C -o A * (B * C)\""
+            , "apply Intros"
+            , "apply TensorR"   -- outer: current=?z(B*C), stack=[?z,?y(A)]
+            , "apply TensorR"   -- inner on ?z: current=?e(C), stack=[?e,?d(B),?y]
+            , "defer"           -- stack=[?d,?y,?e], current=?d
+            , "defer"           -- stack=[?y,?e,?d], current=?y(A)
+            ]
+        case resultNested of
+            Left err ->
+                assert ref ("nested TensorR setup failed: " ++ err) False
+            Right ps ->
+                assert ref "sibling expanded into grandchildren: outer leaf still sees pending siblings"
+                    (isInMultiplicativeContext (curSubgoal ps) ps)
+
     group ref "Utils.Display.showFiltered" $ do
 
-        -- showFiltered colours vars in the red set with ANSI escape codes,
-        -- and leaves other vars plain.
         let linCtx = Map.fromList [("x", Unit), ("y", Unit)]
             seq'   = emptySeq { linearContext = linCtx }
             sg     = rootSubgoal seq'
-            rendered = showFiltered (DS.empty, DS.singleton "y") sg
 
-        assert ref "showFiltered: red var x contains ANSI red prefix"
-            (ansiRed "x:1" `isInfixOf` rendered)
-        assert ref "showFiltered: non-red var y does not have ANSI prefix"
-            (not (ansiRed "y:1" `isInfixOf` rendered))
-        assert ref "showFiltered: plain y:1 still present"
-            ("y:1" `isInfixOf` rendered)
+        -- In multiplicative context (True): unassigned vars are RED.
+        let renderedMult = showFiltered (DS.empty, DS.singleton "y") True sg
+        assert ref "showFiltered (multCtx=True): unassigned var x is RED"
+            (ansiRed "x:1" `isInfixOf` renderedMult)
+        assert ref "showFiltered (multCtx=True): black var y is plain"
+            (not (ansiRed "y:1" `isInfixOf` renderedMult))
+        assert ref "showFiltered (multCtx=True): plain y:1 still present"
+            ("y:1" `isInfixOf` renderedMult)
 
-        -- With an full black set, no vars are coloured.
-        let renderedNoRed = showFiltered (DS.empty, DS.fromList ["x", "y"]) sg
-        assert ref "showFiltered (empty red set): x:1 plain"
-            (not (ansiRed "x:1" `isInfixOf` renderedNoRed))
-        assert ref "showFiltered (empty red set): x:1 still present"
-            ("x:1" `isInfixOf` renderedNoRed)
+        -- Outside multiplicative context (False): unassigned vars are plain, not RED.
+        let renderedTrunk = showFiltered (DS.empty, DS.singleton "y") False sg
+        assert ref "showFiltered (multCtx=False): unassigned var x is plain, not RED"
+            (not (ansiRed "x:1" `isInfixOf` renderedTrunk))
+        assert ref "showFiltered (multCtx=False): x:1 still present"
+            ("x:1" `isInfixOf` renderedTrunk)
+
+        -- When all vars are in blackVars, none are RED regardless of context.
+        let renderedAllBlack = showFiltered (DS.empty, DS.fromList ["x", "y"]) True sg
+        assert ref "showFiltered (all black, multCtx=True): x:1 not RED"
+            (not (ansiRed "x:1" `isInfixOf` renderedAllBlack))
+        assert ref "showFiltered (all black, multCtx=True): x:1 still present"
+            ("x:1" `isInfixOf` renderedAllBlack)

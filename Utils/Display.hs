@@ -29,8 +29,8 @@ sgsToS [] = ""
 ansiRed :: String -> String
 ansiRed s = "\ESC[31m" ++ s ++ "\ESC[0m"
 
-showFiltered :: (S.Set String, S.Set String) -> Subgoal -> String
-showFiltered (hiddenVars, blackVars) sg =
+showFiltered :: (S.Set String, S.Set String) -> Bool -> Subgoal -> String
+showFiltered (hiddenVars, blackVars) isMultCtx sg =
     let
         seq' = sequent sg
         formatBlock [] = ""
@@ -39,7 +39,9 @@ showFiltered (hiddenVars, blackVars) sg =
         fns    = [k ++ ":" ++ ftToS v | (k, v) <- ctxToList (fnContext seq')]
         unres  = [k ++ ":" ++ propToS v | (k, v) <- Data.Map.toList (unrestrictedContext seq')]
         lin    = [ let entry = k ++ ":" ++ propToS v
-                   in (if k `S.member` blackVars then entry else ansiRed entry)
+                   in if k `S.member` blackVars
+                      then entry
+                      else if isMultCtx then ansiRed entry else entry
                  | (k, v) <- L.filter (\(k, v) -> not (k `S.member` hiddenVars)) (Data.Map.toList (linearContext seq')) ]
         goal   = channel seq' ++ ":" ++ propToS (goalProposition seq')
     in
@@ -53,10 +55,11 @@ renderState :: ProofState -> String
 renderState s =
     let
         sgNameSep = ">> "
-        curUnavailable sgn = getContextAvailability sgn s
+        ctxInfo     sgn = getContextInfo sgn s
         subgoalPrinter n sg = case inProgressFunctionalProof sg of
             Just (fs, p) | Data.Map.member (L.drop 1 (L.dropWhile (/= '.') n)) (FT.subgoals fs) -> (if [n] == L.take 1 (openGoalStack s) then "*" else " ") ++ n ++ sgNameSep ++ fsgToS (FT.subgoals fs Data.Map.! L.drop 1 (L.dropWhile (/= '.') n))
-            Nothing -> (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (curUnavailable n) sg
+            Nothing -> let (unavail, committed, multCtx) = ctxInfo n
+                       in (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (unavail, committed) multCtx sg
             _ -> n
         messagePrinter = (if L.null $ outputs s then "" else head $ outputs s) ++ (if L.null (errors s) then "" else "\n" ++ unlines (reverse (errors s)))
         orderedSubgoals = (\(sgn, sg) -> (sgn, fromJust sg)) <$> L.filter (\(sgn, sg) -> isJust sg) ((\sgn -> (sgn, Data.Map.lookup  (L.takeWhile (/= '.') sgn) (subgoals s))) <$> openGoalStack s)
@@ -69,10 +72,11 @@ renderGoals :: ProofState -> String
 renderGoals s =
     let
         sgNameSep = ">> "
-        curUnavailable sgn = getContextAvailability sgn s
+        ctxInfo     sgn = getContextInfo sgn s
         subgoalPrinter n sg = case inProgressFunctionalProof sg of
             Just (fs, p) | Data.Map.member (L.drop 1 (L.dropWhile (/= '.') n)) (FT.subgoals fs) -> (if [n] == L.take 1 (openGoalStack s) then "*" else " ") ++ n ++ sgNameSep ++ fsgToS (FT.subgoals fs Data.Map.! L.drop 1 (L.dropWhile (/= '.') n))
-            Nothing -> (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (curUnavailable n) sg
+            Nothing -> let (unavail, committed, multCtx) = ctxInfo n
+                       in (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (unavail, committed) multCtx sg
             _ -> n
         orderedSubgoals = (\(sgn, sg) -> (sgn, fromJust sg)) <$> L.filter (\(sgn, sg) -> isJust sg) ((\sgn -> (sgn, Data.Map.lookup (L.takeWhile (/= '.') sgn) (subgoals s))) <$> openGoalStack s)
     in
@@ -83,10 +87,11 @@ renderGoals s =
 mainPrinter (Right s) =
         let
             sgNameSep = ">> "
-            curUnavailable sgn = (getContextAvailability sgn s)
+            ctxInfo     sgn = getContextInfo sgn s
             subgoalPrinter n sg = case inProgressFunctionalProof sg of
                 Just (fs, p) | Data.Map.member (L.drop 1 (L.dropWhile (/= '.') n)) (FT.subgoals fs) -> (if [n] == L.take 1 (openGoalStack s) then "*" else " ") ++ n ++ sgNameSep ++ fsgToS (FT.subgoals fs Data.Map.! L.drop 1 (L.dropWhile (/= '.') n))
-                Nothing -> (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (curUnavailable n) sg
+                Nothing -> let (unavail, committed, multCtx) = ctxInfo n
+                           in (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (unavail, committed) multCtx sg
                 _ -> n
             messagePrinter = (if L.null $ outputs s then "" else head $ outputs s) ++ (if L.null (errors s) then "" else "\n" ++ unlines (reverse (errors s)))
             orderedSubgoals = L.reverse $ (\(sgn, sg) -> (sgn, fromJust sg)) <$> L.filter (\(sgn, sg) -> isJust sg) ((\sgn -> (sgn, Data.Map.lookup  (L.takeWhile (/= '.') sgn) (subgoals s))) <$> openGoalStack s)
