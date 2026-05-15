@@ -159,6 +159,53 @@ run ref = group ref "Integration.runProofScript" $ do
         , "done"
         ]
 
+    -- Dynamic node spawning in a corecursive proof: on the inc branch, cut a
+    -- fresh child (via CutTheorem epsilon), consume the old child via halt
+    -- (NuLA; WithL2A; UnitLA), then recurse on the fresh child. The natural
+    -- parameter naming `NuR S (a) (a)` previously failed verification with
+    -- "a not fresh in UnitLeftRule" because the freshness check counted the
+    -- corec binding's bound parameter `a` as if it were a free name.
+    assertProves ref "Dynamic spawn: NuR S (a) (a) with UnitLA on bound name" $ unlines
+        [ "module T begin"
+        , "stype Counter = \"nu X. ($Int * X) & X & 1\""
+        , "theorem epsilon: \"Counter\""
+        , "apply NuR S () ()"
+        , "apply WithR"
+        , "apply UnitR"
+        , "apply WithR"
+        , "apply TyVar S ()"
+        , "apply TensorR"
+        , "apply TyVar S ()"
+        , "apply FTermR"
+        , "apply Exact \"0\""
+        , "done"
+        , "theorem coord_dyn: \"Counter -o Counter\""
+        , "apply ImpliesR"
+        , "apply NuR S (a) (a)"
+        , "apply WithR"
+        , "apply NuLA"
+        , "apply WithL2A"
+        , "apply UnitLA"
+        , "apply UnitR"
+        , "apply WithR"
+        , "apply CutTheorem epsilon"
+        , "apply NuLA"
+        , "apply WithL2A"
+        , "apply UnitLA"
+        , "apply TyVar S (b)"
+        , "apply NuLA"
+        , "apply WithL1A"
+        , "apply WithL1A"
+        , "apply TensorLA"
+        , "apply TensorR"
+        , "defer"
+        , "apply FTermLA"
+        , "apply FTermR"
+        , "apply VarA"
+        , "apply TyVar S (a)"
+        , "done"
+        ]
+
     assertProves ref "Plus right injection (PlusR1)" $ unlines
         [ "module T begin"
         , "theorem plus1: \"forall A:stype. 1 + A\""

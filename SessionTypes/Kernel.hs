@@ -770,6 +770,75 @@ getProofNames (ReadLineRule x p) = S.insert x (getProofNames p)
 isFreshInProof :: String -> Proof -> Bool
 isFreshInProof x p = not $ x `S.member` getProofNames p
 
+{-| Like getRecursiveBindingsNames, but treats each binding's parameter list
+as bound (alpha-renamable) within the binding's own scope. Only the binding's
+parameters are bound by the binding sequent; the binding's channel, tyVar,
+and any ambient (non-parameter) context entries are free references shared
+with the surrounding scope. -}
+getRecursiveBindingsFreeNamesProper :: RecursiveBindings -> S.Set String
+getRecursiveBindingsFreeNamesProper rb =
+    S.fromList (Data.Map.keys rb) `S.union`
+    S.unions ((\(ps, bs) ->
+        getBindingSequentNames bs `S.difference` S.fromList ps
+      ) <$> Data.Map.elems rb)
+
+{-| Free-name view of a proof. Differs from getProofNames only for rules that
+carry RecursiveBindings: the names bound by each binding (parameter list,
+binding channel, binding type variable, LC keys) are excluded since they are
+alpha-renamable placeholders. Used by the linearity-check sites
+(UnitLeftRule, ReplicationRightRule, ReplicationLeftRule) where we want to
+know whether a name semantically appears free in the sub-proof. The
+conservative isFreshInProof / getProofNames is kept intact for the alpha
+renamer, which must avoid capture against bound names too. -}
+getProofFreeNames :: Proof -> S.Set String
+getProofFreeNames (IdRule x z tv fc c eta p) = S.fromList [x, z] `S.union` tv `S.union` getFunctionalContextNames fc `S.union` getContextNames c `S.union` propNames p `S.union` getRecursiveBindingsFreeNamesProper eta
+getProofFreeNames (FunctionalTermRightRule z p tv c eta) = S.singleton z `S.union` tv `S.union` getFunctionalProofNames p `S.union` getContextNames c `S.union` getRecursiveBindingsFreeNamesProper eta
+getProofFreeNames (FunctionalTermLeftRule x p) = S.singleton x `S.union` getProofFreeNames p
+getProofFreeNames (UnitRightRule z tv fc uc eta) = S.singleton z `S.union` tv `S.union` getFunctionalContextNames fc `S.union` getContextNames uc `S.union` getRecursiveBindingsFreeNamesProper eta
+getProofFreeNames (UnitLeftRule x p) = S.singleton x `S.union` getProofFreeNames p
+getProofFreeNames (ReplicationRightRule z p) = S.singleton z `S.union` getProofFreeNames p
+getProofFreeNames (ReplicationLeftRule u x p) = S.fromList [u,x] `S.union` getProofFreeNames p
+getProofFreeNames (CopyRule u y p) = S.fromList [u,y] `S.union` getProofFreeNames p
+getProofFreeNames (WithRightRule p1 p2) = getProofFreeNames p1 `S.union` getProofFreeNames p2
+getProofFreeNames (WithLeft1Rule x prop p) = S.singleton x `S.union` propNames prop `S.union` getProofFreeNames p
+getProofFreeNames (WithLeft2Rule x prop p) = S.singleton x `S.union` propNames prop `S.union` getProofFreeNames p
+getProofFreeNames (TensorRightRule p1 p2) = getProofFreeNames p1 `S.union` getProofFreeNames p2
+getProofFreeNames (TensorLeftRule x y p) = S.fromList [x,y] `S.union` getProofFreeNames p
+getProofFreeNames (PlusRight1Rule prop p) = propNames prop `S.union` getProofFreeNames p
+getProofFreeNames (PlusRight2Rule prop p) = propNames prop `S.union` getProofFreeNames p
+getProofFreeNames (PlusLeftRule x p1 p2) = S.singleton x `S.union` getProofFreeNames p1 `S.union` getProofFreeNames p2
+getProofFreeNames (ImpliesRightRule x p) = S.insert x $ getProofFreeNames p
+getProofFreeNames (ImpliesLeftRule x p1 p2) = S.insert x $ getProofFreeNames p1 `S.union` getProofFreeNames p2
+getProofFreeNames (ForallRightRule x p) = S.singleton x `S.union` getProofFreeNames p
+getProofFreeNames (ForallLeftRule x y p1 p2) = S.fromList [x, y] `S.union` getFunctionalProofNames p1 `S.union` getProofFreeNames p2
+getProofFreeNames (ExistsRightRule x p1 p2) = S.singleton x `S.union` getFunctionalProofNames p1 `S.union` getProofFreeNames p2
+getProofFreeNames (ExistsLeftRule x _ p) = S.singleton x `S.union` getProofFreeNames p
+getProofFreeNames (ForallRight2Rule x p) = S.singleton x `S.union` getProofFreeNames p
+getProofFreeNames (ForallLeft2Rule x y p1 p2) = S.fromList [x, y] `S.union` propNames p1 `S.union` getProofFreeNames p2
+getProofFreeNames (ExistsRight2Rule x p1 p2) = S.singleton x `S.union` propNames p1 `S.union` getProofFreeNames p2
+getProofFreeNames (ExistsLeft2Rule x _ p) = S.singleton x `S.union` getProofFreeNames p
+getProofFreeNames (CutRule p1 p2) = getProofFreeNames p1 `S.union` getProofFreeNames p2
+getProofFreeNames (CutReplicationRule u p1 p2) = S.singleton u `S.union` getProofFreeNames p1 `S.union` getProofFreeNames p2
+getProofFreeNames (TyNuRightRule x zs p) = S.fromList (x:zs) `S.union` getProofFreeNames p
+getProofFreeNames (TyNuLeftRule c x p) = S.fromList [c, x] `S.union` getProofFreeNames p
+getProofFreeNames (TyVarRule eta x zs) = S.insert x $ S.fromList zs `S.union` getRecursiveBindingsFreeNamesProper eta
+getProofFreeNames (ReplWeakening u prop proof) = S.insert u $ propNames prop `S.union` getProofFreeNames proof
+getProofFreeNames (FnWeakening a fterm proof) = S.insert a $ functionalNames fterm `S.union` getProofFreeNames proof
+getProofFreeNames (TyVarWeakening a proof) = S.insert a $ getProofFreeNames proof
+getProofFreeNames (RecBindingWeakening a (ps, bs) proof) =
+    S.insert a (getBindingSequentNames bs `S.difference` S.fromList ps) `S.union` getProofFreeNames proof
+getProofFreeNames (HoleRule tv fc uc lc eta z p) = tv `S.union` getFunctionalContextNames fc `S.union` getContextNames uc `S.union` getContextNames lc `S.union` propNames p `S.union` S.singleton z `S.union` getRecursiveBindingsFreeNamesProper eta
+getProofFreeNames (ProcessFiatRule procName chanName prop p) = S.fromList [procName, chanName] `S.union` propNames prop `S.union` getProofFreeNames p
+getProofFreeNames (PrintRule fp p) = getFunctionalProofNames fp `S.union` getProofFreeNames p
+getProofFreeNames (ReadLineRule x p) = S.insert x (getProofFreeNames p)
+
+{-| Like isFreshInProof, but uses the free-name view that excludes corec
+binding parameters and bound channel/tyVar from consideration. Use this for
+linearity/freshness checks in verifyProofM; use isFreshInProof for the alpha
+renamer where bound-name capture must also be avoided. -}
+isFreeInProof :: String -> Proof -> Bool
+isFreeInProof x p = not $ x `S.member` getProofFreeNames p
+
 {-| renameVarInProof x y = P[x/y]. Rename y with x in proof P. -}
 renameVarInProof :: Proof -> String -> String -> Proof
 renameVarInProof p x y {- DBG.trace "Renaming" True-} = if isFreshInProof x p
@@ -1067,17 +1136,17 @@ verifyProofM (UnitRightRule z tv fc uc eta) = do
     return (Halt, Sequent { tyVarContext = tv, fnContext = fc, unrestrictedContext = uc, linearContext = Data.Map.empty, recursiveBindings = eta, channel = z, goalProposition = Unit })
 verifyProofM (UnitLeftRule x p) = do
     (process, seq) <- verifyProofM p
-    unless (x `isFreshInProof` p) $ Left (x ++ " not fresh in UnitLeftRule.")
+    unless (x `isFreeInProof` p) $ Left (x ++ " not fresh in UnitLeftRule.")
     return (process, seq { linearContext = Data.Map.insert x Unit $ linearContext seq })
 verifyProofM (ReplicationRightRule z p) = do
     (process, seq) <- verifyProofM p
     unless (Data.Map.null (linearContext seq)) $ Left "Linear context is not empty in ReplicationRightRule."
-    unless (z `isFreshInProof` p) $ Left (z ++ " not fresh in ReplicationRightRule.")
+    unless (z `isFreeInProof` p) $ Left (z ++ " not fresh in ReplicationRightRule.")
     return (ReplicateReceive z (channel seq) process, seq { channel = z, goalProposition = Replication $ goalProposition seq })
 verifyProofM (ReplicationLeftRule u x p) = do
     (process, seq) <- verifyProofM p
     uProp <- eitherLookup u $ unrestrictedContext seq
-    unless (x `isFreshInProof` p) $ Left (x ++ " not fresh in ReplicationLeftRule.")
+    unless (x `isFreeInProof` p) $ Left (x ++ " not fresh in ReplicationLeftRule.")
     return (substVar process x u, seq { unrestrictedContext = Data.Map.delete u $ unrestrictedContext seq, linearContext = Data.Map.insert x (Replication uProp) $ linearContext seq })
 verifyProofM (CopyRule u y p) = do
     (process, seq) <- verifyProofM p

@@ -4,7 +4,7 @@ import Control.Exception (SomeException, catch, try)
 import Control.Monad (unless)
 import Data.Map qualified as Map
 import MCP.Json
-import SessionTypes.Tactics (ProofState (..))
+import SessionTypes.Tactics (ProofState (..), outputs)
 import System.IO
 import Parser.CmdParsers (Command (..), TopLevelCommand (..), ProofCommand (..), CommandSpan (spanText, spanValue))
 import Utils.Display (renderGoals, renderState)
@@ -186,7 +186,7 @@ formatProofStep (sp, snap) =
   let s = afterState snap
       newErrs = stepNewList errors snap
       errLine = if null newErrs then "" else "\nError: " ++ head newErrs
-  in ">> " ++ spanText sp ++ "\n" ++ renderGoals s ++ errLine
+  in ">> " ++ spanText sp ++ "\n" ++ "Latest state message: " ++ head (outputs s) ++ "\n" ++ renderGoals s ++ errLine
 
 handleCheckProof :: JId -> [(String, Json)] -> IO String
 handleCheckProof jid args = do
@@ -198,7 +198,7 @@ handleCheckProof jid args = do
         (err ++ "\n\nFor tactic names and descriptions, call get_tactic_reference.")
     Right (Right ps) ->
       let steps = zip (psCommands ps) (psSnaps ps)
-          provingSteps = filter (isProvingCmd . spanValue . fst) steps
+          provingSteps = steps
           traceSection
             | null provingSteps = ""
             | otherwise = "=== Proof Trace ===\n\n"
