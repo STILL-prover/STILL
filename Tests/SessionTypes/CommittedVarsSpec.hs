@@ -4,7 +4,7 @@ import Tests.Harness
 import SessionTypes.Tactics
 import Utils.Display (showFiltered, ansiRed)
 import Utils.Server (runProofScript)
-import SessionTypes.Kernel (Sequent (..), Proposition (..), Context)
+import SessionTypes.Kernel (Sequent (..), Proposition (..), Context, propToS, linearContext)
 import ECC.Kernel (emptyContext)
 import qualified Data.Set as DS
 import qualified Data.Map as Map
@@ -93,6 +93,36 @@ run ref = do
                 let (unavail, _) = getContextAvailability cur ps
                 assert ref "after TensorR + IdA: remaining subgoal has non-empty sibling-unavailable set"
                     (not (DS.null unavail))
+
+        -- Regression: TensorLA reuses the variable name for one component, then TensorR
+        -- splits. The reused name must NOT bleed into committedToThisBranch via the
+        -- ancestor's reservedVars.
+        resultTLATR <- runProofScript "<test:tensorla-then-tensorr>" $ unlines
+            [ "module T begin"
+            , "theorem t: \"forall A:stype. A * A -o A * A\""
+            , "apply Intros"
+            , "apply TensorLA"
+            , "apply TensorR"
+            ]
+        case resultTLATR of
+            Left err ->
+                assert ref ("TensorLA/TensorR setup failed: " ++ err) False
+            Right ps -> do
+                let cur = curSubgoal ps
+                let (_, committed) = getContextAvailability cur ps
+                assert ref "after TensorLA + TensorR: committedToThisBranch is empty (no ancestor reservation bleeds in)"
+                    (DS.null committed)
+                assert ref "after TensorLA + TensorR: subgoal is in multiplicative context"
+                    (isInMultiplicativeContext cur ps)
+                -- Every variable in the linear context must appear RED in the display.
+                let sg       = subgoals ps Map.! cur
+                    (unavail, committed', multCtx) = getContextInfo cur ps
+                    rendered = showFiltered (unavail, committed') multCtx sg
+                    linVars  = Map.toList (linearContext (sequent sg))
+                mapM_ (\(k, v) ->
+                    assert ref ("after TensorLA + TensorR: " ++ k ++ " appears RED in display")
+                        (ansiRed (k ++ ":" ++ propToS v) `isInfixOf` rendered)
+                    ) linVars
 
     group ref "SessionTypes.isInMultiplicativeContext" $ do
 

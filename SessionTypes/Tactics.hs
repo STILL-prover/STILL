@@ -75,7 +75,9 @@ getVarsReservedInSubgoalBranches s sgName = case Data.Map.lookup sgName (subgoal
 -- Compute all context information for a subgoal in a single upward traversal.
 -- Returns (siblingUnavailable, committedToThisBranch, inMultiplicativeCtx) where:
 --   siblingUnavailable:    vars committed in sibling branches, unavailable for use here.
---   committedToThisBranch: vars this branch has already reserved (may still appear in refined form).
+--   committedToThisBranch: vars reserved between the nearest Multiplicative/Cut ancestor (exclusive)
+--                          and the current node. Reservations above the Mult/Cut boundary are not
+--                          included — they belong to prior context transformations, not this branch.
 --   inMultiplicativeCtx:   True when a Multiplicative/Cut ancestor has pending (open, unexpanded) siblings.
 getContextInfo :: String -> ProofState -> (S.Set String, S.Set String, Bool)
 getContextInfo sgName s = case Data.Map.lookup sgName (subgoals s) of
@@ -87,18 +89,18 @@ getContextInfo sgName s = case Data.Map.lookup sgName (subgoals s) of
                 Just prevSg -> case expanded prevSg of
                     Just Multiplicative ->
                         let unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
-                            (prevUnavail, prevCommitted, prevMultCtx) = getContextInfo (prevGoal curSg) s
+                            (prevUnavail, _, prevMultCtx) = getContextInfo (prevGoal curSg) s
                             pendingSibs = hasPendingSiblings prevSg sgName
                         in ( prevUnavail `S.union` unavailableInBranches
-                           , prevCommitted `S.union` reservedVars prevSg
+                           , S.empty  -- branch starts at children of this node; ancestors are not committed to this branch
                            , pendingSibs || prevMultCtx
                            )
                     Just Cut ->
                         let unavailableInBranches = S.unions (getVarsReservedInSubgoalBranches s <$> L.filter (/= sgName) (nextGoals prevSg))
-                            (prevUnavail, prevCommitted, prevMultCtx) = getContextInfo (prevGoal curSg) s
+                            (prevUnavail, _, prevMultCtx) = getContextInfo (prevGoal curSg) s
                             pendingSibs = hasPendingSiblings prevSg sgName
                         in ( S.delete (channel (sequent prevSg)) (prevUnavail `S.union` unavailableInBranches)
-                           , prevCommitted `S.union` reservedVars prevSg
+                           , S.empty  -- branch starts at children of this node; ancestors are not committed to this branch
                            , pendingSibs || prevMultCtx
                            )
                     _ -> getContextInfo (prevGoal curSg) s
