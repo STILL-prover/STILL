@@ -51,6 +51,19 @@ showFiltered (hiddenVars, blackVars) isMultCtx sg =
         "\n  Δ: " ++ (if L.null lin then "" else formatBlock lin) ++
         "\n  |- " ++ goal
 
+renderEccProofState :: ProofState -> String
+renderEccProofState s = case inProgressTopLevelFnProof s of
+    Nothing -> ""
+    Just (fs, declaredTy) ->
+        let name = curFnTheoremName s
+            curSg = FT.curSubgoal fs
+            unused = [(n, sg) | (n, sg) <- Data.Map.toList (FT.subgoals fs), not (FT.used sg)]
+            showSg (n, sg) = (if n == curSg then "*" else " ") ++ n ++ " >> " ++ ftseqToSHelper (FT.sequent sg)
+            body = if null unused
+                   then "  (proof complete - use 'done')"
+                   else L.intercalate "\n" (showSg <$> unused)
+        in "\nECC theorem in progress: " ++ name ++ " : " ++ ftToS declaredTy ++ "\n" ++ body
+
 renderState :: ProofState -> String
 renderState s =
     let
@@ -66,7 +79,7 @@ renderState s =
         cachedNames = show $ cachedProofStateNames s
         freeNames = show $ getProofStateFreeNames s
     in
-        messagePrinter ++ L.foldl' (\acc kvp -> acc ++ "\n" ++ uncurry subgoalPrinter kvp) "" orderedSubgoals
+        messagePrinter ++ renderEccProofState s ++ L.foldl' (\acc kvp -> acc ++ "\n" ++ uncurry subgoalPrinter kvp) "" orderedSubgoals
 
 renderGoals :: ProofState -> String
 renderGoals s =
@@ -79,10 +92,13 @@ renderGoals s =
                        in (if n == curSubgoal s then "*" else " ") ++ n ++ sgNameSep ++ showFiltered (unavail, committed) multCtx sg
             _ -> n
         orderedSubgoals = (\(sgn, sg) -> (sgn, fromJust sg)) <$> L.filter (\(sgn, sg) -> isJust sg) ((\sgn -> (sgn, Data.Map.lookup (L.takeWhile (/= '.') sgn) (subgoals s))) <$> openGoalStack s)
+        eccSection = renderEccProofState s
     in
-        if null orderedSubgoals
-          then "(no open goals)"
-          else L.intercalate "\n" (uncurry subgoalPrinter <$> orderedSubgoals)
+        if not (null eccSection)
+          then eccSection
+          else if null orderedSubgoals
+            then "(no open goals)"
+            else L.intercalate "\n" (uncurry subgoalPrinter <$> orderedSubgoals)
 
 mainPrinter (Right s) =
         let

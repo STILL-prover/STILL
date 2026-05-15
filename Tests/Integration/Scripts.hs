@@ -381,3 +381,196 @@ run ref = group ref "Integration.runProofScript" $ do
     runFileTest ref "Proofs/AdditionalProofs/Semaphore.still"
     runFileTest ref "Proofs/AdditionalProofs/SNat.still"
     runFileTest ref "Proofs/AdditionalProofs/AxiomOfChoice.still"
+
+    -- ===== fn theorem: term declarations =====
+
+    assertProves ref "fn theorem: bare literal (infer type Int)" $ unlines
+        [ "module T begin"
+        , "fn theorem answer = \"42\""
+        ]
+
+    assertProves ref "fn theorem: string literal (infer type String)" $ unlines
+        [ "module T begin"
+        , "fn theorem greeting = \"'hello'\""
+        ]
+
+    assertProves ref "fn theorem: lambda (infer Pi type)" $ unlines
+        [ "module T begin"
+        , "fn theorem identity = \"\\A:Type 1. \\x:A. x\""
+        ]
+
+    assertProves ref "fn theorem: term with explicit matching type annotation" $ unlines
+        [ "module T begin"
+        , "fn theorem answer : \"Int\" = \"42\""
+        ]
+
+    assertProves ref "fn theorem: lambda with explicit Pi type annotation" $ unlines
+        [ "module T begin"
+        , "fn theorem identity : \"Pi A:Type 1. Pi x:A. A\" = \"\\A:Type 1. \\x:A. x\""
+        ]
+
+    assertProves ref "fn theorem: builtin application (#add)" $ unlines
+        [ "module T begin"
+        , "fn theorem seven : \"Int\" = \"#add 3 4\""
+        ]
+
+    assertProves ref "fn theorem: Prop type annotation" $ unlines
+        [ "module T begin"
+        , "fn theorem propType : \"Type 0\" = \"Prop\""
+        ]
+
+    -- ===== fn theorem: tactic-based proofs =====
+
+    assertProves ref "fn theorem: tactic Exact for literal" $ unlines
+        [ "module T begin"
+        , "fn theorem answer : \"Int\""
+        , "apply Exact \"42\""
+        , "done"
+        ]
+
+    assertProves ref "fn theorem: tactic Lambda then VarA (identity)" $ unlines
+        [ "module T begin"
+        , "fn theorem identity : \"Pi A:Type 1. Pi x:A. A\""
+        , "apply Lambda"
+        , "apply Lambda"
+        , "apply VarA"
+        , "done"
+        ]
+
+    assertProves ref "fn theorem: tactic Lambda; Lambda; VarA with semicolon" $ unlines
+        [ "module T begin"
+        , "fn theorem identity2 : \"Pi A:Type 1. Pi x:A. A\""
+        , "apply Lambda; Lambda; VarA"
+        , "done"
+        ]
+
+    assertProves ref "fn theorem: tactic Ax (Prop : Type 0)" $ unlines
+        [ "module T begin"
+        , "fn theorem propAx : \"Type 0\""
+        , "apply Ax"
+        , "done"
+        ]
+
+    assertProves ref "fn theorem: tactic-based constant function" $ unlines
+        [ "module T begin"
+        , "fn theorem const_fn : \"Pi A:Type 1. Pi B:Type 1. Pi x:A. Pi y:B. A\""
+        , "apply Lambda"
+        , "apply Lambda"
+        , "apply Lambda"
+        , "apply Lambda"
+        , "apply VarA"
+        , "done"
+        ]
+
+    -- ===== fn theorem: chaining (result available to later declarations) =====
+
+    assertProves ref "fn theorem: result available to subsequent term declaration" $ unlines
+        [ "module T begin"
+        , "fn theorem myInt = \"42\""
+        , "fn theorem myInt2 : \"Int\" = \"myInt\""
+        ]
+
+    assertProves ref "fn theorem: result available to subsequent tactic proof" $ unlines
+        [ "module T begin"
+        , "fn theorem myStr = \"'hi'\""
+        , "fn theorem myStr2 : \"String\""
+        , "apply Exact \"myStr\""
+        , "done"
+        ]
+
+    assertProves ref "fn theorem: multiple fn theorems in sequence" $ unlines
+        [ "module T begin"
+        , "fn theorem t1 = \"1\""
+        , "fn theorem t2 = \"2\""
+        , "fn theorem t3 : \"Int\" = \"#add t1 t2\""
+        ]
+
+    assertProves ref "fn theorem: interleaved with session type theorem" $ unlines
+        [ "module Interleaved begin"
+        , "fn theorem myN = \"42\""
+        , "assume T is stype"
+        , "theorem id_T: \"T -o T\""
+        , "apply ImpliesR"
+        , "apply IdA"
+        , "done"
+        , "fn theorem myN2 : \"Int\" = \"myN\""
+        ]
+
+    assertProves ref "fn theorem: result in fnAssumptions for session type proof" $ unlines
+        [ "module FnAssumTest begin"
+        , "fn theorem myLen : \"Pi s:String. Int\" = \"\\s:String. #strlen s\""
+        , "assume T is stype"
+        , "theorem tid: \"T -o T\""
+        , "apply ImpliesR"
+        , "apply IdA"
+        , "done"
+        ]
+
+    -- ===== fn theorem: error cases =====
+
+    assertFails ref "fn theorem: type mismatch (declared Int, inferred Pi)" $ unlines
+        [ "module T begin"
+        , "fn theorem bad : \"Int\" = \"\\x:Int. x\""
+        ]
+
+    assertFails ref "fn theorem: term not in context" $ unlines
+        [ "module T begin"
+        , "fn theorem bad = \"nonExistentVar\""
+        ]
+
+    assertFails ref "fn theorem: tactic done before proof complete" $ unlines
+        [ "module T begin"
+        , "fn theorem bad : \"Pi A:Type 1. Pi x:A. A\""
+        , "apply Lambda"
+        , "done"
+        ]
+
+    assertFails ref "fn theorem: tactic done with no proof started" $ unlines
+        [ "module T begin"
+        , "fn theorem bad : \"Int\""
+        , "done"
+        ]
+
+    assertFails ref "fn theorem: duplicate name (same as previous fn theorem)" $ unlines
+        [ "module T begin"
+        , "fn theorem dup = \"42\""
+        , "fn theorem dup = \"99\""
+        ]
+
+    assertFails ref "fn theorem: duplicate name (same as assume)" $ unlines
+        [ "module T begin"
+        , "assume myVar is \"Int\""
+        , "fn theorem myVar = \"42\""
+        ]
+
+    assertFails ref "fn theorem: session type theorem during fn theorem proof" $ unlines
+        [ "module T begin"
+        , "fn theorem bad : \"Int\""
+        , "assume T is stype"
+        , "theorem t: \"T -o T\""
+        , "done"
+        ]
+
+    assertFails ref "fn theorem: fn theorem during session type proof" $ unlines
+        [ "module T begin"
+        , "theorem t: \"1\""
+        , "fn theorem bad = \"42\""
+        , "apply UnitR"
+        , "done"
+        ]
+
+    assertFails ref "fn theorem: session type tactic in ECC proof mode" $ unlines
+        [ "module T begin"
+        , "fn theorem bad : \"Int\""
+        , "apply UnitR"
+        , "done"
+        ]
+
+    assertFails ref "fn theorem: missing both type and term" $ unlines
+        [ "module T begin"
+        , "fn theorem bad"
+        ]
+
+    -- ===== File-based fn theorem test =====
+
+    runFileTest ref "Proofs/TestingFiles/ECCTest.still"

@@ -34,7 +34,9 @@ emptyState =
       fnAssumptions = emptyContext,
       procAssumptions = [],
       errors = [],
-      stypeAssumptions = []
+      stypeAssumptions = [],
+      curFnTheoremName = "",
+      inProgressTopLevelFnProof = Nothing
     }
 
 -- ==========================================

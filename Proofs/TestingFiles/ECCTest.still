@@ -1,0 +1,24 @@
+module ECCTest begin
+
+-- Term declaration: infer type
+fn theorem identity = "\A:Type 1. \x:A. x"
+
+-- Term declaration: with type annotation (should succeed)
+fn theorem const_fn : "Pi A:Type 1. Pi B:Type 1. Pi x:A. Pi y:B. A" = "\A:Type 1. \B:Type 1. \x:A. \y:B. x"
+
+-- Tactic-based proof
+fn theorem id2 : "Pi A:Type 1. Pi x:A. A"
+apply Lambda
+apply Lambda
+apply VarA
+done
+
+-- Verify ECC theorem result is available as assumption in a session type proof
+assume T is stype
+
+theorem aid: "T -o T"
+apply ImpliesR
+apply IdA
+done
+
+end

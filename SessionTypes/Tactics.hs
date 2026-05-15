@@ -144,7 +144,9 @@ data ProofState = S {
     fnAssumptions :: FunctionalContext,
     procAssumptions :: [(String, Proposition)],
     stypeAssumptions :: [String],
-    errors :: [String]
+    errors :: [String],
+    curFnTheoremName :: String,
+    inProgressTopLevelFnProof :: Maybe (FT.ProofState, FunctionalTerm)
 } deriving ()
 
 substTyDecls :: [(String, Proposition)] -> Proposition -> Proposition
@@ -1072,10 +1074,12 @@ initCleanState mName =
         , fnAssumptions = emptyContext
         , procAssumptions = []
         , errors = []
-        , stypeAssumptions = [] }
+        , stypeAssumptions = []
+        , curFnTheoremName = ""
+        , inProgressTopLevelFnProof = Nothing }
 
 proofInProgress :: ProofState -> Bool
-proofInProgress s = curTheoremName s /= ""
+proofInProgress s = curTheoremName s /= "" || curFnTheoremName s /= ""
 
 runProofState :: ProverState a -> ProofState -> (Either String (a, ProofState))
 runProofState a s = runIdentity $ E.runExceptT $ ST.runStateT a s
@@ -1114,12 +1118,35 @@ runAndVerifyJustification s = case Data.Map.lookup "?a" (subgoals s) of
         Left e -> Left e
 
 done :: ProofState -> ProofState
-done res = case runAndVerifyJustification res of
+done s
+    | curFnTheoremName s /= "" = doneEccTheorem s
+    | otherwise                = doneSessionTheorem s
+
+doneSessionTheorem :: ProofState -> ProofState
+doneSessionTheorem res = case runAndVerifyJustification res of
     Right (p, s) -> s { theorems = Data.Map.insert (curTheoremName s) (Theorem p (fromIntegral . L.length . Data.Map.keys $ subgoals s)) (theorems s)
                       , outputs = ("Theorem complete: " ++ curTheoremName s):outputs res
                       , curTheoremName = ""
                       , openGoalStack = [] }
     Left err -> res { outputs = ("Could not verify proof: " ++ err):outputs res, errors = ("Could not verify proof: " ++ err):errors res }
+
+doneEccTheorem :: ProofState -> ProofState
+doneEccTheorem s = case inProgressTopLevelFnProof s of
+    Nothing -> s { errors = "done: no ECC theorem in progress." : errors s }
+    Just (fs, declaredTy) ->
+        if not (FT._FDone fs)
+        then s { errors = "done: ECC proof is incomplete; remaining subgoals exist." : errors s }
+        else case FT._FGetProof fs of
+            Left e  -> s { errors = ("done: could not extract ECC proof: " ++ e) : errors s }
+            Right _ ->
+                let name = curFnTheoremName s
+                in case safeInsert name declaredTy (fnAssumptions s) of
+                    Right newAssms ->
+                        s { fnAssumptions             = newAssms
+                          , curFnTheoremName          = ""
+                          , inProgressTopLevelFnProof = Nothing
+                          , outputs = ("ECC theorem complete: " ++ name) : outputs s }
+                    Left e -> s { errors = e : errors s }
 
 -- DSL
 
@@ -1167,7 +1194,7 @@ _ExtractPar s tName =
             Just p -> extractor tName (proofObject p)
 
 getProofStateDeclNames :: ProofState -> [String]
-getProofStateDeclNames s = [curTheoremName s, curModuleName s] ++ Data.Map.keys (loadedModules s) ++ concatMap Data.Map.keys (loadedModules s) ++ Data.Map.keys (theorems s) ++ (fst <$> stypeDecls s) ++ (fst <$> ctxToList (fnAssumptions s)) ++ (fst <$> procAssumptions s) ++ stypeAssumptions s
+getProofStateDeclNames s = [curTheoremName s, curFnTheoremName s, curModuleName s] ++ Data.Map.keys (loadedModules s) ++ concatMap Data.Map.keys (loadedModules s) ++ Data.Map.keys (theorems s) ++ (fst <$> stypeDecls s) ++ (fst <$> ctxToList (fnAssumptions s)) ++ (fst <$> procAssumptions s) ++ stypeAssumptions s
 
 declCheck n s res = if n `L.elem` getProofStateDeclNames s then s { errors = "Name already declared!":errors s } else res
 
@@ -1178,6 +1205,35 @@ _FAssumption :: String -> FunctionalTerm -> ProofState -> ProofState
 _FAssumption n ty s = case safeInsert n ty (fnAssumptions s) of
     Right newAssms -> declCheck n s (s { fnAssumptions = newAssms })
     Left e -> s { errors = e:errors s }
+
+_FnTheoremDecl :: ProofState -> String -> Maybe FunctionalTerm -> FunctionalTerm -> ProofState
+_FnTheoremDecl s name maybeDeclaredTy term =
+    case extractProofFromTermUnderCtx (fnAssumptions s) term of
+        Left err -> s { errors = ("fn theorem " ++ name ++ ": " ++ err) : errors s }
+        Right (inferredTy, _) ->
+            let ty = maybe inferredTy id maybeDeclaredTy
+            in case maybeDeclaredTy of
+                Just declaredTy | declaredTy /= inferredTy ->
+                    s { errors = ("fn theorem " ++ name ++ ": declared type does not match inferred type.\n  declared: " ++ ftToS declaredTy ++ "\n  inferred: " ++ ftToS inferredTy) : errors s }
+                _ -> declCheck name s $ case safeInsert name ty (fnAssumptions s) of
+                    Right newAssms -> s { fnAssumptions = newAssms
+                                       , outputs = ("ECC theorem defined: " ++ name) : outputs s }
+                    Left e -> s { errors = e : errors s }
+
+_FnTheoremTactics :: ProofState -> String -> FunctionalTerm -> ProofState
+_FnTheoremTactics s name ty =
+    declCheck name s $ s {
+        curFnTheoremName          = name,
+        inProgressTopLevelFnProof = Just (FT._FTheorem (fnAssumptions s) ty S.empty, ty),
+        outputs = ("New ECC theorem started: " ++ name) : outputs s
+    }
+
+_FnTheorem :: ProofState -> String -> Maybe FunctionalTerm -> Maybe FunctionalTerm -> ProofState
+_FnTheorem s name (Just ty) (Just term) = _FnTheoremDecl s name (Just ty) term
+_FnTheorem s name Nothing   (Just term) = _FnTheoremDecl s name Nothing   term
+_FnTheorem s name (Just ty) Nothing     = _FnTheoremTactics s name ty
+_FnTheorem s name Nothing   Nothing     =
+    s { errors = "fn theorem requires a type annotation or a term definition (= \"...\")." : errors s }
 
 _PAssumption :: String -> Proposition -> ProofState -> ProofState
 _PAssumption n ty s = declCheck n s (s { procAssumptions = (n, substTyDecls (stypeDecls s) ty):procAssumptions s })
@@ -1194,26 +1250,34 @@ _Apply s t = applyTactic s t
 {-| Tactic: Apply a tactic from the functional system to a functional subgoal. -}
 _FTac :: FT.FunctionalTactic -> Tactic
 _FTac t = do
-    invalidateNameCache
     s <- ST.get
-    case Data.Map.lookup (curSubgoal s) (subgoals s) of
-        Just sg -> case inProgressFunctionalProof sg of
-            Just (fs, p) -> case FT._FApply (Right fs) t of
-                Right newFs ->
-                    let
-                        prevGoals = FT.subgoals fs
-                        newGoals = FT.subgoals newFs
-                        newGoalNames = (\n -> curSubgoal s ++ "." ++ n) <$> Data.Map.keys (Data.Map.difference newGoals prevGoals)
-                        newGoalStack = (if Data.Map.null (Data.Map.filter (not . FT.used) newGoals) then [curSubgoal s] else newGoalNames) ++ tail (openGoalStack s)
-                    in
-                        if FT._FDone newFs
-                        then case FT._FGetProof newFs of
-                            Right fp -> ST.put (applyTactic (s { openGoalStack = newGoalStack }) (p fp)) >> return "Functional proof complete and tactic applied."
-                            Left e -> tacError $ "Proof completed, but justification has errors: " ++ e
-                        else ST.put (s { openGoalStack = newGoalStack, subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (newFs, p) }) (subgoals s) }) >> return "Functional tactic applied."
-                Left e -> tacError e
-            Nothing -> tacError "No in progress functional proof to apply to in current subgoal."
-        Nothing -> tacError $ "Could not find current subgoal name: " ++ curSubgoal s ++ " in subgoals."
+    case inProgressTopLevelFnProof s of
+        Just (fs, declaredTy) -> case FT._FApply (Right fs) t of
+            Right newFs -> do
+                ST.put s { inProgressTopLevelFnProof = Just (newFs, declaredTy) }
+                return "ECC tactic applied."
+            Left e -> tacError e
+        Nothing -> do
+            invalidateNameCache
+            s2 <- ST.get
+            case Data.Map.lookup (curSubgoal s2) (subgoals s2) of
+                Just sg -> case inProgressFunctionalProof sg of
+                    Just (fs, p) -> case FT._FApply (Right fs) t of
+                        Right newFs ->
+                            let
+                                prevGoals = FT.subgoals fs
+                                newGoals = FT.subgoals newFs
+                                newGoalNames = (\n -> curSubgoal s2 ++ "." ++ n) <$> Data.Map.keys (Data.Map.difference newGoals prevGoals)
+                                newGoalStack = (if Data.Map.null (Data.Map.filter (not . FT.used) newGoals) then [curSubgoal s2] else newGoalNames) ++ tail (openGoalStack s2)
+                            in
+                                if FT._FDone newFs
+                                then case FT._FGetProof newFs of
+                                    Right fp -> ST.put (applyTactic (s2 { openGoalStack = newGoalStack }) (p fp)) >> return "Functional proof complete and tactic applied."
+                                    Left e -> tacError $ "Proof completed, but justification has errors: " ++ e
+                                else ST.put (s2 { openGoalStack = newGoalStack, subgoals = Data.Map.insert (curSubgoal s2) (sg { inProgressFunctionalProof = Just (newFs, p) }) (subgoals s2) }) >> return "Functional tactic applied."
+                        Left e -> tacError e
+                    Nothing -> tacError "No in progress functional proof to apply to in current subgoal."
+                Nothing -> tacError $ "Could not find current subgoal name: " ++ curSubgoal s2 ++ " in subgoals."
 
 _FApply :: ProofState -> FT.FunctionalTactic -> ProofState
 _FApply s t = case Data.Map.lookup (curSubgoal s) (subgoals s) of

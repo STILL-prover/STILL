@@ -45,6 +45,7 @@ data TopLevelCommand
     | CmdProcessAssumption String Proposition
     | CmdSTypeAssumption String
     | CmdTheorem String [Proposition] Proposition
+    | CmdFnTheorem String (Maybe FunctionalTerm) (Maybe FunctionalTerm)
     | CmdProcessDef String Proposition Process
     | CmdRun String
 
@@ -65,6 +66,7 @@ evalTopLevelCommand (CmdAssumption resI resTy) s = _FAssumption resI resTy s
 evalTopLevelCommand (CmdProcessAssumption resI resTy) s = _PAssumption resI resTy s
 evalTopLevelCommand (CmdSTypeAssumption resI) s = _STypeAssumption resI s
 evalTopLevelCommand (CmdTheorem tName props p) s = _Theorem s props tName p
+evalTopLevelCommand (CmdFnTheorem name ty term) s = _FnTheorem s name ty term
 evalTopLevelCommand (CmdProcessDef name ty body) s = _ProcessDef s name ty body
 evalTopLevelCommand (CmdRun _) s = s { errors = "run requires IO; use evalTopLevelCommandM" : errors s }
 
@@ -97,6 +99,7 @@ topLevelCmdLabel (CmdAssumption _ _)        = "assume"
 topLevelCmdLabel (CmdProcessAssumption _ _) = "assume process"
 topLevelCmdLabel (CmdSTypeAssumption _)     = "assume ... is stype"
 topLevelCmdLabel (CmdTheorem _ _ _)         = "theorem"
+topLevelCmdLabel (CmdFnTheorem _ _ _)       = "fn theorem"
 topLevelCmdLabel (CmdProcessDef _ _ _)      = "process"
 topLevelCmdLabel (CmdRun _)                 = "run"
 
@@ -217,7 +220,8 @@ parseStringCommand s = do
 -- ==========================================
 
 parseTopLevelCommand :: Parser TopLevelCommand
-parseTopLevelCommand = parseTheorem
+parseTopLevelCommand = try parseFnTheorem
+  <|> parseTheorem
   <|> parseTypeDec
   <|> try parseProcDef
   <|> try parseProcessAssumption
@@ -322,6 +326,15 @@ parseTheorem = do
     reservedOp ":"
     p <- quotes proposition
     return (CmdTheorem tName props p)
+
+parseFnTheorem :: Parser TopLevelCommand
+parseFnTheorem = do
+    reserved "fn"
+    reserved "theorem"
+    name <- identifier
+    ty   <- optionMaybe (reservedOp ":" >> quotes fTerm)
+    term <- optionMaybe (reservedOp "=" >> quotes fTerm)
+    return (CmdFnTheorem name ty term)
 
 parseApply :: Parser ProofCommand
 parseApply = do
@@ -587,7 +600,7 @@ lexer :: Tok.TokenParser ()
 lexer = Tok.makeTokenParser style
   where
     ops = [":", "\"", ";", "+", "<|>"]
-    names = ["module", "imports", "begin", "end", "theorem", "done", "defer", "prefer", "apply", "help", "print_theorems", "consumes", "extract", "extract_par", "assume", "process", "run"] ++ (fst <$> simpleTactics)
+    names = ["module", "imports", "begin", "end", "theorem", "fn", "done", "defer", "prefer", "apply", "help", "print_theorems", "consumes", "extract", "extract_par", "assume", "process", "run"] ++ (fst <$> simpleTactics)
     style = emptyDef
         { Tok.commentLine = "--"
         , Tok.commentStart = "{-"
