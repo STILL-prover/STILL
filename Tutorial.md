@@ -358,6 +358,83 @@ apply NuR S (handle) (a)   -- binding S, parameter 'handle', initial value 'a'
 apply TyVar S (c)           -- recurse with new argument 'c'
 ```
 
+### Choosing parameters
+
+`NuR S (params) (initial)` declares a corecursion `S` with a **parameter list** (the channels that may be passed at each recursive call) and an **initial argument list** (the channels currently in scope to use on the first iteration). Each `TyVar S (args)` then supplies fresh channels for the parameters.
+
+A channel should be a parameter when it can **change between iterations** — for example, a state-holding channel that gets replaced after dynamic spawning, or a handle that gets refreshed each cycle.
+
+Things that should NOT be parameters:
+
+- **The output channel** (typically `z`). It is fixed across iterations and recorded automatically by `NuR`; you don't pass it in.
+- **Ambient channels** in the linear context that stay live, unchanged, across iterations. They are matched implicitly by `TyVar` against the caller's context and don't need to be re-named per recursion.
+
+If your corec body doesn't need to swap any channels, `NuR S () ()` (no parameters) is correct — see the `stream` example above.
+
+You may reuse the same identifier for the parameter and its initial argument — e.g., `NuR S (a) (a)` — when the channel in scope is already called `a`. The prover treats the parameter as alpha-renamable, so this does not conflict with later consuming or shadowing `a` inside the body.
+
+### Pattern: dynamic node spawning
+
+A common coinductive pattern is to **consume the current parameter channel and recurse on a freshly cut one**. This mirrors the network-spawning constructions from Toninho et al. (2014) and lets a corec produce an unbounded sequence of new processes, each created on demand.
+
+Suppose `Counter = nu X. ($Int * X) & X & 1` (offers `val`, `inc`, `halt`). A coordinator of type `Counter -o Counter` that, on `inc`, spawns a fresh child and forgets the old one:
+
+```
+stype Counter = "nu X. ($Int * X) & X & 1"
+
+theorem epsilon: "Counter"
+apply NuR S () ()
+apply WithR
+apply UnitR
+apply WithR
+apply TyVar S ()
+apply TensorR
+apply TyVar S ()
+apply FTermR
+apply Exact "0"
+done
+
+theorem coord: "Counter -o Counter"
+apply ImpliesR              -- incoming child bound to channel 'a'
+apply NuR S (a) (a)         -- parameterize on the child channel 'a'
+apply WithR                 -- halt branch | (val | inc)
+apply NuLA                  -- halt: unfold 'a'
+apply WithL2A               -- select '1' from 'a'
+apply UnitLA                -- consume 'a'
+apply UnitR
+apply WithR                 -- val | inc
+apply CutTheorem epsilon    -- inc: cut a fresh child 'b'
+apply NuLA                  -- unfold the old child 'a'
+apply WithL2A               -- select halt on 'a'
+apply UnitLA                -- consume 'a'
+apply TyVar S (b)           -- recurse with the fresh child 'b'
+apply NuLA                  -- val branch: report the count
+apply WithL1A
+apply WithL1A
+apply TensorLA
+apply TensorR
+defer
+apply FTermLA
+apply FTermR
+apply VarA
+apply TyVar S (a)           -- val keeps using the same 'a'
+done
+```
+
+Key points:
+
+- `a` is the parameter because the **inc** branch replaces it with a freshly cut `b` (via `TyVar S (b)`).
+- The **val** branch doesn't change the child, so it recurses with `TyVar S (a)`.
+- The **halt** branch doesn't recurse; it consumes `a` and closes with `UnitR`.
+
+A parameter channel may be consumed (e.g., via `WithL2A; UnitLA`) inside the corec body provided you supply a **different** channel as the argument when you call `TyVar`. The verifier substitutes the parameter for the new argument when matching the binding's recorded linear context against your current context — so the post-substitution names must line up with whatever channels are still live.
+
+### Common pitfalls
+
+- **`TyVar S (...) ` length mismatch.** The number of arguments must match the parameter list. `Length mismatch in TyVarRule` means you passed the wrong count.
+- **"Invalid linear contexts" at `TyVar`.** Your current linear context, after the substitution `param → new arg`, must equal what `NuR` recorded. Usually this means you didn't consume or allocate the channels needed before recursing. Use `get_proof_state` (MCP) to inspect both sides.
+- **Forgetting to recurse in every productive branch.** Coinductive proofs must close every infinite branch with `TyVar`; otherwise `done` will fail with an unclosed goal.
+
 ---
 
 ## 13. Second-Order Quantification
