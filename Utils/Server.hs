@@ -26,12 +26,14 @@ emptyState =
       curTheoremName = "",
       curModuleName = "Main",
       loadedModules = Map.empty,
+      loadedFnModules = Map.empty,
       openGoalStack = [],
       cachedProofStateNames = S.empty,
       newSubgoalNameList = allSubgoalNames,
       cachedVarNames = namesInOrder,
       stypeDecls = [],
       fnAssumptions = emptyContext,
+      fnTheorems = Map.empty,
       procAssumptions = [],
       errors = [],
       stypeAssumptions = [],
@@ -69,7 +71,8 @@ loadImports (m : ms) s =
               let modState0 = s' {subgoals = Map.empty, theorems = Map.empty, curModuleName = m, openGoalStack = []}
                   modResult  = foldl (\st sp -> evalCommand (spanValue sp) st) modState0 subCmds
                   newLoaded  = Map.insert m (theorems modResult) (loadedModules s')
-              loadImports ms (s' {subgoals = Map.empty, theorems = Map.empty, openGoalStack = [], loadedModules = newLoaded})
+                  newFnLoaded = Map.insert m (fnTheorems modResult) (loadedFnModules s')
+              loadImports ms (s' {subgoals = Map.empty, theorems = Map.empty, openGoalStack = [], loadedModules = newLoaded, loadedFnModules = newFnLoaded, fnTheorems = Map.empty })
 
 parseAndLoad
   :: FilePath -> String

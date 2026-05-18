@@ -138,12 +138,14 @@ data ProofState = S {
     curTheoremName :: String,
     curModuleName :: String,
     loadedModules :: Map String (Map String Theorem),
+    loadedFnModules :: Map String (Map String FunctionalProof),
     openGoalStack :: [String],
     cachedProofStateNames :: S.Set String,
     newSubgoalNameList :: [String],
     cachedVarNames :: [String],
     stypeDecls :: [(String, Proposition)],
     fnAssumptions :: FunctionalContext,
+    fnTheorems :: Map String FunctionalProof,
     procAssumptions :: [(String, Proposition)],
     stypeAssumptions :: [String],
     errors :: [String],
@@ -1068,12 +1070,14 @@ initCleanState mName =
         , curModuleName = mName
         , theorems = Data.Map.empty
         , loadedModules = Data.Map.empty
+        , loadedFnModules = Data.Map.empty
         , openGoalStack = []
         , cachedProofStateNames = S.empty
         , newSubgoalNameList = tail allSubgoalNames
         , cachedVarNames = namesInOrder
         , stypeDecls = []
         , fnAssumptions = emptyContext
+        , fnTheorems = Data.Map.empty
         , procAssumptions = []
         , errors = []
         , stypeAssumptions = []
@@ -1140,15 +1144,13 @@ doneEccTheorem s = case inProgressTopLevelFnProof s of
         then s { errors = "done: ECC proof is incomplete; remaining subgoals exist." : errors s }
         else case FT._FGetProof fs of
             Left e  -> s { errors = ("done: could not extract ECC proof: " ++ e) : errors s }
-            Right _ ->
+            Right fp ->
                 let name = curFnTheoremName s
-                in case safeInsert name declaredTy (fnAssumptions s) of
-                    Right newAssms ->
-                        s { fnAssumptions             = newAssms
-                          , curFnTheoremName          = ""
-                          , inProgressTopLevelFnProof = Nothing
-                          , outputs = ("ECC theorem complete: " ++ name) : outputs s }
-                    Left e -> s { errors = e : errors s }
+                in s {
+                    fnTheorems                  = Data.Map.insert name fp (fnTheorems s)
+                    , curFnTheoremName          = ""
+                    , inProgressTopLevelFnProof = Nothing
+                    , outputs = ("ECC theorem complete: " ++ name) : outputs s }
 
 -- DSL
 
@@ -1196,7 +1198,7 @@ _ExtractPar s tName =
             Just p -> extractor tName (proofObject p)
 
 getProofStateDeclNames :: ProofState -> [String]
-getProofStateDeclNames s = [curTheoremName s, curFnTheoremName s, curModuleName s] ++ Data.Map.keys (loadedModules s) ++ concatMap Data.Map.keys (loadedModules s) ++ Data.Map.keys (theorems s) ++ (fst <$> stypeDecls s) ++ (fst <$> ctxToList (fnAssumptions s)) ++ (fst <$> procAssumptions s) ++ stypeAssumptions s
+getProofStateDeclNames s = [curTheoremName s, curFnTheoremName s, curModuleName s] ++ Data.Map.keys (loadedModules s) ++ Data.Map.keys (loadedFnModules s) ++ concatMap Data.Map.keys (loadedModules s) ++ concatMap Data.Map.keys (loadedFnModules s) ++ Data.Map.keys (theorems s) ++ (fst <$> stypeDecls s) ++ (fst <$> ctxToList (fnAssumptions s)) ++ (Data.Map.keys (fnTheorems s)) ++ (fst <$> procAssumptions s) ++ stypeAssumptions s
 
 declCheck n s res = if n `L.elem` getProofStateDeclNames s then s { errors = "Name already declared!":errors s } else res
 
@@ -1212,15 +1214,10 @@ _FnTheoremDecl :: ProofState -> String -> Maybe FunctionalTerm -> FunctionalTerm
 _FnTheoremDecl s name maybeDeclaredTy term =
     case extractProofFromTermUnderCtx (fnAssumptions s) term of
         Left err -> s { errors = ("fn theorem " ++ name ++ ": " ++ err) : errors s }
-        Right (inferredTy, _) ->
-            let ty = maybe inferredTy id maybeDeclaredTy
-            in case maybeDeclaredTy of
-                Just declaredTy | declaredTy /= inferredTy ->
-                    s { errors = ("fn theorem " ++ name ++ ": declared type does not match inferred type.\n  declared: " ++ ftToS declaredTy ++ "\n  inferred: " ++ ftToS inferredTy) : errors s }
-                _ -> declCheck name s $ case safeInsert name ty (fnAssumptions s) of
-                    Right newAssms -> s { fnAssumptions = newAssms
-                                       , outputs = ("ECC theorem defined: " ++ name) : outputs s }
-                    Left e -> s { errors = e : errors s }
+        Right (inferredTy, fp) -> case maybeDeclaredTy of
+            Just declaredTy | declaredTy /= inferredTy ->
+                s { errors = ("fn theorem " ++ name ++ ": declared type does not match inferred type.\n  declared: " ++ ftToS declaredTy ++ "\n  inferred: " ++ ftToS inferredTy) : errors s }
+            _ -> declCheck name s $ s { fnTheorems = Data.Map.insert name fp (fnTheorems s), outputs = ("ECC theorem defined: " ++ name) : outputs s }
 
 _FnTheoremTactics :: ProofState -> String -> FunctionalTerm -> ProofState
 _FnTheoremTactics s name ty =
