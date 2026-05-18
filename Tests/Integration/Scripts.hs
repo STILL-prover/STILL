@@ -574,3 +574,115 @@ run ref = group ref "Integration.runProofScript" $ do
     -- ===== File-based fn theorem test =====
 
     runFileTest ref "Proofs/TestingFiles/ECCTest.still"
+
+    -- ===== Theorem references inside Exact / ExactPi =====
+
+    -- Local (same-module) ECC theorem reference in Exact.
+    assertProves ref "Exact: reference local fn theorem" $ unlines
+        [ "module T begin"
+        , "fn theorem prevId : \"Pi A:Type 1. Pi x:A. A\""
+        , "apply Lambda"
+        , "apply Lambda"
+        , "apply VarA"
+        , "done"
+        , "fn theorem useIt : \"Pi A:Type 1. Pi x:A. A\""
+        , "apply Lambda"
+        , "apply Lambda"
+        , "apply Exact \"prevId A x\""
+        , "done"
+        ]
+
+    -- Local (same-module) session theorem reference in ExactPi. The theorem
+    -- has empty context so the inlining is permitted; its principal channel
+    -- gets renamed to the call's argument.
+    assertProves ref "ExactPi: reference local session theorem" $ unlines
+        [ "module T begin"
+        , "theorem trivUnit: \"1\""
+        , "apply UnitR"
+        , "done"
+        , "theorem useIt: \"1\""
+        , "apply ExactPi \"trivUnit(z)\""
+        , "done"
+        ]
+
+    -- ExactPi inlining a theorem whose extracted process is non-trivial.
+    assertProves ref "ExactPi: reference local theorem with tensor extract" $ unlines
+        [ "module T begin"
+        , "theorem unitPair: \"1 * 1\""
+        , "apply TensorR"
+        , "apply UnitR"
+        , "apply UnitR"
+        , "done"
+        , "theorem useIt: \"1 * 1\""
+        , "apply ExactPi \"unitPair(z)\""
+        , "done"
+        ]
+
+    -- Negative: explicit module-qualified ref where the module is not loaded.
+    assertFails ref "Exact: unresolved Mod::thm reference fails" $ unlines
+        [ "module T begin"
+        , "fn theorem useIt : \"Pi A:Type 1. Pi x:A. A\""
+        , "apply Lambda"
+        , "apply Lambda"
+        , "apply Exact \"NoSuchMod::noSuchThm A x\""
+        , "done"
+        ]
+
+    -- Negative: explicit module-qualified ref in ExactPi where module unknown.
+    assertFails ref "ExactPi: unresolved Mod::thm reference fails" $ unlines
+        [ "module T begin"
+        , "theorem useIt: \"1\""
+        , "apply ExactPi \"NoSuchMod::noSuchThm(z)\""
+        , "done"
+        ]
+
+    -- Negative: ExactPi call with wrong arity (zero args).
+    assertFails ref "ExactPi: theorem call with zero args fails arity check" $ unlines
+        [ "module T begin"
+        , "theorem trivUnit: \"1\""
+        , "apply UnitR"
+        , "done"
+        , "theorem useIt: \"1\""
+        , "apply ExactPi \"trivUnit()\""
+        , "done"
+        ]
+
+    -- Negative: ExactPi call with too many args.
+    assertFails ref "ExactPi: theorem call with two args fails arity check" $ unlines
+        [ "module T begin"
+        , "theorem trivUnit: \"1\""
+        , "apply UnitR"
+        , "done"
+        , "theorem useIt: \"1\""
+        , "apply ExactPi \"trivUnit(z, w)\""
+        , "done"
+        ]
+
+    -- Negative: ExactPi referencing a theorem that has a non-empty context.
+    -- `forward` has `consumes "1"`, so its conclusion sequent has a linear
+    -- context entry — the MVP restriction rejects this inline use.
+    assertFails ref "ExactPi: cannot inline theorem with non-empty context" $ unlines
+        [ "module T begin"
+        , "theorem forward consumes \"1\": \"1\""
+        , "apply IdA"
+        , "done"
+        , "theorem useIt consumes \"1\": \"1\""
+        , "apply ExactPi \"forward(z)\""
+        , "done"
+        ]
+
+    -- Backward compatibility: a Call to an unknown name that is NOT a `::`
+    -- reference must still be left for the existing type checker to handle
+    -- (it'll fail at type-check time, but should not trigger the theorem-ref
+    -- "unresolved" error message).
+    assertFails ref "ExactPi: bare Call name typechecks (not a theorem-ref error)" $ unlines
+        [ "module T begin"
+        , "theorem useIt: \"1\""
+        , "apply ExactPi \"someName(z)\""
+        , "done"
+        ]
+
+    -- File-based regression: the dedicated test file exercises module-qualified
+    -- references for both Exact and ExactPi. Requires ExactTheoremRefLib.still
+    -- to exist alongside the script being run.
+    runFileTest ref "Proofs/TestingFiles/ExactTheoremRef.still"

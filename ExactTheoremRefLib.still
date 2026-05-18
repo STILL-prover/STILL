@@ -1,0 +1,25 @@
+-- Helper library for the ExactTheoremRef regression test. Defines a
+-- trivial ECC identity theorem and a trivial session-type forward.
+
+module ExactTheoremRefLib begin
+
+fn theorem ecclId : "Pi A:Type 1. Pi x:A. A"
+apply Lambda
+apply Lambda
+apply VarA
+done
+
+-- A session theorem with empty context, conclusion  |- z:1.
+theorem trivUnit: "1"
+apply UnitR
+done
+
+-- A session theorem with empty context whose process is non-trivial: it
+-- creates a fresh channel and halts on both sides. Conclusion: |- z:(1 * 1).
+theorem unitPair: "1 * 1"
+apply TensorR
+apply UnitR
+apply UnitR
+done
+
+end

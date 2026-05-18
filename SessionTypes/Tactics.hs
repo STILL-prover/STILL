@@ -1008,15 +1008,88 @@ cutProcessAssumptionTac n = do
 weakenTac :: String -> Tactic
 weakenTac t = altTactical (replWeakenTac t) (fnWeakenTac t)
 
+-- Split a "Module::theorem" name. Returns Nothing if the separator is absent.
+splitProcTheoremRef :: String -> Maybe (String, String)
+splitProcTheoremRef s = case L.break (== ':') s of
+    (a, ':':':':b) -> Just (a, b)
+    _              -> Nothing
+
+-- Walk a Process, expanding any `Call name [chan]` where `name` resolves to a
+-- previously-proved session theorem. The theorem's principal channel is
+-- renamed to `chan` and the resulting process is inlined in place of the call.
+-- Calls whose name does not resolve to a theorem are left alone (they may be
+-- recursive-process calls or process assumptions).
+expandProcTheoremRefs :: ProofState -> Process -> Either String Process
+expandProcTheoremRefs s = go
+  where
+    locals  = theorems s
+    modules = loadedModules s
+
+    lookupThm :: String -> Maybe Proof
+    lookupThm name = case splitProcTheoremRef name of
+        Just (modName, thmName) -> proofObject <$> (Data.Map.lookup modName modules >>= Data.Map.lookup thmName)
+        Nothing                 -> proofObject <$> Data.Map.lookup name locals
+
+    contextEmpty :: Sequent -> Bool
+    contextEmpty sq =
+        S.null (tyVarContext sq)
+        && L.null (ctxToList (fnContext sq))
+        && Data.Map.null (unrestrictedContext sq)
+        && Data.Map.null (linearContext sq)
+        && Data.Map.null (recursiveBindings sq)
+
+    inlineCall :: String -> [String] -> Process -> Either String Process
+    inlineCall name args fallback = case lookupThm name of
+        Nothing ->
+            if "::" `L.isInfixOf` name
+                then Left ("Could not resolve theorem reference '" ++ name ++ "'")
+                else Right fallback
+        Just proofObj -> case verifyProofM proofObj of
+            Left e -> Left ("Could not extract process from referenced theorem '" ++ name ++ "': " ++ e)
+            Right (extractedProc, concSeq) -> do
+                unless (contextEmpty concSeq) $
+                    Left ("Theorem '" ++ name ++ "' has non-trivial context; only theorems with empty context can be referenced inline.")
+                arg <- case args of
+                    [a] -> Right a
+                    _   -> Left ("Theorem '" ++ name ++ "' must be called with exactly one channel argument; got " ++ show (L.length args))
+                let prinChannel = channel concSeq
+                    renamed = substVar extractedProc arg prinChannel
+                Right renamed
+
+    go :: Process -> Either String Process
+    go p = case p of
+        Call name args -> inlineCall name args p
+        ParallelComposition p1 p2 -> ParallelComposition <$> go p1 <*> go p2
+        Nu x prop body            -> Nu x prop <$> go body
+        Send x y body             -> Send x y <$> go body
+        SendTerm x t body         -> SendTerm x t <$> go body
+        SendType x t body         -> SendType x t <$> go body
+        Receive x y body          -> Receive x y <$> go body
+        ReplicateReceive x y body -> ReplicateReceive x y <$> go body
+        SendInl x body            -> SendInl x <$> go body
+        SendInr x body            -> SendInr x <$> go body
+        Case x p1 p2              -> Case x <$> go p1 <*> go p2
+        Corec n ys body zs        -> (\b -> Corec n ys b zs) <$> go body
+        Print m body              -> Print m <$> go body
+        ReadLine x body           -> ReadLine x <$> go body
+        Halt                      -> Right Halt
+        Link x y                  -> Right (Link x y)
+        LiftTerm x t              -> Right (LiftTerm x t)
+        HoleTerm                  -> Right HoleTerm
+
 byProcessTac :: Process -> Tactic
 byProcessTac p = do
+    s <- ST.get
+    expanded <- case expandProcTheoremRefs s p of
+        Right q -> return q
+        Left e  -> tacError e
     seq <- getCurrentSequent
     curSg <- ST.gets curSubgoal
     curS <- ST.get
     let
         unavailableVars = fst (getContextAvailability curSg curS)
         typeCheckSeq = seq { linearContext = S.foldl (flip Data.Map.delete) (linearContext seq) unavailableVars}
-    procProof <- case typeCheckProcessUnderSequent seq p of Right res -> return res; Left e -> tacError e
+    procProof <- case typeCheckProcessUnderSequent seq expanded of Right res -> return res; Left e -> tacError e
     newSeq <- case verifyProofM procProof of Right (_, newSeq) -> return newSeq; Left e -> tacError ("Error verifying proof of type derivation: " ++ e)
     unless (newSeq == seq) $ tacError ("Sequents are not the same in subgoal and derivation: " ++ seqToS seq ++ "\n\n" ++ seqToS newSeq) -- TODO allow subset of linear context.
     useCurrentSubgoal Trunk . buildJustification0 $ procProof
@@ -1223,7 +1296,7 @@ _FnTheoremTactics :: ProofState -> String -> FunctionalTerm -> ProofState
 _FnTheoremTactics s name ty =
     declCheck name s $ s {
         curFnTheoremName          = name,
-        inProgressTopLevelFnProof = Just (FT._FTheorem (fnAssumptions s) ty S.empty, ty),
+        inProgressTopLevelFnProof = Just (FT._FTheorem (fnAssumptions s) ty S.empty (fnTheorems s) (loadedFnModules s), ty),
         outputs = ("New ECC theorem started: " ++ name) : outputs s
     }
 
@@ -1317,7 +1390,7 @@ _FTermR = do
                 newGoalsStack <- case openGoalStack curState of
                     h:rest -> return ((h ++ ".?a"):rest)
                     [] -> tacError "Cannot find the current subgoal!"
-                ST.modify (\s -> s { openGoalStack = newGoalsStack, subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (FT._FTheorem  (fnContext seq) t names, fullTac )}) (subgoals s) })
+                ST.modify (\s -> s { openGoalStack = newGoalsStack, subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (FT._FTheorem  (fnContext seq) t names (fnTheorems s) (loadedFnModules s), fullTac )}) (subgoals s) })
                 return "Functional proof in progress.")
         _ -> tacError $ "Cannot apply tactic to non Lift proposition: " ++ show (goalProposition seq)
 
@@ -1436,7 +1509,7 @@ _ForallL x = do
                 newGoalsStack <- case openGoalStack curState of
                     h:rest -> return ((h ++ ".?a"):rest)
                     [] -> tacError "Cannot find the current subgoal!"
-                ST.modify (\s -> s { openGoalStack = newGoalsStack, subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (FT._FTheorem  (fnContext seq) t names, fullTac )}) (subgoals s) })
+                ST.modify (\s -> s { openGoalStack = newGoalsStack, subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (FT._FTheorem  (fnContext seq) t names (fnTheorems s) (loadedFnModules s), fullTac )}) (subgoals s) })
                 return "Functional proof in progress.")
         _ -> tacError $ "Cannot apply tactic to non Forall proposition: " ++ show (goalProposition seq)
 
@@ -1458,7 +1531,7 @@ _ExistsR = do
                 newGoalsStack <- case openGoalStack curState of
                     h:rest -> return ((h ++ ".?a"):rest)
                     [] -> tacError "Cannot find the current subgoal!"
-                ST.modify (\s -> s { openGoalStack = newGoalsStack, subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (FT._FTheorem  (fnContext seq) t names, fullTac )}) (subgoals s) })
+                ST.modify (\s -> s { openGoalStack = newGoalsStack, subgoals = Data.Map.insert (curSubgoal s) (sg { inProgressFunctionalProof = Just (FT._FTheorem  (fnContext seq) t names (fnTheorems s) (loadedFnModules s), fullTac )}) (subgoals s) })
                 return "Functional proof in progress.")
         _ -> tacError $ "Cannot apply tactic to non Exists proposition: " ++ show (goalProposition seq)
 

@@ -40,7 +40,11 @@ data ProofState = S {
     subgoals :: Map String Subgoal,
     curSubgoal :: String,
     usedSubgoalNames :: S.Set String,
-    reservedVars :: S.Set String
+    reservedVars :: S.Set String,
+    -- Snapshot of the surrounding session-types prover's ECC theorems, used
+    -- by `Exact` to resolve embedded theorem references like "Lib::id x".
+    fnTheoremRefs :: Map String FunctionalProof,
+    loadedFnModuleRefs :: Map String (Map String FunctionalProof)
 } deriving ()
 
 initializeProof :: FunctionalTacticsSequent -> Subgoal
@@ -51,7 +55,8 @@ initializeState goal additionalReservedVars =
     let
         fnVars = getFunctionalContextFreeNames . functionalContext . sequent $ goal
     in
-        S { subgoals = singleton "?a" goal, curSubgoal = "?a", reservedVars = additionalReservedVars `S.union` fnVars, usedSubgoalNames = S.singleton "?a" }
+        S { subgoals = singleton "?a" goal, curSubgoal = "?a", reservedVars = additionalReservedVars `S.union` fnVars, usedSubgoalNames = S.singleton "?a"
+          , fnTheoremRefs = Data.Map.empty, loadedFnModuleRefs = Data.Map.empty }
 
 type ProverStateT m a = ST.StateT ProofState (E.ExceptT String m) a
 
@@ -378,10 +383,117 @@ simpTac steps = do
                 (Left e) -> tacError e
         Left e -> tacError e
 
+-- Pull the extracted term out of a stored ECC theorem proof.
+fnTheoremTerm :: FunctionalProof -> Either String FunctionalTerm
+fnTheoremTerm fp = case verifyFunctionalProofM fp of
+    Right sq -> Right (FS.goalTerm sq)
+    Left e   -> Left ("Could not extract term from referenced theorem: " ++ e)
+
+-- Look up a theorem name (plain or "Module::theorem") in the snapshotted maps.
+lookupFnTheorem :: Map String FunctionalProof -> Map String (Map String FunctionalProof) -> String -> Maybe FunctionalProof
+lookupFnTheorem locals modules name = case splitTheoremRef name of
+    Just (modName, thmName) -> Data.Map.lookup modName modules >>= Data.Map.lookup thmName
+    Nothing                 -> Data.Map.lookup name locals
+
+-- Split a "Module::theorem" name. Returns Nothing if the separator is absent.
+splitTheoremRef :: String -> Maybe (String, String)
+splitTheoremRef s = case L.break (== ':') s of
+    (a, ':':':':b) -> Just (a, b)
+    _              -> Nothing
+
+-- Walk a FunctionalTerm and substitute any Var whose name resolves to a
+-- known theorem with that theorem's extracted term. Alpha-converts the
+-- inlined term to avoid name capture against the surrounding term's names.
+expandFnTheoremRefs :: Map String FunctionalProof -> Map String (Map String FunctionalProof) -> FunctionalTerm -> Either String FunctionalTerm
+expandFnTheoremRefs locals modules ft0 = go (functionalNames ft0) ft0
+  where
+    inline :: S.Set String -> FunctionalProof -> Either String FunctionalTerm
+    inline avoid fp = do
+        sq <- case verifyFunctionalProofM fp of
+            Right s -> Right s
+            Left e  -> Left ("Could not extract term from referenced theorem: " ++ e)
+        let t      = FS.goalTerm sq
+            -- Alpha-convert until all bound names in t are disjoint from avoid.
+            avoidAll = avoid `S.union` functionalNames t
+            renamed  = renameClashing avoidAll t
+        Right renamed
+
+    -- Rename every binder in t whose name appears in avoid.
+    renameClashing :: S.Set String -> FunctionalTerm -> FunctionalTerm
+    renameClashing avoid t = case t of
+        Lambda x ty body ->
+            let body' = renameClashing avoid body
+                ty'   = renameClashing avoid ty
+            in if x `S.member` avoid
+                 then alphaConvert (Lambda x ty' body') avoid
+                 else Lambda x ty' body'
+        Pi x ty body ->
+            let body' = renameClashing avoid body
+                ty'   = renameClashing avoid ty
+            in if x `S.member` avoid
+                 then alphaConvert (Pi x ty' body') avoid
+                 else Pi x ty' body'
+        Sigma x ty body ->
+            let body' = renameClashing avoid body
+                ty'   = renameClashing avoid ty
+            in if x `S.member` avoid
+                 then alphaConvert (Sigma x ty' body') avoid
+                 else Sigma x ty' body'
+        App t1 t2 -> App (renameClashing avoid t1) (renameClashing avoid t2)
+        Pair m n x ty1 ty2 ->
+            let m'   = renameClashing avoid m
+                n'   = renameClashing avoid n
+                ty1' = renameClashing avoid ty1
+                ty2' = renameClashing avoid ty2
+            in if x `S.member` avoid
+                 then alphaConvert (Pair m' n' x ty1' ty2') avoid
+                 else Pair m' n' x ty1' ty2'
+        Proj1 t' -> Proj1 (renameClashing avoid t')
+        Proj2 t' -> Proj2 (renameClashing avoid t')
+        other    -> other
+
+    go :: S.Set String -> FunctionalTerm -> Either String FunctionalTerm
+    go avoid t = case t of
+        Var name -> case lookupFnTheorem locals modules name of
+            Just fp -> inline avoid fp
+            Nothing -> if "::" `L.isInfixOf` name
+                         then Left ("Could not resolve theorem reference '" ++ name ++ "'")
+                         else Right (Var name)
+        App t1 t2 -> do
+            t1' <- go avoid t1
+            t2' <- go avoid t2
+            Right (App t1' t2')
+        Lambda x ty body -> do
+            ty'   <- go avoid ty
+            body' <- go (S.insert x avoid) body
+            Right (Lambda x ty' body')
+        Pi x ty body -> do
+            ty'   <- go avoid ty
+            body' <- go (S.insert x avoid) body
+            Right (Pi x ty' body')
+        Sigma x ty body -> do
+            ty'   <- go avoid ty
+            body' <- go (S.insert x avoid) body
+            Right (Sigma x ty' body')
+        Pair m n x ty1 ty2 -> do
+            m'   <- go avoid m
+            n'   <- go avoid n
+            ty1' <- go avoid ty1
+            ty2' <- go (S.insert x avoid) ty2
+            Right (Pair m' n' x ty1' ty2')
+        Proj1 t' -> Proj1 <$> go avoid t'
+        Proj2 t' -> Proj2 <$> go avoid t'
+        other    -> Right other
+
 exactTac :: FunctionalTerm -> FunctionalTactic
 exactTac ft = do
+    locals  <- ST.gets fnTheoremRefs
+    modules <- ST.gets loadedFnModuleRefs
+    expanded <- case expandFnTheoremRefs locals modules ft of
+        Right t -> return t
+        Left e  -> tacError e
     seq <- getCurrentSequent
-    let pMaybe = extractProofFromTermUnderCtx (functionalContext seq) ft
+    let pMaybe = extractProofFromTermUnderCtx (functionalContext seq) expanded
     p <- case pMaybe of
         Right (_, res) -> return res
         Left e -> tacError e
@@ -421,14 +533,17 @@ applyFTacticM s t = s >>= (\s -> applyFTactic s t)
 -- DSL for FunctionalTactics.hs
 -- ============================================================
 
--- Start a theorem
-_FTheorem :: FunctionalContext -> FunctionalTerm -> S.Set String -> ProofState
-_FTheorem ctx g reserved =
-    initializeState (initializeProof (FunctionalTacticsSequent
-        { functionalContext = ctx
-        , goalTerm = Nothing
-        , goalType = g
-        })) reserved
+-- Start a theorem. The two trailing maps are theorem-reference snapshots
+-- threaded in from the surrounding session-types prover so that the ECC
+-- `Exact` tactic can resolve embedded theorem references.
+_FTheorem :: FunctionalContext -> FunctionalTerm -> S.Set String -> Map String FunctionalProof -> Map String (Map String FunctionalProof) -> ProofState
+_FTheorem ctx g reserved fnThms loadedFnMods =
+    let st = initializeState (initializeProof (FunctionalTacticsSequent
+                { functionalContext = ctx
+                , goalTerm = Nothing
+                , goalType = g
+                })) reserved
+    in st { fnTheoremRefs = fnThms, loadedFnModuleRefs = loadedFnMods }
 
 _FApply :: Either String ProofState -> FunctionalTactic -> Either String ProofState
 _FApply = applyFTacticM

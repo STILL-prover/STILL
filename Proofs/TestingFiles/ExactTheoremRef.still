@@ -1,0 +1,27 @@
+-- Regression: Exact and ExactPi can reference previously proved theorems.
+
+module ExactTheoremRef imports ExactTheoremRefLib begin
+
+-- Reference an imported ECC theorem inside Exact (module-qualified).
+fn theorem useImported : "Pi A:Type 1. Pi x:A. A"
+apply Lambda
+apply Lambda
+apply Exact "ExactTheoremRefLib::ecclId A x"
+done
+
+-- Reference an imported session theorem inside ExactPi via the call syntax.
+-- The theorem trivUnit proves  |- z:1; calling it with the current goal's
+-- channel name renames its principal channel and inlines its extracted
+-- process (Halt) in place of the call.
+theorem useImportedPi: "1"
+apply ExactPi "ExactTheoremRefLib::trivUnit(z)"
+done
+
+-- Reference an imported session theorem whose extracted process is non-trivial.
+-- unitPair proves  |- z:(1 * 1); inlining it produces the corresponding tensor
+-- output process.
+theorem useImportedPair: "1 * 1"
+apply ExactPi "ExactTheoremRefLib::unitPair(z)"
+done
+
+end

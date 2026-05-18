@@ -39,6 +39,17 @@ braces     = Tok.braces lexer
 commaSep :: Parser a -> Parser [a]
 commaSep = Tok.commaSep lexer
 
+-- A theorem reference name: either a plain identifier or Module::theorem.
+-- Used in spots where we want to allow naming a previously proved theorem
+-- (functional term variables and process call heads). The `::` separator is
+-- chosen so the name space cannot collide with the structural `.` separator
+-- in binders like `Pi x:T.body`, `Sigma x:T.body`, `lambda x:T.body`.
+theoremIdentifier :: Parser String
+theoremIdentifier = do
+    first <- identifier
+    rest  <- optionMaybe (try (Tok.symbol lexer "::" >> identifier))
+    return $ maybe first ((first ++ "::") ++) rest
+
 -- -----------------------------------------------------------------------------
 -- Process Parser
 -- -----------------------------------------------------------------------------
@@ -62,7 +73,7 @@ processTerm = try (parens process)
           <|> parseReplicate
           <|> parsePrint
           <|> parseReadLine
-          <|> parseAction -- Handles Send, Receive, Select, Case
+          <|> try parseAction -- Handles Send, Receive, Select, Case
           <|> try parseCallImplicit -- Fallback for "X(args)" without 'call' keyword if desired
 
 parseHalt :: Parser Process
@@ -117,8 +128,8 @@ parseCall = do
 
 parseCallImplicit :: Parser Process
 parseCallImplicit = do
-    -- X(a,b)
-    x <- identifier
+    -- X(a,b) or Mod.X(a,b)
+    x <- theoremIdentifier
     args <- parens (commaSep identifier)
     return (Call x args)
 
@@ -269,7 +280,7 @@ termAtom = parens fTerm
        <|> try (StringLit <$> singleQuoteString)
        <|> parseBuiltinFn
        <|> parsePairOrProj -- Handles Pairs, Proj1, Proj2, Var
-       <|> (Var <$> identifier)
+       <|> (Var <$> theoremIdentifier)
 
 -- Parses "#name" as BuiltinFn "name"
 parseBuiltinFn :: Parser FunctionalTerm

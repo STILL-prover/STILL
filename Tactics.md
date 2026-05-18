@@ -90,7 +90,7 @@
 
 ### Direct Proof
 
-- `ExactPi "P"` — Close the current goal by directly supplying a process term `P`. The process is type-checked against the current session type goal.
+- `ExactPi "P"` — Close the current goal by directly supplying a process term `P`. The process is type-checked against the current session type goal. `P` may invoke a previously proved session theorem with call-style syntax `Module::theorem(channel)` (or just `theorem(channel)` for a local theorem); the call is replaced by the theorem's extracted process with its principal channel renamed to the supplied `channel`. The referenced theorem must have an empty context — only its principal channel may appear in its sequent.
 
 ### Automation
 
@@ -149,7 +149,7 @@ These tactics operate on the ECC (Embedded Calculus of Constructions) subgoals t
 
 - `Cummulativity "A" j` — Refine the goal type to `A` using at most `j` definitional reduction steps. Used when the goal and expected type are definitionally equal but syntactically different.
 - `Simp [n]` — Simplify the current goal term using up to `n` beta-reduction steps (default: 100).
-- `Exact "t"` — Close the functional goal by supplying term `t` as the proof inhabitant. The term is checked against the goal type.
+- `Exact "t"` — Close the functional goal by supplying term `t` as the proof inhabitant. The term is checked against the goal type. `t` may reference previously proved ECC theorems by writing the theorem's name where a variable would go: `Exact "Lib::id A x"` invokes theorem `id` from imported module `Lib`; `Exact "myLemma x y"` invokes a local theorem. Each reference is replaced by the theorem's extracted term (alpha-converted to avoid capture) before type checking.
 - `ExactKnown` — Auto-close the functional goal if the proof term is already fully determined by prior tactic applications.
 - `FSkip` — Identity tactic for functional proof contexts. Always succeeds and leaves the goal unchanged. (Use `Skip` in session-type contexts.)
 
