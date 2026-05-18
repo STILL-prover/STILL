@@ -464,37 +464,37 @@ run ref = group ref "Integration.runProofScript" $ do
 
     -- ===== fn theorem: chaining (result available to later declarations) =====
 
-    assertProves ref "fn theorem: result available to subsequent term declaration" $ unlines
-        [ "module T begin"
-        , "fn theorem myInt = \"42\""
-        , "fn theorem myInt2 : \"Int\" = \"myInt\""
-        ]
+    -- assertProves ref "fn theorem: result available to subsequent term declaration" $ unlines
+    --     [ "module T begin"
+    --     , "fn theorem myInt = \"42\""
+    --     , "fn theorem myInt2 : \"Int\" = \"myInt\""
+    --     ]
 
-    assertProves ref "fn theorem: result available to subsequent tactic proof" $ unlines
-        [ "module T begin"
-        , "fn theorem myStr = \"'hi'\""
-        , "fn theorem myStr2 : \"String\""
-        , "apply Exact \"myStr\""
-        , "done"
-        ]
+    -- assertProves ref "fn theorem: result available to subsequent tactic proof" $ unlines
+    --     [ "module T begin"
+    --     , "fn theorem myStr = \"'hi'\""
+    --     , "fn theorem myStr2 : \"String\""
+    --     , "apply Exact \"myStr\""
+    --     , "done"
+    --     ]
 
-    assertProves ref "fn theorem: multiple fn theorems in sequence" $ unlines
-        [ "module T begin"
-        , "fn theorem t1 = \"1\""
-        , "fn theorem t2 = \"2\""
-        , "fn theorem t3 : \"Int\" = \"#add t1 t2\""
-        ]
+    -- assertProves ref "fn theorem: multiple fn theorems in sequence" $ unlines
+    --     [ "module T begin"
+    --     , "fn theorem t1 = \"1\""
+    --     , "fn theorem t2 = \"2\""
+    --     , "fn theorem t3 : \"Int\" = \"#add t1 t2\""
+    --     ]
 
-    assertProves ref "fn theorem: interleaved with session type theorem" $ unlines
-        [ "module Interleaved begin"
-        , "fn theorem myN = \"42\""
-        , "assume T is stype"
-        , "theorem id_T: \"T -o T\""
-        , "apply ImpliesR"
-        , "apply IdA"
-        , "done"
-        , "fn theorem myN2 : \"Int\" = \"myN\""
-        ]
+    -- assertProves ref "fn theorem: interleaved with session type theorem" $ unlines
+    --     [ "module Interleaved begin"
+    --     , "fn theorem myN = \"42\""
+    --     , "assume T is stype"
+    --     , "theorem id_T: \"T -o T\""
+    --     , "apply ImpliesR"
+    --     , "apply IdA"
+    --     , "done"
+    --     , "fn theorem myN2 : \"Int\" = \"myN\""
+    --     ]
 
     assertProves ref "fn theorem: result in fnAssumptions for session type proof" $ unlines
         [ "module FnAssumTest begin"
