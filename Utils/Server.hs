@@ -5,9 +5,10 @@ import Data.Map qualified as Map
 import Data.Set qualified as S
 import ECC.Kernel (emptyContext)
 import Parser.CmdParsers (Command, CommandSpan (CommandSpan, spanRange, spanValue), Range (Range), evalCommand, evalCommandM, parseFileSpans)
-import Control.Monad (foldM)
+import Control.Monad (filterM, foldM)
 import SessionTypes.Kernel
 import SessionTypes.Tactics (ProofState (..), allSubgoalNames)
+import System.FilePath (takeDirectory, (</>))
 import System.Directory (doesFileExist)
 import System.IO (hPutStrLn, stderr)
 import Text.Parsec (sourceColumn, sourceLine)
@@ -48,31 +49,35 @@ emptyState =
 readFileSafe :: FilePath -> IO String
 readFileSafe path = catch (readFile path) (\e -> let _ = (e :: IOException) in return "")
 
-loadImports :: [String] -> ProofState -> IO ProofState
-loadImports [] s = pure s
-loadImports (m : ms) s =
+-- | Load the given imported modules into the proof state. Each module @m@ is
+-- looked up as @m.still@ first in @baseDir@ (the directory of the importing
+-- script) and then in the current working directory. Transitive imports are
+-- resolved relative to the directory of the file that imports them.
+loadImports :: FilePath -> [String] -> ProofState -> IO ProofState
+loadImports _ [] s = pure s
+loadImports baseDir (m : ms) s =
   if Map.member m (loadedModules s)
-    then loadImports ms s
+    then loadImports baseDir ms s
     else do
-      let filename = m ++ ".still"
-      exists <- doesFileExist filename
-      if not exists
-        then do
-          hPutStrLn stderr $ "[Warning] Import not found: " ++ filename
-          loadImports ms s
-        else do
+      let candidates = [baseDir </> (m ++ ".still"), m ++ ".still"]
+      found <- filterM doesFileExist candidates
+      case found of
+        [] -> do
+          hPutStrLn stderr $ "[Warning] Import not found: " ++ (m ++ ".still") ++ " (searched " ++ baseDir ++ " and the current directory)"
+          loadImports baseDir ms s
+        (filename : _) -> do
           content <- readFileSafe filename
           case parseFileSpans filename content of
             Left err -> do
               hPutStrLn stderr $ "[Error] Failed to parse import " ++ m ++ ": " ++ show err
-              loadImports ms s
+              loadImports baseDir ms s
             Right (_, subImports, subCmds) -> do
-              s' <- loadImports subImports s
+              s' <- loadImports (takeDirectory filename) subImports s
               let modState0 = s' {subgoals = Map.empty, theorems = Map.empty, curModuleName = m, openGoalStack = []}
                   modResult  = foldl (\st sp -> evalCommand (spanValue sp) st) modState0 subCmds
                   newLoaded  = Map.insert m (theorems modResult) (loadedModules s')
                   newFnLoaded = Map.insert m (fnTheorems modResult) (loadedFnModules s')
-              loadImports ms (s' {subgoals = Map.empty, theorems = Map.empty, openGoalStack = [], loadedModules = newLoaded, loadedFnModules = newFnLoaded, fnTheorems = Map.empty })
+              loadImports baseDir ms (s' {subgoals = Map.empty, theorems = Map.empty, openGoalStack = [], loadedModules = newLoaded, loadedFnModules = newFnLoaded, fnTheorems = Map.empty })
 
 parseAndLoad
   :: FilePath -> String
@@ -82,7 +87,7 @@ parseAndLoad fname content =
     Left err ->
       return . Left $ "--------------------------------\nParse Error:\n" ++ show err
     Right (moduleName, imports, cmdSpans) -> do
-      stateWithImports <- loadImports imports emptyState
+      stateWithImports <- loadImports (takeDirectory fname) imports emptyState
       let s0 = stateWithImports {curModuleName = moduleName}
       return $ Right (moduleName, imports, cmdSpans, s0)
 

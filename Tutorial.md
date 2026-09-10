@@ -739,13 +739,16 @@ Session type: `($T) * A`
 Evaluates `M : T`, prints it to stdout, then continues as `P` providing `A`.
 
 ```
-module Hello begin
+module HelloWorld begin
 
 process Hello : "($String) * 1" = "print['Hello, World!'].stop"
 run Hello
 ```
 
 Output: `Hello, World!`
+
+Module names and theorem or process names share one namespace, so the module
+cannot also be called `Hello`.
 
 The type `($String) * 1` reads: "send a string value, then terminate."
 
@@ -756,7 +759,7 @@ Session type: `$String -o A`
 Reads a line from stdin, binds it as `x : String`, then continues as `P`.
 
 ```
-module Echo begin
+module EchoDemo begin
 
 process Echo : "$String -o ($String) * 1" = "readline(x).print[x].stop"
 run Echo
@@ -812,7 +815,7 @@ The process body `P` is **parsed and type-checked** against session type `A`. If
 Executes the process extracted from a theorem:
 
 ```
-module Demo begin
+module HelloWorld begin
 
 process Hello : "($String) * 1" = "print['Hello, World!'].stop"
 run Hello
@@ -826,9 +829,10 @@ module Demo begin
 theorem id_str: "$String -o ($String) * 1"
 apply ImpliesR
 apply FTermLA
+apply TensorR
+apply UnitR
 apply FTermR
 apply VarA
-apply IdA
 done
 
 process echo : "$String -o ($String) * 1" = "readline(x).print[x].stop"

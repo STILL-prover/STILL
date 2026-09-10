@@ -158,7 +158,7 @@ getDiagnostics st et s = DiagnosticInfo {
 
 startRepl :: [String] -> IO ()
 startRepl fnames = do
-    initState <- loadImports (dropExtensions <$> fnames) emptyState
+    initState <- loadImports "." (dropExtensions <$> fnames) emptyState
     putStrLn "--- STILL Interactive Mode (Type :q to quit) ---"
     replLoop initState
 
@@ -237,8 +237,8 @@ data Request = ReqPing
     | ReqStateAt {
         reqPath :: FilePath,
         reqText :: String,
-        reqLine :: Int, -- VSCode is 0-based
-        reqCharacter :: Int -- VSCode is 0-based
+        reqLine :: Int, -- 0-based
+        reqCharacter :: Int -- 0-based
     }
     deriving (Read, Show)
 

@@ -685,6 +685,6 @@ run ref = group ref "Integration.runProofScript" $ do
         ]
 
     -- File-based regression: the dedicated test file exercises module-qualified
-    -- references for both Exact and ExactPi. Requires ExactTheoremRefLib.still
-    -- to exist alongside the script being run.
+    -- references for both Exact and ExactPi. Imports ExactTheoremRefLib.still,
+    -- which is resolved relative to the script's own directory.
     runFileTest ref "Proofs/TestingFiles/ExactTheoremRef.still"

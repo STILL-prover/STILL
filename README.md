@@ -76,7 +76,7 @@ The test binary exits with code 0 if all tests pass, or non-zero if any fail. Te
 1. Use ghcup or another method to install GHC 9.6 or later (https://www.haskell.org/ghcup/). Tested with GHC 9.6.7 (Docker image) and 9.10.3.
 2. Run ```ghc -threaded -O2 Main.hs -o still``` in this folder. You might want
    to run ```ghc -threaded -O2 Main.hs -o still-new``` if the still executable
-   is in use due to the extension or mcp server running.
+   is in use, for example by a running MCP server.
 3. Run the prover with ```./still``` (still.exe on Windows).
   - See above for the different modes.
 
@@ -85,7 +85,7 @@ The test binary exits with code 0 if all tests pass, or non-zero if any fail. Te
 1. Install docker
 2. Navigate to the code repository
 3. Run ```docker build --tag still .```
-4. To run the prover ```docker run still```
+4. To run the benchmarks ```docker run still```
 
 # Additional Information
 
