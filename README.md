@@ -73,7 +73,7 @@ The test binary exits with code 0 if all tests pass, or non-zero if any fail. Te
 
 # Compiling
 
-1. Use ghcup or another method to install ghc 9.6.7 (https://www.haskell.org/ghcup/)
+1. Use ghcup or another method to install GHC 9.6 or later (https://www.haskell.org/ghcup/). Tested with GHC 9.6.7 (Docker image) and 9.10.3.
 2. Run ```ghc -threaded -O2 Main.hs -o still``` in this folder. You might want
    to run ```ghc -threaded -O2 Main.hs -o still-new``` if the still executable
    is in use due to the extension or mcp server running.
@@ -91,13 +91,13 @@ The test binary exits with code 0 if all tests pass, or non-zero if any fail. Te
 
 Benchmarking commands:
 
-- ```./still benchmarking ./Proofs/*.still```
-- ```./still benchmarking ./Proofs/StressTestTensors/*.still```
-- ```./still benchmarking ./Proofs/AdditionalProofs/*.still```
+- ```./still benchmark ./Proofs/*.still```
+- ```./still benchmark ./Proofs/StressTestTensors/*.still```
+- ```./still benchmark ./Proofs/AdditionalProofs/*.still```
 
 If your system doesn't support file globbing, then manually enter the file names like so:
 
-```./still benchmarking ./Proofs/Auction.still ./Proofs/Bank.still ./Proofs/CloudServer.still ./Proofs/Commutative.still ./Proofs/Counter.still ./Proofs/LargeMul.still```
+```./still benchmark ./Proofs/Auction.still ./Proofs/Bank.still ./Proofs/CloudServer.still ./Proofs/CounterSession.still ./Proofs/LargeMul.still```
 
 The ./Proofs/AdditionalProofs directory holds some other interesting test scripts. The ./Proofs/StressTestTensors directory holds the files for stress testing the resource hiding algorithm with large tensor proofs.
 

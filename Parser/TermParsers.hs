@@ -373,9 +373,9 @@ proposition :: Parser Proposition
 proposition = Ex.buildExpressionParser table propAtom
   where
     table = [ [Ex.Prefix (reservedOp "!" >> return Replication)]
-            , [Ex.Infix (reservedOp "*" >> return Tensor) Ex.AssocLeft]
-            , [Ex.Infix (reservedOp "&" >> return With) Ex.AssocLeft]
-            , [Ex.Infix (reservedOp "+" >> return Plus) Ex.AssocLeft]
+            , [Ex.Infix (reservedOp "*" >> return Tensor) Ex.AssocRight]
+            , [Ex.Infix (reservedOp "&" >> return With) Ex.AssocRight]
+            , [Ex.Infix (reservedOp "+" >> return Plus) Ex.AssocRight]
             , [Ex.Infix (reservedOp "-o" >> return Implication) Ex.AssocRight]
             ]
 

@@ -23,6 +23,12 @@ M,N,S,T ::= Pi x : M . N | Sigma x : M . N | lambda x : M . N
 A,B ::= 1 | $M | A -o B | A * B | A & B | A + B
     | forall x : M . A | exists x : M . A | forall x : stype . A | exists x : stype . A
     | nu x . A | !A | x
+-- Precedence, tightest first: !  then  *  then  &  then  +  then  -o.
+-- Every binary connective is right-associative, so
+--   A * B * C   = A * (B * C)       (send A, then send B, then continue as C)
+--   A & B & C   = A & (B & C)
+--   A + B & C * D = A + (B & (C * D))
+-- Quantifiers and nu extend as far to the right as possible.
 
 -- Commands
 C ::= module x I begin | module x begin

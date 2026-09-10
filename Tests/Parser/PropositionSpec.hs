@@ -77,11 +77,40 @@ run ref = group ref "Parser.proposition" $ do
         Right p -> assert ref "a -o b -o c is right-associative"
             (case p of Implication _ (Implication _ _) -> True; _ -> False)
 
-    -- * is left-associative: a * b * c = (a * b) * c
+    -- * is right-associative: a * b * c = a * (b * c)
     case parseProp "a * b * c" of
-        Left e  -> assert ref "* left-assoc parses" False
-        Right p -> assert ref "a * b * c is left-associative"
+        Left e  -> assert ref "* right-assoc parses" False
+        Right p -> assert ref "a * b * c is right-associative"
+            (case p of Tensor _ (Tensor _ _) -> True; _ -> False)
+
+    -- & is right-associative: a & b & c = a & (b & c)
+    case parseProp "a & b & c" of
+        Left e  -> assert ref "& right-assoc parses" False
+        Right p -> assert ref "a & b & c is right-associative"
+            (case p of With _ (With _ _) -> True; _ -> False)
+
+    -- + is right-associative: a + b + c = a + (b + c)
+    case parseProp "a + b + c" of
+        Left e  -> assert ref "+ right-assoc parses" False
+        Right p -> assert ref "a + b + c is right-associative"
+            (case p of Plus _ (Plus _ _) -> True; _ -> False)
+
+    -- Explicit parentheses override associativity
+    case parseProp "(a * b) * c" of
+        Left e  -> assert ref "(a * b) * c parses" False
+        Right p -> assert ref "(a * b) * c keeps left nesting"
             (case p of Tensor (Tensor _ _) _ -> True; _ -> False)
+
+    -- Precedence: * binds tighter than &, which binds tighter than +
+    case parseProp "a + b & c * d" of
+        Left e  -> assert ref "a + b & c * d parses" False
+        Right p -> assert ref "a + b & c * d = a + (b & (c * d))"
+            (case p of Plus _ (With _ (Tensor _ _)) -> True; _ -> False)
+
+    case parseProp "a * b & c + d" of
+        Left e  -> assert ref "a * b & c + d parses" False
+        Right p -> assert ref "a * b & c + d = ((a * b) & c) + d"
+            (case p of Plus (With (Tensor _ _) _) _ -> True; _ -> False)
 
     -- ! binds tightest (prefix): !a * b = (!a) * b
     case parseProp "!a * b" of
@@ -100,6 +129,50 @@ run ref = group ref "Parser.proposition" $ do
         Left e  -> assert ref "nu x. x produces TyNu" False
         Right p -> assert ref "nu x. x produces TyNu"
             (case p of TyNu "x" (TyVar "x") -> True; _ -> False)
+
+    -- ===== Printer / parser agreement =====
+    -- propToS must print exactly the parentheses the parser needs: the
+    -- binary connectives are right-associative and bind in the order
+    -- ! > * > & > + > -o.
+    let printsAs input expected = case parseProp input of
+            Left e  -> assert ref ("printsAs: " ++ input ++ " parses") False
+            Right p -> assertEqual ref ("propToS " ++ show input) expected (propToS p)
+    printsAs "a & (b & c)"   "a & b & c"
+    printsAs "(a & b) & c"   "(a & b) & c"
+    printsAs "a * (b * c)"   "a ⊗ b ⊗ c"
+    printsAs "(a * b) * c"   "(a ⊗ b) ⊗ c"
+    printsAs "a + (b + c)"   "a ⊕ b ⊕ c"
+    printsAs "(a + b) + c"   "(a ⊕ b) ⊕ c"
+    printsAs "a -o b -o c"   "a ⊸ b ⊸ c"
+    printsAs "(a -o b) -o c" "(a ⊸ b) ⊸ c"
+    printsAs "a & (b + c)"   "a & (b ⊕ c)"
+    printsAs "(a & b) + c"   "a & b ⊕ c"
+    printsAs "a * (b & c)"   "a ⊗ (b & c)"
+    printsAs "(a * b) & c"   "a ⊗ b & c"
+    printsAs "a + (b * c)"   "a ⊕ b ⊗ c"
+    printsAs "(a + b) * c"   "(a ⊕ b) ⊗ c"
+    printsAs "!(a * b)"      "!(a ⊗ b)"
+    printsAs "!a * b"        "!a ⊗ b"
+    printsAs "(a -o b) * c"  "(a ⊸ b) ⊗ c"
+    printsAs "a * b -o c"    "a ⊗ b ⊸ c"
+
+    -- Round trip: parse . print . parse is the identity (modulo the
+    -- Unicode connectives, which the parser does not accept).
+    let deUnicode = concatMap (\ch -> case ch of
+            '⊗' -> "*"; '⊕' -> "+"; '⊸' -> "-o"; c -> [c])
+        roundTrips input = case parseProp input of
+            Left e   -> assert ref ("round trip: " ++ input ++ " parses") False
+            Right p  -> case parseProp (deUnicode (propToS p)) of
+                Left e   -> assert ref ("round trip: printed form of " ++ input ++ " re-parses") False
+                Right p' -> assertEqual ref ("round trip " ++ show input) p p'
+    mapM_ roundTrips
+        [ "a & (b & c)", "(a & b) & c", "a * (b * c)", "(a * b) * c"
+        , "a + (b + c)", "(a + b) + c", "a -o b -o c", "(a -o b) -o c"
+        , "a & (b + c)", "(a & b) + c", "a * (b & c)", "(a * b) & c"
+        , "a + (b * c)", "(a + b) * c", "!(a * b)", "!a * b"
+        , "(a -o b) * c", "a * b -o c", "!(a & b) -o (a + b) * c & d"
+        , "(a * b & c) + (d -o e * f) -o g"
+        ]
 
     -- Negative: empty string
     assertLeft ref "parse empty string fails" (parseProp "")

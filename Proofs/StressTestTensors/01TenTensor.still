@@ -1,5 +1,17 @@
 module TenTensor begin
 
+assume a is stype
+assume b is stype
+assume c is stype
+assume d is stype
+assume e is stype
+assume f is stype
+assume g is stype
+assume h is stype
+assume i is stype
+assume j is stype
+assume o is stype
+
 theorem ten: "(a * b * c * d * e * f * g * h * i * j ) -o ( j * i * h * g * f * e * d * c * b * a )"
 apply ImpliesR; TensorLA+; (TensorR; (IdA <|> Skip))+
 done

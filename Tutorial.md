@@ -168,9 +168,9 @@ module Example begin
 theorem with_comm: "A & B -o B & A"
 apply ImpliesR
 apply WithR
-apply WithL2A
-apply IdA
 apply WithL1A
+apply IdA
+apply WithL2A
 apply IdA
 done
 ```
@@ -178,9 +178,11 @@ done
 **Step by step:**
 
 1. `ImpliesR` — Assumption `a : A & B`; goal `⊢ z : B & A`.
-2. `WithR` — Two subgoals (same context): prove `⊢ z : B`, then prove `⊢ z : A`.
-3. `WithL2A` — Selects right branch of `a : A & B`, giving `a' : B`. Closes first subgoal with `IdA`.
-4. `WithL1A` — Selects left branch of `a : A & B`, giving `a' : A`. Closes second subgoal with `IdA`.
+2. `WithR` — Two subgoals (same context), **right branch first**: prove `⊢ z : A`, then prove `⊢ z : B`.
+3. `WithL1A` — Selects left branch of `a : A & B`, giving `a' : A`. Closes first subgoal with `IdA`.
+4. `WithL2A` — Selects right branch of `a : A & B`, giving `a' : B`. Closes second subgoal with `IdA`.
+
+Branching tactics (`WithR`, `PlusL`, `TensorR`, `ImpliesL`, `Cut`) all present the right-hand component or continuation first; see "Subgoal Ordering" in Tactics.md.
 
 ---
 
@@ -377,18 +379,18 @@ You may reuse the same identifier for the parameter and its initial argument —
 
 A common coinductive pattern is to **consume the current parameter channel and recurse on a freshly cut one**. This mirrors the network-spawning constructions from Toninho et al. (2014) and lets a corec produce an unbounded sequence of new processes, each created on demand.
 
-Suppose `Counter = nu X. ($Int * X) & X & 1` (offers `val`, `inc`, `halt`). A coordinator of type `Counter -o Counter` that, on `inc`, spawns a fresh child and forgets the old one:
+Suppose `Counter = nu X. ($Int * X) & X & 1` (offers `val`, `inc`, `halt`). Since `&` is right-associative this is `($Int * X) & (X & 1)`, and because `WithR` opens the right branch first the branches are proved in the order `halt`, `inc`, `val`. A coordinator of type `Counter -o Counter` that, on `inc`, spawns a fresh child and forgets the old one:
 
 ```
 stype Counter = "nu X. ($Int * X) & X & 1"
 
 theorem epsilon: "Counter"
 apply NuR S () ()
-apply WithR
-apply UnitR
-apply WithR
-apply TyVar S ()
-apply TensorR
+apply WithR                 -- (X & 1) | val
+apply WithR                 -- halt | inc
+apply UnitR                 -- halt
+apply TyVar S ()            -- inc
+apply TensorR               -- val: X | $Int
 apply TyVar S ()
 apply FTermR
 apply Exact "0"
@@ -397,19 +399,20 @@ done
 theorem coord: "Counter -o Counter"
 apply ImpliesR              -- incoming child bound to channel 'a'
 apply NuR S (a) (a)         -- parameterize on the child channel 'a'
-apply WithR                 -- halt branch | (val | inc)
+apply WithR                 -- (inc & halt) | val
+apply WithR                 -- halt | inc
 apply NuLA                  -- halt: unfold 'a'
+apply WithL2A               -- select 'X & 1' from 'a'
 apply WithL2A               -- select '1' from 'a'
 apply UnitLA                -- consume 'a'
 apply UnitR
-apply WithR                 -- val | inc
 apply CutTheorem epsilon    -- inc: cut a fresh child 'b'
 apply NuLA                  -- unfold the old child 'a'
+apply WithL2A               -- select 'X & 1' on 'a'
 apply WithL2A               -- select halt on 'a'
 apply UnitLA                -- consume 'a'
 apply TyVar S (b)           -- recurse with the fresh child 'b'
 apply NuLA                  -- val branch: report the count
-apply WithL1A
 apply WithL1A
 apply TensorLA
 apply TensorR

@@ -96,21 +96,26 @@ instance Eq Proposition where
 propToS :: Proposition -> String
 propToS = go 0
   where
-    -- Precedence levels (bigger = tighter):
+    -- Precedence levels (bigger = tighter). These must agree with the
+    -- operator table in Parser.TermParsers.proposition: ! binds tightest,
+    -- then ⊗, then &, then ⊕, then ⊸. All binary operators are
+    -- right-associative, so the right operand is printed at the operator's
+    -- own precedence and the left operand one level tighter.
     -- 0: top level
-    -- 1: implication
-    -- 2: additive (&, ⊕)
-    -- 3: multiplicative (⊗)
-    -- 4: atomic / prefix
+    -- 1: implication (⊸)
+    -- 2: plus (⊕)
+    -- 3: with (&)
+    -- 4: tensor (⊗)
+    -- 5: atomic / prefix (!)
         go :: Int -> Proposition -> String
         go _ Unit = "1"
         go _ (Lift t) = "$" ++ ftToS t
         go p (Replication a) =
-            parensIf (p > 4) $ "!" ++ go 4 a
+            parensIf (p > 5) $ "!" ++ go 5 a
         go p (Tensor a b) =
-            infixOp p 3 " ⊗ " a b
+            infixOp p 4 " ⊗ " a b
         go p (With a b) =
-            infixOp p 2 " & " a b
+            infixOp p 3 " & " a b
         go p (Plus a b) =
             infixOp p 2 " ⊕ " a b
         go p (Implication a b) =

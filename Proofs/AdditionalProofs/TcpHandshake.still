@@ -1,0 +1,136 @@
+-- TCP three-way handshake (RFC 793, section 3.4) as a dependent session type.
+--
+--   1. C -> S : SYN      (seq = x)
+--   2. S -> C : SYN-ACK  (seq = y, ack = x + 1)      or   RST (ack = x + 1)
+--   3. C -> S : ACK      (ack = y + 1)
+--
+-- Sequence numbers are Int and segment types are indexed by the numbers they
+-- carry, so the acknowledgement arithmetic is checked by the type checker:
+-- a server that replies with ack = x instead of ack = x + 1 does not type check.
+module TcpHandshake begin
+
+-- Segment types, indexed by the sequence / acknowledgement numbers they carry.
+assume syn    is "Pi seq:Int. Type 1"
+assume synack is "Pi seq:Int. Pi ack:Int. Type 1"
+assume ackSeg is "Pi ack:Int. Type 1"
+assume rst    is "Pi ack:Int. Type 1"
+
+-- Segment constructors.
+assume mkSyn    is "Pi seq:Int. syn seq"
+assume mkSynAck is "Pi seq:Int. Pi ack:Int. synack seq ack"
+assume mkAck    is "Pi ack:Int. ackSeg ack"
+assume mkRst    is "Pi ack:Int. rst ack"
+
+-- Client (active open): choose an initial sequence number x, send SYN x, then
+-- offer both continuations the server may pick (external choice &):
+--   * SYN-ACK carrying ack = x + 1 for some server sequence number y,
+--     answered with ACK y + 1; or
+--   * RST carrying ack = x + 1, after which the client gives up.
+stype clientView =
+  "exists x:Int.
+     $syn x *
+     ((forall y:Int. $synack y (#add x 1) -o ($ackSeg (#add y 1) * 1))
+      & ($rst (#add x 1) -o 1))"
+
+-- Server (passive open): receive SYN x, then decide (internal choice +) to
+-- either accept, choosing y and sending SYN-ACK y (x + 1) and waiting for
+-- ACK y + 1, or refuse with RST (x + 1).
+stype serverView =
+  "forall x:Int.
+     $syn x -o
+     ((exists y:Int. $synack y (#add x 1) * ($ackSeg (#add y 1) -o 1))
+      + $rst (#add x 1))"
+
+-- A client implementation with initial sequence number 100.
+theorem client: "clientView"
+apply ExistsR
+apply Exact "100"
+apply TensorR
+defer
+apply FTermR
+apply Exact "mkSyn 100"
+apply WithR
+-- refused (right branch is presented first): receive RST (100 + 1) and stop
+apply ImpliesR
+apply FTermLA
+apply UnitR
+-- accepted: receive SYN-ACK y (100 + 1), reply ACK (y + 1)
+apply ForallR
+apply ImpliesR
+apply FTermLA
+apply TensorR
+apply UnitR
+apply FTermR
+apply Exact "mkAck (#add y 1)"
+done
+
+-- A server implementation that accepts every SYN with initial sequence number 200.
+theorem server: "serverView"
+apply Intros
+apply FTermLA
+apply PlusR1
+apply ExistsR
+apply Exact "200"
+apply TensorR
+apply ImpliesR
+apply FTermLA
+apply UnitR
+apply FTermR
+apply Exact "mkSynAck 200 (#add x 1)"
+done
+
+-- A server implementation that refuses every connection.
+theorem serverRefusing: "serverView"
+apply Intros
+apply FTermLA
+apply PlusR2
+apply FTermR
+apply Exact "mkRst (#add x 1)"
+done
+
+-- Running an arbitrary client against an arbitrary server: whichever reply
+-- the server chooses, the client answers it and the composition terminates.
+-- Each ImpliesL opens the continuation first and queues the "deliver this
+-- segment" obligation behind it; those obligations are discharged with IdA
+-- once the continuation is closed.
+theorem handshake consumes "clientView" "serverView": "1"
+-- a : clientView, b : serverView
+apply ExistsL a
+apply TensorL a
+-- c : $syn x,  a : accept & refuse
+apply ForallL b
+apply Exact "x"
+apply ImpliesL b
+defer
+apply IdA
+-- 1. SYN x delivered to the server, which now chooses (PlusL opens the
+--    right branch, RST, first).
+apply PlusL b
+-- refused: b : $rst (x + 1). The client takes its RST branch.
+apply WithL2A
+apply ImpliesL a
+apply UnitLA+
+apply UnitR
+apply IdA
+-- accepted: b : exists y. $synack y (x + 1) * ($ackSeg (y + 1) -o 1)
+apply ExistsL b
+apply TensorL b
+apply WithL1A
+apply ForallL a
+apply Exact "y"
+apply ImpliesL a
+-- 2. SYN-ACK y (x + 1) delivered to the client, which answers ACK (y + 1).
+apply TensorL a
+apply ImpliesL b
+-- 3. ACK (y + 1) delivered to the server; both sides finish.
+apply UnitLA+
+apply UnitR
+apply IdA
+apply IdA
+done
+
+print_theorems
+
+extract client
+extract server
+extract handshake

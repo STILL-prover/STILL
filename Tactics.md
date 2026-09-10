@@ -16,7 +16,7 @@
 ### Implication (`-o`)
 
 - `ImpliesR` — Refine an implication goal `A -o B`. Adds `A` as a fresh linear assumption; goal becomes `B`.
-- `ImpliesL x` — Eliminate an implication assumption `A -o B` named `x`. Creates two subgoals: prove `A`, then continue with `B` as a linear assumption.
+- `ImpliesL x` — Eliminate an implication assumption `A -o B` named `x`. Creates two subgoals, **continuation first**: the first subgoal continues the original goal with `B` replacing `x` in the linear context; the second subgoal proves `A`. The linear context is split lazily between the two (undecided resources are shown in red until a tactic commits them). The usual idiom for delivering an existing channel is `ImpliesL x; defer; IdA`, or, when other subgoals are pending, finish the continuation first and then close the queued `A` subgoal with `IdA`.
 - `ImpliesLA` — Auto-apply `ImpliesL` to the first implication (`-o`) in the linear context.
 
 ### Unit (`1`)
@@ -34,13 +34,13 @@
 
 ### Tensor (`*`)
 
-- `TensorR` — Refine a tensor goal `A * B`. Creates two subgoals with a multiplicative split of the linear resources: one to prove `A`, one to prove `B`.
+- `TensorR` — Refine a tensor goal `A * B`. Creates two subgoals with a multiplicative split of the linear resources, **right component first**: the first subgoal proves `B` on the original channel, the second proves `A` on a fresh channel. For example `$M * 1` is closed with `TensorR; UnitR; FTermR; Exact "m"`.
 - `TensorL x` — Eliminate a tensor assumption `A * B` named `x`. Both `A` and `B` become separate linear assumptions.
 - `TensorLA` — Auto-apply `TensorL` to the first tensor assumption (`*`) in the linear context.
 
 ### With (`&`)
 
-- `WithR` — Refine a with goal `A & B`. Creates two subgoals sharing the same context (additive split): the **first subgoal proves `A`** (left) and the **second subgoal proves `B`** (right), ordered left-to-right matching the goal proposition. Each branch receives its own independent copy of the entire linear context; resources are not split between branches.
+- `WithR` — Refine a with goal `A & B`. Creates two subgoals sharing the same context (additive split), **right branch first**: the first subgoal proves `B` and the second proves `A`. For a nested `A & B & C` (parsed `A & (B & C)`) the branches are therefore presented as `C`, then `B`, then `A`. Each branch receives its own independent copy of the entire linear context; resources are not split between branches.
 - `WithL1 x` — Eliminate a with assumption `A & B` named `x`, selecting the left branch `A`. **Consumes** the assumption entirely; the right branch `B` is discarded.
 - `WithL1A` — Auto-apply `WithL1` to the first with assumption (`&`) in the linear context. **Consumes** the assumption, keeping only the left (`A`) branch. Note: unlike `WithR` (which copies the context additively), `WithL` eliminates the assumption — only one branch is chosen.
 - `WithL2 x` — Eliminate a with assumption `A & B` named `x`, selecting the right branch `B`. **Consumes** the assumption entirely; the left branch `A` is discarded.
@@ -50,7 +50,7 @@
 
 - `PlusR1` — Refine a plus goal `A + B`, choosing the left injection `A`.
 - `PlusR2` — Refine a plus goal `A + B`, choosing the right injection `B`.
-- `PlusL x` — Eliminate a plus assumption `A + B` named `x`. Creates two subgoals: one with `A` assumed, one with `B` assumed.
+- `PlusL x` — Eliminate a plus assumption `A + B` named `x`. Creates two subgoals, **right branch first**: the first subgoal has `x : B` in the linear context, the second has `x : A`.
 - `PlusLA` — Auto-apply `PlusL` to the first plus assumption (`+`) in the linear context.
 
 ### First-Order Quantification
@@ -79,8 +79,8 @@
 
 ### Cut
 
-- `Cut "A"` — Cut the session type `A`. Two subgoals: prove `A`, then continue with `A` as a linear assumption.
-- `CutRepl "A"` — Cut the replicating type `!A`. Two subgoals: prove `A`, then continue with `A` in the unrestricted context.
+- `Cut "A"` — Cut the session type `A`. Two subgoals, **continuation first**: the first subgoal is the original goal with a fresh linear assumption of type `A`; the second subgoal proves `A` on the fresh channel.
+- `CutRepl "A"` — Cut the replicating type `!A`. Two subgoals, **continuation first**: the first subgoal is the original goal with `A` added to the unrestricted context; the second subgoal proves `A` with an empty linear context.
 - `CutTheorem t` — Cut a previously proven theorem named `t`. Its session type becomes a linear assumption in the current goal.
 - `CutProc n` — Cut a process assumption `n` declared with `assume process` into the current proof.
 
@@ -95,6 +95,24 @@
 ### Automation
 
 - `Intros` — Repeatedly apply all available non-branching introduction rules (`ImpliesR`, `ForallR`, `BangR`, etc.) until none apply.
+
+---
+
+## Subgoal Ordering
+
+`apply` always acts on the first open subgoal; `defer` moves it to the end of the queue. Tactics that create more than one subgoal present them in the following order:
+
+| Tactic | First subgoal | Second subgoal |
+|--------|---------------|----------------|
+| `TensorR` on `A * B` | prove `B` (continuation, original channel) | prove `A` (fresh channel) |
+| `WithR` on `A & B` | prove `B` | prove `A` |
+| `PlusL x` on `x : A + B` | continue with `x : B` | continue with `x : A` |
+| `ImpliesL x` on `x : A -o B` | continue with `x : B` | prove `A` |
+| `Cut "A"` | continue with a fresh assumption `A` | prove `A` |
+| `CutRepl "A"` | continue with `A` unrestricted | prove `A` |
+| `ForallL x`, `ExistsR` | ECC subgoal for the witness term | instantiated session goal |
+
+In short: the right-hand component or branch comes first, and continuations come before the obligations they depend on. Because `defer` sends the current subgoal to the very end of the queue, prefer closing a continuation completely and then discharging the queued obligations (typically with `IdA`) when several branches are open at once; see `Proofs/AdditionalProofs/TcpHandshake.still` for an example.
 
 ---
 

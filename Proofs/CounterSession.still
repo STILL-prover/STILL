@@ -9,9 +9,11 @@ stype CounterT = "forall int:Type 1.forall compute:(Pi m:int.Pi b:int.int).foral
 theorem epsilon: "epsilonT"
 apply Intros
 apply NuR X () ()
+-- & is right-associative: the goal is val & (inc & halt) and WithR opens
+-- the right branch first, so the order is halt, inc, val.
+apply WithR
 apply WithR
 apply UnitR
-apply WithR
 apply PlusR1
 apply TyVar X ()
 apply ForallR
@@ -26,21 +28,24 @@ theorem Node: "NodeT"
 apply Intros
 apply NuR N (x) (a)
 apply WithR
+apply WithR
+-- halt
 apply NuLA
+apply WithL2A
 apply WithL2A
 apply UnitLA
 apply UnitR
-apply WithR
+-- inc
 apply NuLA
-apply WithL1A
 apply WithL2A
+apply WithL1A
 apply PlusLA
 apply PlusR2
 apply TyVar N (a)
 apply PlusR1
 apply TyVar N (a)
+-- val
 apply NuLA
-apply WithL1A
 apply WithL1A
 apply ForallR
 apply ForallLA
@@ -61,14 +66,17 @@ apply ForallLA
 apply Exact "int"
 apply NuR COORD (x) (a)
 apply WithR
+apply WithR
+-- halt
 apply NuLA
+apply WithL2A
 apply WithL2A
 apply UnitLA
 apply UnitR
-apply WithR
+-- inc
 apply NuLA
-apply WithL1A
 apply WithL2A
+apply WithL1A
 apply PlusLA
 apply TyVar COORD (a)
 apply CutTheorem Node
@@ -83,8 +91,8 @@ defer
 apply IdA
 defer
 apply TyVar COORD (c)
+-- val
 apply NuLA
-apply WithL1A
 apply WithL1A
 apply ForallLA
 apply Exact "zero"
@@ -94,4 +102,4 @@ apply TyVar COORD (a)
 done
 
 extract Counter
--- (nu a) (a(int).(corec X().a.case(inl: a.case(inl: a(m).a[m].X(), inr: a.inl;X() ), inr: 0 )) () | z(int).z(compute).z(zero).z(one).a[int].(corec COORD(x).z.case(inl: z.case(inl: x.inl;x.inl;x[zero].x(n).COORD(x), inr: x.inl;x.inr;x.case(inl: (nu c) (c(int).c(b).c(compute).c(a).(corec N(x).c.case(inl: c.case(inl: x.inl;x.inl;c(m).x[((compute m) b)].x(n).c[n].N(x), inr: x.inl;x.inr;x.case(inl: c.inl;N(x), inr: c.inr;N(x) ) ), inr: x.inr;0 )) (a) | c[int].c[one].c[compute].((nu d) c[d].([x <-> d] | COORD(c)))), inr: COORD(x) ) ), inr: x.inr;0 )) (a))
+-- (nu a) (a(int).(corec X().a.case(inl: a(m).a[m].X(), inr: a.case(inl: a.inl;X(), inr: 0 ) )) () | z(int).z(compute).z(zero).z(one).a[int].(corec COORD(x).z.case(inl: x.inl;x[zero].x(n).COORD(x), inr: z.case(inl: x.inr;x.inl;x.case(inl: (nu c) (c(int).c(b).c(compute).c(a).(corec N(x).c.case(inl: x.inl;c(m).x[compute m b].x(n).c[n].N(x), inr: c.case(inl: x.inr;x.inl;x.case(inl: c.inl;N(x), inr: c.inr;N(x) ), inr: x.inr;x.inr;0 ) )) (a) | c[int].c[one].c[compute].((nu d) c[d].([x <-> d] | COORD(c)))), inr: COORD(x) ), inr: x.inr;x.inr;0 ) )) (a))
