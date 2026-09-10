@@ -17,6 +17,8 @@ import qualified Tests.Parser.FTermSpec            as PFTerm
 import qualified Tests.Parser.PropositionSpec      as PProp
 import qualified Tests.Parser.ProcessSpec          as PProc
 import qualified Tests.Integration.Scripts         as IScripts
+import qualified Tests.Cli.RunnerSpec              as CRunner
+import qualified Tests.Cli.ExitCodeSpec            as CExit
 
 main :: IO ()
 main = do
@@ -41,5 +43,8 @@ main = do
     PProc.run ref
 
     IScripts.run ref
+
+    CRunner.run ref
+    CExit.run ref
 
     finish ref

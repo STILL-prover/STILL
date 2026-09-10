@@ -1,0 +1,8 @@
+-- Fixture for the runner tests: a tactic that does not apply.
+module Failing begin
+
+assume A is stype
+
+theorem bad: "A -o A"
+apply IdA
+done

@@ -3,6 +3,13 @@
 
 $ErrorActionPreference = "Stop"
 
+Write-Host "Compiling prover (needed by the exit-code tests)..." -ForegroundColor Cyan
+ghc -threaded -O2 Main.hs -o still
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Compilation failed." -ForegroundColor Red
+    exit 1
+}
+
 Write-Host "Compiling test suite..." -ForegroundColor Cyan
 ghc -threaded -O1 Tests\Main.hs -o still-tests
 if ($LASTEXITCODE -ne 0) {

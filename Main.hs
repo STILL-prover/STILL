@@ -3,6 +3,7 @@ module Main where
 import System.IO
 import System.Directory (getModificationTime, doesFileExist)
 import System.Environment (getArgs)
+import System.Exit (exitWith, ExitCode(..))
 import System.FilePath.Posix (dropExtensions)
 import Control.Concurrent (threadDelay)
 import Control.Exception (catch, IOException)
@@ -20,25 +21,14 @@ import Data.Map (toList)
 import Data.Time (formatTime, defaultTimeLocale)
 import Numeric (showFFloat)
 import Utils.Misc (namesInOrder)
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import ECC.Kernel (emptyContext)
 import Text.Parsec (sourceLine, sourceColumn)
 import Text.Read (readMaybe)
 import Utils.Server
+import Utils.Runner
 import MCP.Server (startMcpServer)
 
-data DiagnosticInfo = DiagnosticInfo {
-    moduleName :: String,
-    executionTime :: Double,
-    maxExecutionTime :: Double,
-    minExecutionTime :: Double,
-    didError :: Bool,
-    numTheorems :: String,
-    maxSubgoals :: String,
-    maxProofNodes :: String,
-    totalSubgoals :: String,
-    totalProofNodes :: String
-}
 
 -- ==========================================
 -- Main Entry Point
@@ -52,105 +42,40 @@ main = do
         ("watch":fileName:[]) -> startWatcher fileName
         ("watch":[])          -> startWatcher "Scratch.still"
         ("repl":fnames)       -> startRepl fnames
-        ("benchmark":fnames)  -> runDiagnostics fnames []
+        ("benchmark":fnames)  -> runDiagnostics fnames
         ("serve":[])          -> startServer
         ("serve-mcp":[])      -> startMcpServer
         (fname:fnames)        -> runScripts (fname:fnames)
         []                    -> startRepl []
     where
+        -- Run each script in turn. The process exits with status 1 if any
+        -- script could not be read or parsed, reported an error, or ended
+        -- with a proof still in progress; otherwise it exits with status 0.
         runScripts :: [String] -> IO ()
-        runScripts [] = return ()
-        runScripts (fname:fnames) = do
-            putStrLn $ "Running: " ++ fname
-            runScript fname
-            if null fnames then return () else putStrLn "" >> putStrLn ""
-            runScripts fnames
-            return ()
+        runScripts fnames = do
+            oks <- mapM runOne fnames
+            unless (and oks) $ exitWith (ExitFailure 1)
+          where
+            runOne fname = do
+                putStrLn $ "Running: " ++ fname
+                r <- runScriptFile fname
+                putStr (scriptOutput r)
+                unless (null (scriptProblems r)) $ putStrLn "Errors:" >> putStr (unlines (scriptProblems r))
+                putStrLn ""
+                return (scriptOk r)
 
-        runScript :: String -> IO ()
-        runScript fname = do
-            startTime <- getCurrentTime
-            content <- readFileSafe fname
-            afterReadTime <- getCurrentTime
-            result <- runProofScript fname content
-            case result of
-                Left e -> putStrLn e
-                Right fs -> putStrLn (unlines (reverse (outputs fs))) >> unless (null (errors fs)) (putStrLn "Errors:" >> putStrLn (unlines (reverse (errors fs))))
-
-        runDiagnostics :: [String] -> [DiagnosticInfo] -> IO ()
-        runDiagnostics [] infos = printInfos (reverse infos)
-        runDiagnostics (fname:fnames) infos = runDiagnostic fname >>= (\d -> runDiagnostics fnames (averageDiagnostic d:infos))
-
-        runDiagnostic :: String -> IO [DiagnosticInfo]
-        runDiagnostic fname = (\_ -> do
-            startTime <- getCurrentTime
-            content <- readFileSafe fname
-            result <- runProofScript fname content
-            mainPrinter result
-            endTime <- getCurrentTime
-            let exTime = realToFrac (diffUTCTime endTime startTime)
-            case result of
-                Left e -> return $ DiagnosticInfo { moduleName = fname, executionTime = exTime, didError = True, numTheorems = "N/A", maxSubgoals = "N/A", maxProofNodes = "N/A", totalSubgoals = "N/A", totalProofNodes = "N/A", maxExecutionTime = exTime, minExecutionTime = exTime }
-                Right fs -> return $ getDiagnostics startTime endTime fs) `mapM` [1,2,3,4,5]
-
-        averageDiagnostic ds = (head ds) { executionTime = sum (executionTime <$> ds) / realToFrac (length ds), maxExecutionTime = Data.List.foldl' max 0 (executionTime <$> ds), minExecutionTime = Data.List.foldl' min (executionTime . head $ ds) (executionTime <$> ds) }
-
-        printInfos :: [DiagnosticInfo] -> IO ()
-        printInfos infos = do
-            -- Define the headers for your columns
-            let headers = ["Module", "Theorems", "Total Subgoals", "Total Proof Nodes", "Max Subgoals", "Max Proof Nodes", "Avg. Time (s)", "Max Time (s)", "Min Time (s)"]
-
-            -- Define how to turn a record into a list of Strings (one for each column)
-            let toRow r = [ moduleName r
-                        , numTheorems r
-                        , totalSubgoals r
-                        , totalProofNodes r
-                        , maxSubgoals r
-                        , maxProofNodes r
-                        , showFFloat (Just 6) (executionTime r) ""
-                        , showFFloat (Just 6) (maxExecutionTime r) ""
-                        , showFFloat (Just 6) (minExecutionTime r) ""]
-
-            -- Convert all records to rows
-            let rows = map toRow infos
-
-            -- Calculate the maximum width required for each column
-            -- We include the headers in this calculation to ensure the title fits
-            let allRows = headers : rows
-            let columns = transpose allRows
-            let colWidths = map (maximum . map length) columns
-
-            -- Helper to pad a string with spaces to a specific width
-            let pad width s = s ++ replicate (width - length s) ' '
-
-            -- Helper to format a single row using the calculated widths
-            let formatRow row = intercalate " | " $ zipWith pad colWidths row
-
-            -- Create a separator line (e.g., "---+--------+...")
-            let separator = intercalate "-+-" $ map (\w -> replicate w '-') colWidths
-
-            -- 3. Printing
-            -- Print Header
-            putStr "\ESC[2J\ESC[H"
-            putStrLn $ formatRow headers
-            -- Print Separator
-            putStrLn separator
-            -- Print Data
-            mapM_ (putStrLn . formatRow) rows
-
-getDiagnostics :: UTCTime -> UTCTime -> ProofState -> DiagnosticInfo
-getDiagnostics st et s = DiagnosticInfo {
-    moduleName = curModuleName s,
-    executionTime = realToFrac $ diffUTCTime et st,
-    maxExecutionTime = realToFrac $ diffUTCTime et st,
-    minExecutionTime = realToFrac $ diffUTCTime et st,
-    didError = False,
-    numTheorems = show . length . Data.Map.toList $ theorems s,
-    maxSubgoals = show $ Data.List.foldl' (\acc (n, i) -> max acc (numberOfSubgoals i)) 0 $ toList (theorems s),
-    maxProofNodes = show $ Data.List.foldl' (\acc (n, i) -> max acc (proofSize (proofObject i))) 0 $ toList (theorems s),
-    totalProofNodes = show . sum $ (\(n, i) -> proofSize (proofObject i)) <$> toList (theorems s),
-    totalSubgoals = show . sum $ (\(n, i) -> numberOfSubgoals i) <$> toList (theorems s)
-}
+        -- Each script is run five times for timing. Only the results table is
+        -- written to stdout; problems are reported once per script on stderr.
+        runDiagnostics :: [String] -> IO ()
+        runDiagnostics fnames = do
+            infos <- mapM benchOne fnames
+            putStr (renderResultsTable infos)
+            when (any didError infos) $ exitWith (ExitFailure 1)
+          where
+            benchOne fname = do
+                (info, problems) <- benchmarkFile 5 fname
+                unless (null problems) $ hPutStrLn stderr (fname ++ ":\n" ++ unlines problems)
+                return info
 
 -- ==========================================
 -- REPL Implementation

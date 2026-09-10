@@ -1,0 +1,7 @@
+-- Fixture for the runner tests: no tactic fails, but the proof never reaches 'done'.
+module Incomplete begin
+
+assume A is stype
+
+theorem unfinished: "A -o A"
+apply ImpliesR

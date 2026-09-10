@@ -19,6 +19,16 @@ The still prover has three modes:
 The proof execution mode accepts multiple files as arguments. Each file
 is ran as a standalone script and doesn't affect the execution of the other scripts.
 
+Both ```./still FILE ...``` and ```./still benchmark FILE ...``` exit with
+status 0 when every script succeeds, and with status 1 if any script cannot be
+read or parsed, any tactic or command reports an error, or a script ends with a
+theorem still open (no ```done```). This makes them usable from CI and shell
+scripts, e.g. ```./still ./Proofs/*.still && echo "all proofs check"```.
+
+Benchmark mode prints only the results table on stdout. Any problems are
+reported once per script on stderr. So ```./still benchmark ./Proofs/*.still > results.txt```
+writes a clean table.
+
 # Writing Proofs
 
 Example modules can be found in the Proofs folder. 
@@ -48,7 +58,7 @@ See Tutorial.md for a guided introduction including the interpreter and I/O comm
 
 # Running Tests
 
-The test suite covers unit tests for the ECC and session types kernels, parser tests, and integration tests that run complete `.still` proof scripts.
+The test suite covers unit tests for the ECC and session types kernels, parser tests, integration tests that run complete `.still` proof scripts, and end-to-end tests of the command line (exit codes and output streams). The end-to-end tests run the compiled `still` binary from the repository root, so build the prover before running the tests manually; the `run-tests` scripts do this for you.
 
 Compile and run on Windows:
 
@@ -59,6 +69,7 @@ Compile and run on Windows:
 Or manually:
 
 ```
+ghc -threaded -O2 Main.hs -o still
 ghc -threaded -O1 Tests\Main.hs -o still-tests
 .\still-tests
 ```

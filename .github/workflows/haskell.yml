@@ -27,5 +27,6 @@ jobs:
       - uses: haskell/ghcup-setup@v1
       - run: |
           ghcup install ghc --set latest
+          ghc Main.hs -o still
           ghc Tests/Main.hs -o still-test
           ./still-test

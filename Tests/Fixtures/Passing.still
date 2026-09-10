@@ -1,0 +1,13 @@
+-- Fixture for the runner tests: a script that succeeds.
+module Passing begin
+
+assume A is stype
+assume B is stype
+
+theorem swap: "A * B -o B * A"
+apply ImpliesR
+apply TensorLA
+apply TensorR
+apply IdA
+apply IdA
+done
