@@ -10,6 +10,7 @@ module Utils.Runner
   , renderResultsTable
   ) where
 
+import Control.Exception (evaluate)
 import Data.List (foldl', intercalate, transpose)
 import qualified Data.Map as Map
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
@@ -81,15 +82,37 @@ benchmarkFile n fname = do
   let (infos, problems) = unzip runs
   return (averageDiagnostic infos, head problems)
 
+-- | Time one evaluation of a script. Reading the file is excluded from the
+-- measurement, and the resulting proof state is forced before the clock is
+-- read again: the prover is lazy, so without this the timer would stop before
+-- any proof search had actually happened.
 timedRun :: FilePath -> IO (DiagnosticInfo, [String])
 timedRun fname = do
-  start  <- getCurrentTime
-  result <- loadAndRun fname
-  end    <- getCurrentTime
-  let exTime = realToFrac (diffUTCTime end start)
-  return $ case result of
-    Left e   -> (errorDiagnostic fname exTime, [e])
-    Right fs -> (getDiagnostics start end fs, scriptStateProblems fs)
+  exists <- doesFileExist fname
+  if not exists
+    then return (errorDiagnostic fname 0, ["file not found: " ++ fname])
+    else do
+      content <- readFileSafe fname
+      _       <- evaluate (length content)
+      start   <- getCurrentTime
+      result  <- runProofScript fname content
+      _       <- evaluate (forceResult result)
+      end     <- getCurrentTime
+      let exTime = realToFrac (diffUTCTime end start)
+      return $ case result of
+        Left e   -> (errorDiagnostic fname exTime, [e])
+        Right fs -> (getDiagnostics start end fs, scriptStateProblems fs)
+
+-- | Force everything a script run produces: its messages, its errors, and the
+-- proof object and subgoal count of every theorem.
+forceResult :: Either String ProofState -> Int
+forceResult (Left e)   = length e
+forceResult (Right fs) =
+  length (concat (outputs fs))
+    + length (concat (errors fs))
+    + length (curTheoremName fs)
+    + sum [ fromIntegral (proofSize (proofObject t)) + fromIntegral (numberOfSubgoals t)
+          | t <- Map.elems (theorems fs) ]
 
 errorDiagnostic :: FilePath -> Double -> DiagnosticInfo
 errorDiagnostic fname exTime = DiagnosticInfo

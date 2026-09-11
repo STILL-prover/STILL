@@ -49,6 +49,8 @@ to move the current subgoal to the end.
 You can also define a process directly (without a tactic proof) and run it:
 
 ```
+module HelloWorld begin
+
 process Hello : "($String) * 1" = "print['Hello, World!'].stop"
 run Hello
 ```
@@ -114,8 +116,13 @@ The ./Proofs/AdditionalProofs directory holds some other interesting test script
 
 # License
 
-Code in a subdirectory (and subdirectories below that) is redistributed
-according to the license for that code provided in the same subdirectory e.g.
-Parsec code is redistributed according to the license that can be found in the
-Text subdirectory of the repository. All other code is provided according to the
-license in the root directory of the repository.
+STILL is provided under the license in the root directory of the repository
+(`LICENSE`, MIT-0).
+
+Two third-party libraries are vendored so that the prover builds with a bare
+GHC installation, and each is redistributed under its own license:
+
+- Parsec, in the `Text` subdirectory, under the BSD license in `Text/LICENSE`.
+- base16-bytestring, in `Data/ByteString/Base16.hs` and the
+  `Data/ByteString/Base16` subdirectory, under the BSD license stated in the
+  header comment of each of those files.
